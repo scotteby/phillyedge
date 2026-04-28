@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import type { ForecastDayInput } from "@/lib/types";
+import { useState, useRef } from "react";
+import Link from "next/link";
 
 function addDays(base: Date, n: number): Date {
   const d = new Date(base);
@@ -14,226 +13,216 @@ function toISODate(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
-function formatDayLabel(d: Date): string {
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+function formatDayLabel(d: Date, short = false): string {
+  return d.toLocaleDateString("en-US", short
+    ? { weekday: "short", month: "numeric", day: "numeric" }
+    : { weekday: "short", month: "short", day: "numeric" }
+  );
 }
 
-const DAY_LABELS = ["Today", "Tomorrow", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7"];
+type RowStatus = "saved" | "unsaved" | "saving" | "error";
 
-const DEFAULT_DAY: ForecastDayInput = {
-  high_temp: "",
-  low_temp: "",
-  precip_chance: "",
-  precip_type: "None",
-};
+interface DayRow {
+  high_temp: string;
+  low_temp: string;
+  precip_chance: string;
+  status: RowStatus;
+}
 
 interface Props {
-  lastSaved: string | null;
-  initialDays?: (ForecastDayInput & { target_date?: string })[];
+  today: string; // YYYY-MM-DD, formatted server-side
+  initialDays: { high_temp: number | null; low_temp: number | null; precip_chance: number | null }[];
 }
 
-export default function ForecastForm({ lastSaved, initialDays }: Props) {
-  const router = useRouter();
-  const today = new Date();
+export default function ForecastForm({ today, initialDays }: Props) {
+  const todayDate = new Date(today + "T12:00:00"); // noon to avoid DST edge
 
-  const [days, setDays] = useState<ForecastDayInput[]>(
-    initialDays
-      ? initialDays.map((d) => ({
-          high_temp: d.high_temp,
-          low_temp: d.low_temp,
-          precip_chance: d.precip_chance,
-          precip_type: d.precip_type,
-        }))
-      : Array.from({ length: 7 }, () => ({ ...DEFAULT_DAY }))
+  const [rows, setRows] = useState<DayRow[]>(() =>
+    Array.from({ length: 7 }, (_, i) => {
+      const d = initialDays[i];
+      const hasData = d && (d.high_temp != null || d.low_temp != null || d.precip_chance != null);
+      return {
+        high_temp: d?.high_temp != null ? String(d.high_temp) : "",
+        low_temp: d?.low_temp != null ? String(d.low_temp) : "",
+        precip_chance: d?.precip_chance != null ? String(d.precip_chance) : "",
+        status: hasData ? "saved" : "unsaved",
+      };
+    })
   );
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  function updateDay(i: number, field: keyof ForecastDayInput, value: string) {
-    setDays((prev) => {
+  // Track which fields are currently focused so we don't auto-save while typing
+  const focusedRow = useRef<number | null>(null);
+
+  function updateField(i: number, field: keyof Omit<DayRow, "status">, value: string) {
+    setRows((prev) => {
       const next = [...prev];
-      if (field === "precip_type") {
-        next[i] = { ...next[i], precip_type: value as ForecastDayInput["precip_type"] };
-      } else {
-        next[i] = { ...next[i], [field]: value === "" ? "" : Number(value) };
-      }
+      next[i] = { ...next[i], [field]: value, status: "unsaved" };
       return next;
     });
   }
 
-  async function handleSave() {
-    // Validate all days have required fields
-    for (let i = 0; i < days.length; i++) {
-      const d = days[i];
-      if (d.high_temp === "" || d.low_temp === "" || d.precip_chance === "") {
-        setError(`Day ${i + 1} is incomplete. Please fill in all fields.`);
-        return;
-      }
-    }
+  async function saveRow(i: number) {
+    const row = rows[i];
+    // Skip save if all fields are empty
+    if (row.high_temp === "" && row.low_temp === "" && row.precip_chance === "") return;
 
-    setSaving(true);
-    setError(null);
-
-    const forecast_date = toISODate(today);
-    const payload = {
-      forecast_date,
-      notes,
-      days: days.map((d, i) => ({
-        day_index: i,
-        target_date: toISODate(addDays(today, i)),
-        high_temp: Number(d.high_temp),
-        low_temp: Number(d.low_temp),
-        precip_chance: Number(d.precip_chance),
-        precip_type: d.precip_type,
-      })),
-    };
+    setRows((prev) => {
+      const next = [...prev];
+      next[i] = { ...next[i], status: "saving" };
+      return next;
+    });
 
     try {
-      const res = await fetch("/api/forecast", {
+      const res = await fetch("/api/forecast/day", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          forecast_date: today,
+          day_index: i,
+          target_date: toISODate(addDays(todayDate, i)),
+          high_temp: row.high_temp !== "" ? Number(row.high_temp) : null,
+          low_temp: row.low_temp !== "" ? Number(row.low_temp) : null,
+          precip_chance: row.precip_chance !== "" ? Number(row.precip_chance) : null,
+        }),
       });
+
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Save failed");
-      router.push("/markets");
+      setRows((prev) => {
+        const next = [...prev];
+        next[i] = { ...next[i], status: res.ok ? "saved" : "error" };
+        return next;
+      });
+      if (!res.ok) console.error("Save failed:", json.error);
     } catch (err) {
-      setError(String(err));
-      setSaving(false);
+      setRows((prev) => {
+        const next = [...prev];
+        next[i] = { ...next[i], status: "error" };
+        return next;
+      });
     }
   }
 
+  function handleBlur(i: number) {
+    // Only save if no other field in this row is immediately focused
+    setTimeout(() => {
+      if (focusedRow.current !== i) saveRow(i);
+    }, 50);
+  }
+
+  const allSaved = rows.every((r) => r.status === "saved" || (r.high_temp === "" && r.low_temp === "" && r.precip_chance === ""));
+  const anySaved = rows.some((r) => r.status === "saved");
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">7-Day Forecast</h1>
-          <p className="text-slate-400 text-sm mt-0.5">Philadelphia region — enter your forecast for each day</p>
+          <p className="text-slate-400 text-sm mt-0.5">Philadelphia — edit any field, saves automatically</p>
         </div>
-        {lastSaved && (
-          <span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full">
-            Last saved: {lastSaved}
-          </span>
+        {anySaved && (
+          <Link
+            href="/markets"
+            className="shrink-0 bg-sky-500 hover:bg-sky-400 text-white font-semibold px-5 py-2 rounded-xl transition-colors text-sm"
+          >
+            View Markets →
+          </Link>
         )}
       </div>
 
-      {/* Grid header */}
-      <div className="hidden md:grid md:grid-cols-[1fr_100px_100px_110px_130px] gap-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-        <div>Day</div>
-        <div>High (°F)</div>
-        <div>Low (°F)</div>
-        <div>Precip %</div>
-        <div>Type</div>
-      </div>
+      {/* Table */}
+      <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+        {/* Header row */}
+        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_24px] gap-0 px-4 py-2 border-b border-slate-700 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+          <div>Day</div>
+          <div>High °F</div>
+          <div>Low °F</div>
+          <div>Precip %</div>
+          <div />
+        </div>
 
-      {/* Day rows */}
-      {days.map((day, i) => {
-        const date = addDays(today, i);
-        return (
-          <div
-            key={i}
-            className="bg-slate-800 border border-slate-700 rounded-xl p-4 grid md:grid-cols-[1fr_100px_100px_110px_130px] gap-3 items-center"
-          >
-            {/* Day label */}
-            <div>
-              <span className="font-semibold text-white">
-                {i < 2 ? DAY_LABELS[i] : formatDayLabel(date)}
-              </span>
-              {i < 2 && (
-                <span className="text-slate-400 text-sm ml-2">{formatDayLabel(date)}</span>
-              )}
-            </div>
+        {/* Day rows */}
+        {rows.map((row, i) => {
+          const date = addDays(todayDate, i);
+          const dayLabel = i === 0 ? "Today" : i === 1 ? "Tomorrow" : formatDayLabel(date, true);
 
-            {/* High temp */}
-            <div>
-              <label className="block text-xs text-slate-500 mb-1 md:hidden">High (°F)</label>
-              <input
-                type="number"
-                value={day.high_temp}
-                onChange={(e) => updateDay(i, "high_temp", e.target.value)}
-                placeholder="75"
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-              />
-            </div>
+          return (
+            <div
+              key={i}
+              className="grid grid-cols-[2fr_1fr_1fr_1fr_24px] gap-0 items-center px-4 border-b border-slate-700/50 last:border-0 hover:bg-slate-700/20 transition-colors"
+            >
+              {/* Day label */}
+              <div className="py-3 pr-4">
+                <span className="font-medium text-white text-sm">{dayLabel}</span>
+              </div>
 
-            {/* Low temp */}
-            <div>
-              <label className="block text-xs text-slate-500 mb-1 md:hidden">Low (°F)</label>
-              <input
-                type="number"
-                value={day.low_temp}
-                onChange={(e) => updateDay(i, "low_temp", e.target.value)}
-                placeholder="55"
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-              />
-            </div>
+              {/* High temp */}
+              <div className="py-2 pr-3">
+                <input
+                  type="number"
+                  value={row.high_temp}
+                  placeholder="—"
+                  onFocus={() => (focusedRow.current = i)}
+                  onBlur={() => { focusedRow.current = null; handleBlur(i); }}
+                  onChange={(e) => updateField(i, "high_temp", e.target.value)}
+                  className="w-full bg-transparent border-b border-slate-600 focus:border-sky-500 outline-none text-white text-sm py-1 text-center placeholder:text-slate-600 transition-colors"
+                />
+              </div>
 
-            {/* Precip chance */}
-            <div>
-              <label className="block text-xs text-slate-500 mb-1 md:hidden">Precip %</label>
-              <div className="relative">
+              {/* Low temp */}
+              <div className="py-2 pr-3">
+                <input
+                  type="number"
+                  value={row.low_temp}
+                  placeholder="—"
+                  onFocus={() => (focusedRow.current = i)}
+                  onBlur={() => { focusedRow.current = null; handleBlur(i); }}
+                  onChange={(e) => updateField(i, "low_temp", e.target.value)}
+                  className="w-full bg-transparent border-b border-slate-600 focus:border-sky-500 outline-none text-white text-sm py-1 text-center placeholder:text-slate-600 transition-colors"
+                />
+              </div>
+
+              {/* Precip % */}
+              <div className="py-2 pr-3">
                 <input
                   type="number"
                   min="0"
                   max="100"
-                  value={day.precip_chance}
-                  onChange={(e) => updateDay(i, "precip_chance", e.target.value)}
-                  placeholder="30"
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 pr-7 text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+                  value={row.precip_chance}
+                  placeholder="—"
+                  onFocus={() => (focusedRow.current = i)}
+                  onBlur={() => { focusedRow.current = null; handleBlur(i); }}
+                  onChange={(e) => updateField(i, "precip_chance", e.target.value)}
+                  className="w-full bg-transparent border-b border-slate-600 focus:border-sky-500 outline-none text-white text-sm py-1 text-center placeholder:text-slate-600 transition-colors"
                 />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">%</span>
+              </div>
+
+              {/* Status dot */}
+              <div className="flex items-center justify-center">
+                <StatusDot status={row.status} />
               </div>
             </div>
-
-            {/* Precip type */}
-            <div>
-              <label className="block text-xs text-slate-500 mb-1 md:hidden">Type</label>
-              <select
-                value={day.precip_type}
-                onChange={(e) => updateDay(i, "precip_type", e.target.value)}
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-              >
-                <option value="None">None</option>
-                <option value="Rain">Rain</option>
-                <option value="Snow">Snow</option>
-                <option value="Mix">Mix</option>
-              </select>
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Notes */}
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-2">
-        <label className="block text-sm font-medium text-slate-300">Forecaster Notes</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={3}
-          placeholder="Any pattern notes, model disagreements, confidence levels..."
-          className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm resize-none focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent placeholder:text-slate-500"
-        />
+          );
+        })}
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-red-400 text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Footer CTA */}
-      <div className="flex justify-end">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="bg-sky-500 hover:bg-sky-400 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold px-6 py-2.5 rounded-xl transition-colors text-sm"
-        >
-          {saving ? "Saving..." : "Save & View Markets →"}
-        </button>
-      </div>
+      {/* Footer hint */}
+      <p className="text-xs text-slate-600 text-center">
+        Fields save automatically when you move to the next one
+      </p>
     </div>
   );
+}
+
+function StatusDot({ status }: { status: RowStatus }) {
+  if (status === "saving") {
+    return <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />;
+  }
+  if (status === "saved") {
+    return <span className="w-2 h-2 rounded-full bg-emerald-500" title="Saved" />;
+  }
+  if (status === "error") {
+    return <span className="w-2 h-2 rounded-full bg-red-500" title="Error saving" />;
+  }
+  return <span className="w-2 h-2 rounded-full bg-slate-600" />;
 }

@@ -12,7 +12,6 @@ export default async function ForecastPage() {
   const today = toISODate(new Date());
   const supabase = createServiceClient();
 
-  // Load today's existing forecast if any
   const { data } = await supabase
     .from("forecasts")
     .select("*")
@@ -21,26 +20,15 @@ export default async function ForecastPage() {
 
   const existing = (data as Forecast[] | null) ?? [];
 
-  const lastSaved =
-    existing.length > 0
-      ? new Date(existing[0].created_at).toLocaleString("en-US", {
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        })
-      : null;
+  // Build a 7-slot array, sparse where no data yet
+  const initialDays = Array.from({ length: 7 }, (_, i) => {
+    const row = existing.find((f) => f.day_index === i);
+    return {
+      high_temp: row?.high_temp ?? null,
+      low_temp: row?.low_temp ?? null,
+      precip_chance: row?.precip_chance ?? null,
+    };
+  });
 
-  const initialDays =
-    existing.length === 7
-      ? existing.map((f) => ({
-          high_temp: f.high_temp,
-          low_temp: f.low_temp,
-          precip_chance: f.precip_chance,
-          precip_type: f.precip_type,
-          target_date: f.target_date,
-        }))
-      : undefined;
-
-  return <ForecastForm lastSaved={lastSaved} initialDays={initialDays} />;
+  return <ForecastForm today={today} initialDays={initialDays} />;
 }
