@@ -9,11 +9,11 @@ type Filter = "all" | "strong-buy" | "buy" | "avoid";
 
 interface Props {
   markets: MarketWithEdge[];
-  lastUpdated: string | null;
+  lastUpdatedLabel: string | null;
   rawCount?: number;
 }
 
-export default function MarketsClient({ markets, lastUpdated, rawCount }: Props) {
+export default function MarketsClient({ markets, lastUpdatedLabel, rawCount }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [selectedMarket, setSelectedMarket] = useState<MarketWithEdge | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -45,15 +45,9 @@ export default function MarketsClient({ markets, lastUpdated, rawCount }: Props)
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Markets</h1>
-          {lastUpdated && (
+          {lastUpdatedLabel && (
             <p className="text-slate-400 text-sm mt-0.5">
-              Markets last updated:{" "}
-              {new Date(lastUpdated).toLocaleString("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
+              Markets last updated: {lastUpdatedLabel}
             </p>
           )}
         </div>

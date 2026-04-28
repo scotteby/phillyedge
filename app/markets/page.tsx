@@ -57,10 +57,20 @@ export default async function MarketsPage() {
   const markets = (marketsData as MarketCache[] | null) ?? [];
   const marketsWithEdge = markets.map((m) => calculateEdge(m, deduped));
 
+  const lastUpdatedLabel = lastUpdated
+    ? new Date(lastUpdated).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: "America/New_York",
+      })
+    : null;
+
   return (
     <MarketsClient
       markets={marketsWithEdge}
-      lastUpdated={lastUpdated}
+      lastUpdatedLabel={lastUpdatedLabel}
       rawCount={rawCount}
     />
   );
