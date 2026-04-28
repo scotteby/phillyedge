@@ -20,7 +20,7 @@ export default function TradeModal({ market, onClose, onConfirm }: Props) {
   const price = side === "YES" ? market.yes_price : 1 - market.yes_price;
   const shares = price > 0 ? usdc / price : 0;
   const maxProfit = shares - usdc;
-  const polyUrl = `https://polymarket.com/market/${market.market_id}`;
+  const polyUrl = `https://kalshi.com/markets/${market.market_id}`;
 
   async function handleConfirm() {
     if (!usdc || usdc <= 0) {
@@ -168,7 +168,7 @@ export default function TradeModal({ market, onClose, onConfirm }: Props) {
             disabled={submitting}
             className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
           >
-            {submitting ? "Logging..." : "Confirm & Open Polymarket →"}
+            {submitting ? "Logging..." : "Confirm & Open Kalshi →"}
           </button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchAndCacheMarkets } from "@/lib/polymarket";
+import { fetchAndCacheMarkets } from "@/lib/kalshi";
 
 export async function GET() {
   try {

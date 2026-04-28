@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/server";
-import { fetchAndCacheMarkets } from "@/lib/polymarket";
+import { fetchAndCacheMarkets } from "@/lib/kalshi";
 import { calculateEdge } from "@/lib/edge";
 import type { Forecast, MarketCache } from "@/lib/types";
 import MarketsClient from "./MarketsClient";
