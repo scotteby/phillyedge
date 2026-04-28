@@ -3,8 +3,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 const CACHE_TTL_MINUTES = 30;
 
-// Philadelphia weather series tickers
-const PHILLY_SERIES = ["KXHIGHPHL", "KXLOWPHL", "KXPRECIPPHL"];
+// Philadelphia weather series tickers (confirmed from kalshi.com URLs)
+const PHILLY_SERIES = ["KXHIGHPHIL", "KXLOWTPHIL", "KXPRECIPPHIL"];
 
 interface KalshiMarket {
   ticker: string;
@@ -95,10 +95,14 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
         console.log(`[kalshi] Fallback: ${allMarkets.length} open markets total`);
         console.log("[kalshi] Sample titles:", allMarkets.slice(0, 10).map((m) => m.title));
 
-        const PHILLY_KW = ["philadelphia", "philly", "phl"];
+        // Match Philadelphia weather markets only — not sports (Eagles, Phillies, 76ers etc.)
+        const WEATHER_KW = ["temperature", "temp", "precip", "rain", "snow", "high", "low"];
         phillyMarkets = allMarkets.filter((m) => {
-          const text = `${m.title} ${m.subtitle} ${m.ticker} ${m.event_ticker}`.toLowerCase();
-          return PHILLY_KW.some((k) => text.includes(k));
+          const ticker = (m.ticker ?? "").toLowerCase();
+          const title = (m.title ?? "").toLowerCase();
+          const isPhilly = ticker.includes("phil") || title.includes("philadelphia") || title.includes("philly");
+          const isWeather = WEATHER_KW.some((k) => title.includes(k)) || ticker.startsWith("kxhigh") || ticker.startsWith("kxlowt") || ticker.startsWith("kxprecip");
+          return isPhilly && isWeather;
         });
 
         console.log(`[kalshi] Fallback matched ${phillyMarkets.length} Philly markets:`, phillyMarkets.map((m) => m.ticker));

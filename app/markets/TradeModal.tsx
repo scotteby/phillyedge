@@ -20,7 +20,11 @@ export default function TradeModal({ market, onClose, onConfirm }: Props) {
   const price = side === "YES" ? market.yes_price : 1 - market.yes_price;
   const shares = price > 0 ? usdc / price : 0;
   const maxProfit = shares - usdc;
-  const polyUrl = `https://kalshi.com/markets/${market.market_id}`;
+  // Kalshi URL: /markets/{series_lower}/{market_ticker_lower}
+  // e.g. /markets/kxhighphil/kxhighphil-26apr28
+  const seriesLower = market.market_id.split("-")[0].toLowerCase();
+  const tickerLower = market.market_id.toLowerCase();
+  const kalshiUrl = `https://kalshi.com/markets/${seriesLower}/${tickerLower}`;
 
   async function handleConfirm() {
     if (!usdc || usdc <= 0) {
@@ -46,13 +50,13 @@ export default function TradeModal({ market, onClose, onConfirm }: Props) {
           signal: market.signal,
           outcome: "pending",
           pnl: null,
-          polymarket_url: polyUrl,
+          polymarket_url: kalshiUrl,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to log trade");
 
-      window.open(polyUrl, "_blank", "noopener");
+      window.open(kalshiUrl, "_blank", "noopener");
       onConfirm();
     } catch (err) {
       setError(String(err));

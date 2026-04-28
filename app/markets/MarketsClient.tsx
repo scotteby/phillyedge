@@ -27,8 +27,7 @@ export default function MarketsClient({ markets, lastUpdatedLabel, rawCount }: P
 
   async function handleRefresh() {
     setRefreshing(true);
-    // Force cache bust by calling the API directly
-    await fetch("/api/markets");
+    await fetch("/api/markets?bust=true");
     window.location.reload();
   }
 
