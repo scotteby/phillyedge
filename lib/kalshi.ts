@@ -37,6 +37,19 @@ const MONTH_MAP: Record<string, string> = {
   JUL: "07", AUG: "08", SEP: "09", OCT: "10", NOV: "11", DEC: "12",
 };
 
+/** Parse the observation date from an event_ticker like "KXHIGHPHIL-26APR29" → "2026-04-29". */
+function parseObsDate(eventTicker: string): string | null {
+  const parts = (eventTicker ?? "").toUpperCase().split("-");
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const match = parts[i].match(/^(\d{2})([A-Z]{3})(\d{2})$/);
+    if (match) {
+      const mm = MONTH_MAP[match[2]];
+      if (mm) return `20${match[1]}-${mm}-${match[3]}`;
+    }
+  }
+  return null;
+}
+
 function getEndDate(m: KalshiMarket): string {
   // 1. Prefer occurrence_datetime if present (older API versions)
   if (m.occurrence_datetime) return m.occurrence_datetime.split("T")[0];
@@ -171,6 +184,21 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     }
   } catch (err) {
     console.error("[kalshi] Fetch error:", err);
+  }
+
+  // ── Keep only markets whose observation date is today ─────────────────────
+  // Kalshi sometimes returns yesterday's still-"open" markets (pending NWS
+  // resolution) and briefly shows tomorrow's markets. We only want today.
+  const todayStr = today; // already "YYYY-MM-DD"
+  const beforeFilter = allMarkets.length;
+  allMarkets = allMarkets.filter((m) => {
+    const obs = parseObsDate(m.event_ticker ?? m.ticker);
+    return obs === null || obs === todayStr;
+  });
+  if (allMarkets.length !== beforeFilter) {
+    console.log(
+      `[kalshi] Date filter: kept ${allMarkets.length}/${beforeFilter} markets for ${todayStr}`
+    );
   }
 
   const fetchedAt = new Date().toISOString();
