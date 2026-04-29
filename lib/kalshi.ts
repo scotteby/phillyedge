@@ -45,6 +45,7 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
   const { data: cached } = await supabase
     .from("market_cache")
     .select("fetched_at")
+    .eq("active", true)
     .order("fetched_at", { ascending: false })
     .limit(1);
 
