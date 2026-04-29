@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
 import { createServiceClient } from "@/lib/supabase/server";
+import { deriveTradeSignal } from "@/lib/signal";
 
 const DEMO_MODE   = process.env.KALSHI_DEMO_MODE === "true";
 const KALSHI_BASE = DEMO_MODE
@@ -209,7 +210,7 @@ export async function POST(req: NextRequest) {
         market_pct:      newMarketPct,
         my_pct:          trade.my_pct,
         edge:            newEdge,
-        signal:          trade.signal,
+        signal:          deriveTradeSignal(side.toUpperCase() as "YES" | "NO", newEdge),
         outcome:         "pending",
         pnl:             null,
         polymarket_url:  url,

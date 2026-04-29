@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
 import { createServiceClient } from "@/lib/supabase/server";
+import { deriveTradeSignal } from "@/lib/signal";
 
 const DEMO_MODE  = process.env.KALSHI_DEMO_MODE === "true";
 const KALSHI_BASE = DEMO_MODE
@@ -159,11 +160,9 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Log to Supabase ──────────────────────────────────────────────────────────
-  // Normalize signal: DB column only accepts the 4 values in Trade["signal"].
-  // "sell" / "strong-sell" come from NO-bracket recommendations — store as "avoid"
-  // so the constraint doesn't reject the row.
-  const dbSignal =
-    signal === "sell" || signal === "strong-sell" ? "avoid" : signal;
+  // Derive the signal relative to the side actually traded.
+  // A NO trade on a strong-NO bracket is a "Strong Buy" of the correct side.
+  const dbSignal = deriveTradeSignal(side.toUpperCase() as "YES" | "NO", edge);
 
   try {
     const supabase = createServiceClient();

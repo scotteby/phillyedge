@@ -9,10 +9,13 @@ const config: Record<Signal, { label: string; className: string }> = {
   "avoid":       { label: "Avoid",      className: "bg-red-500/20 text-red-400 border border-red-500/30" },
 };
 
-export default function SignalBadge({ signal }: { signal: Signal }) {
+export default function SignalBadge({ signal, title }: { signal: Signal; title?: string }) {
   const { label, className } = config[signal];
   return (
-    <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold whitespace-nowrap ${className}`}>
+    <span
+      title={title}
+      className={`inline-block px-2 py-0.5 rounded text-xs font-semibold whitespace-nowrap ${className}${title ? " cursor-help" : ""}`}
+    >
       {label}
     </span>
   );

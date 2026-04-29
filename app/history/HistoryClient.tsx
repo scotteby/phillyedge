@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Trade, OrderStatus } from "@/lib/types";
 import SignalBadge from "@/components/SignalBadge";
+import { deriveTradeSignal, signalTooltip } from "@/lib/signal";
 
 interface Props {
   initialTrades: Trade[];
@@ -1096,7 +1097,10 @@ function TradeCard({
               {trade.side}
             </span>
             <span className="text-slate-300">${trade.amount_usdc.toFixed(2)}</span>
-            <SignalBadge signal={trade.signal} />
+            {(() => {
+              const sig = deriveTradeSignal(trade.side, trade.edge);
+              return <SignalBadge signal={sig} title={signalTooltip(sig, trade.side, trade.edge)} />;
+            })()}
             {trade.order_status && <OrderStatusBadge status={trade.order_status} />}
             {showCancel && (
               <button
@@ -1259,8 +1263,13 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
           ${trade.amount_usdc.toFixed(2)}
         </td>
 
-        {/* Signal */}
-        <td className="py-3 pr-4"><SignalBadge signal={trade.signal} /></td>
+        {/* Signal — derived from side + edge so NO trades show the correct signal */}
+        <td className="py-3 pr-4">
+          {(() => {
+            const sig = deriveTradeSignal(trade.side, trade.edge);
+            return <SignalBadge signal={sig} title={signalTooltip(sig, trade.side, trade.edge)} />;
+          })()}
+        </td>
 
         {/* Edge */}
         <td className={`py-3 pr-4 font-semibold ${edgeColor} whitespace-nowrap`}>
