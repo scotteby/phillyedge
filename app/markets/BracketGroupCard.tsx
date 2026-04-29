@@ -5,6 +5,7 @@ import type { BracketGroup, BracketMarket, BracketRange } from "@/lib/brackets";
 import type { MarketTimeStatus, DailyHighStatus } from "@/lib/nws";
 import SignalBadge from "@/components/SignalBadge";
 import PositionBuilderModal from "./PositionBuilderModal";
+import { bracketDisplaySignal, SIGNAL_LABELS } from "@/lib/signal";
 
 interface Props {
   group:           BracketGroup;
@@ -340,12 +341,6 @@ function TimeGateBanner({
 
 // ── Best trade banner ─────────────────────────────────────────────────────────
 
-/** Format a list of 1–N strings as "a", "a and b", or "a, b, and c". */
-function joinLabels(items: string[]): string {
-  if (items.length === 1) return items[0];
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
-}
 
 function BestTradeBanner({
   best,
@@ -358,120 +353,75 @@ function BestTradeBanner({
   forecastValue: number | null;
   compact?:      boolean;
 }) {
-  const isNo       = best.trade_side === "NO";
-  const absEdge    = Math.abs(best.edge);
-  const noPricePct = Math.round((1 - best.yes_price) * 100);
+  const isNo    = best.trade_side === "NO";
+  const absEdge = Math.abs(best.edge);
+  const sig     = bracketDisplaySignal(best.trade_side, best.edge);
+  const sigLabel = SIGNAL_LABELS[sig];
+
+  // Color palette keyed by derived signal — answers "how good is this trade?"
+  const palette: Record<string, { bg: string; accent: string; header: string }> = {
+    "strong-buy":  { bg: "bg-emerald-500/10 border border-emerald-500/30", accent: "text-emerald-400", header: "text-emerald-400" },
+    "buy":         { bg: "bg-sky-500/10 border border-sky-500/30",         accent: "text-sky-400",     header: "text-sky-400"     },
+    "sell":        { bg: "bg-orange-500/10 border border-orange-500/30",   accent: "text-orange-400",  header: "text-orange-400"  },
+    "strong-sell": { bg: "bg-orange-500/10 border border-orange-500/30",   accent: "text-orange-400",  header: "text-orange-400"  },
+    "neutral":     { bg: "bg-slate-700/40 border border-slate-600",         accent: "text-slate-400",   header: "text-slate-400"   },
+    "avoid":       { bg: "bg-red-500/10 border border-red-500/30",         accent: "text-red-400",     header: "text-red-400"     },
+  };
+  const clr = palette[sig] ?? palette["neutral"];
 
   const outerClass = compact ? "mt-2 rounded-lg px-3 py-2" : "mt-3 rounded-lg px-4 py-2.5";
   const textCls    = compact ? "text-xs" : "text-sm";
+  const sideLabel  = isNo ? "NO" : "YES";
+  const priceStr   = isNo ? `${Math.round((1 - best.yes_price) * 100)}¢` : `${best.yes_pct}%`;
 
-  if (isNo) {
-    // Collect every actionable NO bracket (sell + strong-sell, with a forecast)
-    const noGroup = brackets
-      .filter((b) => b.trade_side === "NO" && b.confidence > 0)
-      .sort((a, b) => (a.range.min ?? -999) - (b.range.min ?? -999));
-
-    const isMulti         = noGroup.length > 1;
-    const combinedAbsEdge = noGroup.reduce((s, b) => s + Math.abs(b.edge), 0);
-
-    if (isMulti) {
-      const labelStr  = joinLabels(noGroup.map((b) => b.range.label));
-      const pctStr    = joinLabels(noGroup.map((b) => `${b.yes_pct}%`));
-
-      return (
-        <div className={`${outerClass} bg-orange-500/10 border border-orange-500/30`}>
-          {!compact && (
-            <p className="text-xs text-orange-400 font-semibold uppercase tracking-wide mb-0.5">
-              Best NO Trades ({noGroup.length})
-            </p>
-          )}
-          <p className={`${textCls} text-white`}>
-            {compact && (
-              <span className="text-orange-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">
-                Best NO
-              </span>
-            )}
-            <span className="font-semibold">{labelStr}</span>
-            <span className="text-slate-300">
-              {" "}— market overpricing at {pctStr}
-            </span>
-            <span className="ml-1.5 font-bold text-orange-400">
-              +{combinedAbsEdge}pt combined
-            </span>
-          </p>
-          {!compact && (
-            <p className="text-xs text-orange-400/60 mt-0.5">
-              {noGroup.map((b) => `${b.range.label}: ${Math.abs(b.edge)}pt edge`).join(" · ")}
-            </p>
-          )}
-        </div>
-      );
-    }
-
-    // Single NO bracket (original behavior)
-    return (
-      <div className={`${outerClass} bg-orange-500/10 border border-orange-500/30`}>
-        {!compact && (
-          <p className="text-xs text-orange-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
-        )}
-        <p className={`${textCls} text-white`}>
-          {compact && (
-            <span className="text-orange-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">
-              Best Trade
-            </span>
-          )}
-          <span className="font-semibold">{best.range.label} NO @ {noPricePct}¢</span>
-          {forecastValue !== null && (
-            <span className="text-slate-300">
-              {" "}— market overpricing at {best.yes_pct}%, our model ~{best.confidence}%
-            </span>
-          )}
-          <span className="ml-1.5 font-bold text-orange-400">
-            +{absEdge}pt NO edge
-          </span>
-        </p>
-      </div>
-    );
-  }
-
-  // YES best trade
-  // Secondary YES: other actionable YES brackets sorted by edge descending
-  const secondaryYes = brackets
-    .filter((b) => b.trade_side === "YES" && b.market_id !== best.market_id)
-    .sort((a, b) => b.edge - a.edge);
+  // Secondary brackets of the same trade direction (for "Also consider" line)
+  const secondary = brackets
+    .filter((b) => b.trade_side === best.trade_side && b.market_id !== best.market_id && b.confidence > 0)
+    .sort((a, b) => isNo ? a.edge - b.edge : b.edge - a.edge);
 
   return (
-    <div className={`${outerClass} bg-emerald-500/10 border border-emerald-500/30`}>
+    <div className={`${outerClass} ${clr.bg}`}>
       {!compact && (
-        <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
+        <p className={`text-xs font-semibold uppercase tracking-wide mb-0.5 ${clr.header}`}>
+          Best Trade
+        </p>
       )}
       <p className={`${textCls} text-white`}>
         {compact && (
-          <span className="text-emerald-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">
+          <span className={`font-semibold uppercase tracking-wide text-[10px] mr-1.5 ${clr.header}`}>
             Best Trade
           </span>
         )}
-        <span className="font-semibold">{best.range.label} YES @ {best.yes_pct}%</span>
-        {forecastValue !== null && (
+        <span className="font-semibold">{best.range.label} {sideLabel} @ {priceStr}</span>
+        {forecastValue !== null && !isNo && (
           <span className="text-slate-300">
             {" "}— our forecast of {forecastValue}°F puts this at ~{best.confidence}% likely
           </span>
         )}
-        <span className={`ml-1.5 font-bold ${best.edge >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-          {best.edge > 0 ? "+" : ""}{best.edge}pt edge
+        {forecastValue !== null && isNo && (
+          <span className="text-slate-300">
+            {" "}— market {best.yes_pct}%, our model ~{best.confidence}%
+          </span>
+        )}
+        <span className={`ml-1.5 font-bold ${clr.accent}`}>
+          {sigLabel} · +{absEdge}pt edge
         </span>
       </p>
-      {secondaryYes.length > 0 && (
-        <p className={`${compact ? "text-[10px]" : "text-xs"} text-slate-400 mt-1`}>
+      {!compact && secondary.length > 0 && (
+        <p className="text-xs text-slate-400 mt-1">
           Also consider:{" "}
-          {secondaryYes.map((b, i) => (
-            <span key={b.market_id}>
-              {i > 0 && " · "}
-              <span className="text-slate-200 font-medium">{b.range.label} YES @ {b.yes_pct}%</span>
-              {" "}as a hedge
-              <span className="text-emerald-400 font-semibold ml-1">+{b.edge}pt</span>
-            </span>
-          ))}
+          {secondary.map((b, i) => {
+            const bSig   = bracketDisplaySignal(b.trade_side, b.edge);
+            const bLabel = SIGNAL_LABELS[bSig];
+            return (
+              <span key={b.market_id}>
+                {i > 0 && " · "}
+                <span className="text-slate-200 font-medium">{b.range.label} {sideLabel}</span>
+                {" "}<span className="font-medium">{bLabel}</span>
+                <span className={palette[bSig]?.accent ?? "text-slate-400"}> +{Math.abs(b.edge)}pt</span>
+              </span>
+            );
+          })}
         </p>
       )}
     </div>
@@ -610,7 +560,7 @@ function BracketRow({
           {isLocked && !isLikelyWinner
             ? <span className="text-slate-600 text-xs">—</span>
             : bracket.confidence > 0
-            ? <SignalBadge signal={bracket.signal} />
+            ? <SignalBadge signal={bracketDisplaySignal(bracket.trade_side, bracket.edge)} />
             : <span className="text-slate-600 text-xs">—</span>}
         </div>
 
@@ -649,7 +599,7 @@ function BracketRow({
             {isLocked && !isLikelyWinner
               ? null
               : bracket.confidence > 0
-              ? <SignalBadge signal={bracket.signal} />
+              ? <SignalBadge signal={bracketDisplaySignal(bracket.trade_side, bracket.edge)} />
               : <span className="text-slate-600 text-xs">—</span>}
           </div>
           <TradeBtn mobile={true} />
