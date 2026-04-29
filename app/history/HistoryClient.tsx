@@ -97,8 +97,7 @@ function isSellable(trade: Trade): boolean {
   return (
     trade.outcome === "pending" &&
     (trade.filled_count ?? 0) > 0 &&
-    trade.kalshi_order_id != null &&
-    (trade.order_status === "filled" || trade.order_status === "partially_filled")
+    trade.kalshi_order_id != null
   );
 }
 
