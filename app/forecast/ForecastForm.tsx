@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 
+// ── helpers ──────────────────────────────────────────────────────────────────
+
 function addDays(base: Date, n: number): Date {
   const d = new Date(base);
   d.setDate(d.getDate() + n);
@@ -13,23 +15,50 @@ function toISODate(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
-function formatDayLabel(d: Date): string {
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
-}
-
+type PrecipType = "None" | "Rain" | "Snow" | "Mix";
 type RowStatus = "saved" | "unsaved" | "saving" | "error";
 
 interface DayRow {
   high_temp: string;
   low_temp: string;
   precip_chance: string;
+  precip_type: PrecipType;
   status: RowStatus;
-  errorMsg: string;
 }
+
+function weatherIcon(precip: string, type: PrecipType): string {
+  const p = Number(precip) || 0;
+  if (type === "Snow") return "🌨️";
+  if (type === "Mix") return "🌩️";
+  if (p < 20) return "☀️";
+  if (p < 40) return "🌤️";
+  if (p < 70) return "🌧️";
+  return "⛈️";
+}
+
+function highTempClass(val: string): string {
+  const n = Number(val);
+  if (!val || isNaN(n)) return "text-slate-100";
+  if (n >= 90) return "text-red-400 font-bold";
+  if (n >= 80) return "text-orange-400 font-bold";
+  if (n < 32) return "text-sky-300 font-bold";
+  return "text-slate-100";
+}
+
+const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function dayLabel(date: Date, index: number): { top: string; bottom: string } {
+  if (index === 0) return { top: "Today", bottom: `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}` };
+  if (index === 1) return { top: "Tomorrow", bottom: `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}` };
+  return { top: DAY_SHORT[date.getDay()], bottom: `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}` };
+}
+
+// ── component ────────────────────────────────────────────────────────────────
 
 interface Props {
   today: string;
-  initialDays: { high_temp: number | null; low_temp: number | null; precip_chance: number | null }[];
+  initialDays: { high_temp: number | null; low_temp: number | null; precip_chance: number | null; precip_type?: string | null }[];
 }
 
 export default function ForecastForm({ today, initialDays }: Props) {
@@ -43,27 +72,36 @@ export default function ForecastForm({ today, initialDays }: Props) {
         high_temp: d?.high_temp != null ? String(d.high_temp) : "",
         low_temp: d?.low_temp != null ? String(d.low_temp) : "",
         precip_chance: d?.precip_chance != null ? String(d.precip_chance) : "",
+        precip_type: (d?.precip_type as PrecipType) ?? "None",
         status: hasData ? "saved" : "unsaved",
-        errorMsg: "",
       };
     })
   );
 
-  function updateField(i: number, field: "high_temp" | "low_temp" | "precip_chance", value: string) {
+  function updateField(i: number, field: keyof Omit<DayRow, "status">, value: string) {
     setRows((prev) => {
       const next = [...prev];
-      next[i] = { ...next[i], [field]: value, status: "unsaved", errorMsg: "" };
+      next[i] = { ...next[i], [field]: value, status: "unsaved" };
       return next;
     });
   }
 
+  // Save triggered when focus leaves a card entirely (not just between fields in same card)
+  function handleCardBlur(i: number, e: React.FocusEvent<HTMLDivElement>) {
+    const related = e.relatedTarget as Node | null;
+    if (!related || !e.currentTarget.contains(related)) {
+      saveRow(i);
+    }
+  }
+
   async function saveRow(i: number) {
     const row = rows[i];
+    if (row.status === "saved" || row.status === "saving") return;
     if (row.high_temp === "" && row.low_temp === "" && row.precip_chance === "") return;
 
     setRows((prev) => {
       const next = [...prev];
-      next[i] = { ...next[i], status: "saving", errorMsg: "" };
+      next[i] = { ...next[i], status: "saving" };
       return next;
     });
 
@@ -78,24 +116,21 @@ export default function ForecastForm({ today, initialDays }: Props) {
           high_temp: row.high_temp !== "" ? Number(row.high_temp) : null,
           low_temp: row.low_temp !== "" ? Number(row.low_temp) : null,
           precip_chance: row.precip_chance !== "" ? Number(row.precip_chance) : null,
+          precip_type: row.precip_type,
         }),
       });
 
       const json = await res.json();
-
       setRows((prev) => {
         const next = [...prev];
-        if (res.ok) {
-          next[i] = { ...next[i], status: "saved", errorMsg: "" };
-        } else {
-          next[i] = { ...next[i], status: "error", errorMsg: json.error ?? "Save failed" };
-        }
+        next[i] = { ...next[i], status: res.ok ? "saved" : "error" };
         return next;
       });
+      if (!res.ok) console.error(`[forecast] save row ${i}:`, json.error);
     } catch (err) {
       setRows((prev) => {
         const next = [...prev];
-        next[i] = { ...next[i], status: "error", errorMsg: String(err) };
+        next[i] = { ...next[i], status: "error" };
         return next;
       });
     }
@@ -104,104 +139,176 @@ export default function ForecastForm({ today, initialDays }: Props) {
   const anySaved = rows.some((r) => r.status === "saved");
 
   return (
-    <div className="space-y-5 max-w-xl">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white">7-Day Forecast</h1>
-          <p className="text-slate-400 text-sm mt-0.5">Philadelphia — edit a row and click Save</p>
-        </div>
-        {anySaved && (
-          <Link
-            href="/markets"
-            className="shrink-0 bg-sky-500 hover:bg-sky-400 text-white font-semibold px-5 py-2 rounded-xl transition-colors text-sm"
-          >
-            View Markets →
-          </Link>
-        )}
+    <div className="space-y-4 pb-24">
+      {/* Page header */}
+      <div>
+        <h1 className="text-2xl font-bold text-white">7-Day Forecast</h1>
+        <p className="text-slate-400 text-sm mt-0.5">Philadelphia — edit any field, saves when you leave the card</p>
       </div>
 
-      {/* Table */}
-      <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-        {/* Column headers */}
-        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_60px] px-4 py-2 border-b border-slate-700 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-          <div>Day</div>
-          <div className="text-center">High °F</div>
-          <div className="text-center">Low °F</div>
-          <div className="text-center">Precip %</div>
-          <div />
+      {/* Summary strip */}
+      <div className="overflow-x-auto">
+        <div className="flex gap-2 min-w-max py-1">
+          {rows.map((row, i) => {
+            const date = addDays(todayDate, i);
+            const { top } = dayLabel(date, i);
+            const icon = weatherIcon(row.precip_chance, row.precip_type);
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs"
+              >
+                <span className="text-slate-400 font-medium">{top.slice(0, 3)}</span>
+                <span>{icon}</span>
+                {row.high_temp || row.low_temp ? (
+                  <span className={`font-semibold ${highTempClass(row.high_temp)}`}>
+                    {row.high_temp || "—"}°
+                  </span>
+                ) : null}
+                {row.low_temp ? (
+                  <span className="text-slate-400">{row.low_temp}°</span>
+                ) : null}
+                {!row.high_temp && !row.low_temp && (
+                  <span className="text-slate-600">—</span>
+                )}
+              </div>
+            );
+          })}
         </div>
+      </div>
 
-        {rows.map((row, i) => {
-          const date = addDays(todayDate, i);
-          const label = i === 0 ? "Today" : i === 1 ? "Tomorrow" : formatDayLabel(date);
+      {/* 7-day grid */}
+      <div className="overflow-x-auto">
+        <div className="grid grid-cols-7 gap-3 min-w-[700px]">
+          {rows.map((row, i) => {
+            const date = addDays(todayDate, i);
+            const { top, bottom } = dayLabel(date, i);
+            const icon = weatherIcon(row.precip_chance, row.precip_type);
 
-          return (
-            <div key={i} className="border-b border-slate-700/50 last:border-0">
-              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_60px] items-center px-4 py-2 hover:bg-slate-700/20 transition-colors">
-                {/* Label */}
-                <div className="text-sm font-medium text-white">{label}</div>
+            return (
+              <div
+                key={i}
+                tabIndex={-1}
+                onBlur={(e) => handleCardBlur(i, e)}
+                className={`relative bg-slate-800 border rounded-xl p-3 flex flex-col gap-3 focus-within:border-sky-600 transition-colors ${
+                  row.status === "error"
+                    ? "border-red-500/60"
+                    : row.status === "saved"
+                    ? "border-emerald-600/40"
+                    : "border-slate-700"
+                }`}
+              >
+                {/* Day header */}
+                <div className="text-center">
+                  <div className="text-sm font-bold text-white">{top}</div>
+                  <div className="text-xs text-slate-400">{bottom}</div>
+                  <div className="text-2xl mt-1">{icon}</div>
+                </div>
 
-                {/* High */}
-                <div className="px-2">
-                  <input
-                    type="number"
+                {/* Fields */}
+                <div className="space-y-2">
+                  <Field
+                    label="High °F"
                     value={row.high_temp}
                     placeholder="—"
-                    onChange={(e) => updateField(i, "high_temp", e.target.value)}
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-sm text-center focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent placeholder:text-slate-600"
+                    onChange={(v) => updateField(i, "high_temp", v)}
+                    inputClass={highTempClass(row.high_temp)}
                   />
-                </div>
-
-                {/* Low */}
-                <div className="px-2">
-                  <input
-                    type="number"
+                  <Field
+                    label="Low °F"
                     value={row.low_temp}
                     placeholder="—"
-                    onChange={(e) => updateField(i, "low_temp", e.target.value)}
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-sm text-center focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent placeholder:text-slate-600"
+                    onChange={(v) => updateField(i, "low_temp", v)}
                   />
-                </div>
-
-                {/* Precip */}
-                <div className="px-2">
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
+                  <Field
+                    label="Precip %"
                     value={row.precip_chance}
                     placeholder="—"
-                    onChange={(e) => updateField(i, "precip_chance", e.target.value)}
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-sm text-center focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent placeholder:text-slate-600"
+                    min={0}
+                    max={100}
+                    onChange={(v) => updateField(i, "precip_chance", v)}
                   />
+
+                  {/* Precip type */}
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Type</label>
+                    <select
+                      value={row.precip_type}
+                      onChange={(e) => updateField(i, "precip_type", e.target.value)}
+                      className="w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-white text-xs focus:outline-none focus:ring-1 focus:ring-sky-500"
+                    >
+                      <option value="None">None</option>
+                      <option value="Rain">Rain</option>
+                      <option value="Snow">Snow</option>
+                      <option value="Mix">Mix</option>
+                    </select>
+                  </div>
                 </div>
 
-                {/* Save button / status */}
-                <div className="flex items-center justify-end pl-2">
-                  {row.status === "saving" ? (
-                    <span className="text-xs text-sky-400 animate-pulse">saving…</span>
-                  ) : row.status === "saved" ? (
-                    <span className="text-xs text-emerald-500">✓ saved</span>
-                  ) : (
-                    <button
-                      onClick={() => saveRow(i)}
-                      className="text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
-                    >
-                      Save
-                    </button>
+                {/* Status badge */}
+                <div className="absolute top-2 right-2 text-xs">
+                  {row.status === "saving" && (
+                    <span className="text-sky-400 animate-pulse">…</span>
+                  )}
+                  {row.status === "saved" && (
+                    <span className="text-emerald-400">✓</span>
+                  )}
+                  {row.status === "error" && (
+                    <span className="text-red-400" title="Save failed">!</span>
                   )}
                 </div>
               </div>
-
-              {/* Inline error */}
-              {row.status === "error" && (
-                <div className="px-4 pb-2 text-xs text-red-400">{row.errorMsg || "Save failed — check console"}</div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
+
+      {/* Sticky View Markets button */}
+      {anySaved && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <Link
+            href="/markets"
+            className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white font-semibold px-5 py-3 rounded-xl shadow-xl shadow-sky-500/20 transition-colors text-sm"
+          >
+            View Markets →
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Field sub-component ───────────────────────────────────────────────────────
+
+function Field({
+  label,
+  value,
+  placeholder,
+  onChange,
+  min,
+  max,
+  inputClass = "text-slate-100",
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (v: string) => void;
+  min?: number;
+  max?: number;
+  inputClass?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-xs text-slate-500 mb-1">{label}</label>
+      <input
+        type="number"
+        value={value}
+        placeholder={placeholder}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(e.target.value)}
+        className={`w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-sm text-center focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-slate-600 ${inputClass}`}
+      />
     </div>
   );
 }

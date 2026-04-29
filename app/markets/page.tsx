@@ -40,7 +40,7 @@ export default async function MarketsPage() {
         <p className="text-4xl mb-4">📋</p>
         <h2 className="text-xl font-bold text-white mb-2">No forecast for today</h2>
         <p className="text-slate-400 text-sm mb-6">
-          Enter your 7-day forecast to see edge calculations against live Polymarket prices.
+          Enter your 7-day forecast to see edge calculations against live Kalshi prices.
         </p>
         <Link
           href="/forecast"

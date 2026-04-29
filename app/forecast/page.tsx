@@ -27,6 +27,7 @@ export default async function ForecastPage() {
       high_temp: row?.high_temp ?? null,
       low_temp: row?.low_temp ?? null,
       precip_chance: row?.precip_chance ?? null,
+      precip_type: row?.precip_type ?? null,
     };
   });
 

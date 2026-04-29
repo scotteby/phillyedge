@@ -5,7 +5,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { forecast_date, day_index, target_date, high_temp, low_temp, precip_chance, notes } = body;
+    const { forecast_date, day_index, target_date, high_temp, low_temp, precip_chance, precip_type, notes } = body;
 
     const supabase = createServiceClient();
 
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
       high_temp: high_temp ?? 0,
       low_temp: low_temp ?? 0,
       precip_chance: precip_chance ?? 0,
-      precip_type: "None",
+      precip_type: precip_type ?? "None",
       notes: notes ?? null,
     });
 
