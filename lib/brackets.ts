@@ -343,6 +343,35 @@ export function groupBracketMarkets(
     // Sort brackets ascending by lower bound (null min = −∞ goes first)
     brackets.sort((a, b) => (a.range.min ?? -999) - (b.range.min ?? -999));
 
+    // ── Cascading NO ──────────────────────────────────────────────────────────
+    // If bracket X is flagged NO, every bracket further from the forecast in the
+    // same direction must also be NO — probability is monotonically decreasing
+    // away from the mode, so P(<64°) ≤ P(64-65°).  This prevents the absurd case
+    // where an adjacent bracket is NO but the even-further bracket is Neutral.
+    // Applied only when a forecast bracket exists (confirmed/no-forecast markets
+    // don't need it and have no "forecast" relation to anchor on).
+    const fIdx = brackets.findIndex((b) => b.relation === "forecast");
+    if (fIdx >= 0) {
+      // Walk below the forecast (indices fIdx-1 → 0)
+      let cascade = false;
+      for (let i = fIdx - 1; i >= 0; i--) {
+        if (brackets[i].trade_side === "NO") {
+          cascade = true;
+        } else if (cascade) {
+          brackets[i] = { ...brackets[i], signal: "sell", trade_side: "NO" };
+        }
+      }
+      // Walk above the forecast (indices fIdx+1 → end)
+      cascade = false;
+      for (let i = fIdx + 1; i < brackets.length; i++) {
+        if (brackets[i].trade_side === "NO") {
+          cascade = true;
+        } else if (cascade) {
+          brackets[i] = { ...brackets[i], signal: "sell", trade_side: "NO" };
+        }
+      }
+    }
+
     // Diagnostic: log probability distribution so we can verify the math
     if (fVal !== undefined && fVal !== null && seriesObs === null) {
       const meanLabel = effectiveMean !== fVal ? `${fVal}°→${effectiveMean}°` : `${fVal}°`;
