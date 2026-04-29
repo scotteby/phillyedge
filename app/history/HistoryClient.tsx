@@ -75,6 +75,8 @@ function calcMarkToMarket(trade: Trade, liveYesPrice: number): number {
 
 /** True when a cancelled/boosted order filled 0 contracts — nothing was spent. */
 function isVoidCancelled(trade: Trade): boolean {
+  // Sold trades are always real — never hide them regardless of order_status
+  if (trade.outcome === "sold") return false;
   return (
     (trade.order_status === "canceled" || trade.outcome === "boosted") &&
     (trade.filled_count ?? 0) === 0
@@ -121,6 +123,7 @@ function isSellable(trade: Trade): boolean {
 
 function isActiveOrder(trade: Trade): boolean {
   if (!trade.kalshi_order_id) return false;
+  if (trade.outcome !== "pending") return false; // don't poll settled/sold/boosted trades
   const s = trade.order_status;
   return s === "resting" || s === "partially_filled" || s === null;
 }
