@@ -129,9 +129,12 @@ export default function PositionBuilderModal({ group, onClose }: Props) {
   const [legs, setLegs]           = useState<PositionLeg[]>(() =>
     buildLegs(group.brackets, defaultTarget >= 0 ? defaultTarget : 0)
   );
-  const [submitting, setSubmitting] = useState(false);
-  const [submitted,  setSubmitted]  = useState(false);
-  const [error, setError]           = useState<string | null>(null);
+  const [submitting,   setSubmitting]   = useState(false);
+  const [submitted,    setSubmitted]    = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
+  const [legResults,   setLegResults]   = useState<
+    Array<{ id: string; order_id: string | null; ok: boolean; error?: string }>
+  >([]);
 
   const totalBudget   = parseFloat(budget) || 0;
   const enabledLegs   = legs.filter((l) => l.enabled);
@@ -163,53 +166,103 @@ export default function PositionBuilderModal({ group, onClose }: Props) {
     setSubmitting(true);
     setError(null);
 
-    try {
-      const target = group.brackets[targetIdx];
-      await Promise.all(
-        enabledLegs.map((leg) =>
-          fetch("/api/trades", {
+    const results = await Promise.all(
+      enabledLegs.map(async (leg) => {
+        const legAmt   = parseFloat(legAmount(leg, totalBudget).toFixed(2));
+        const legPrice = leg.price;
+
+        try {
+          const res  = await fetch("/api/place-trade", {
             method:  "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              market_id:       leg.bracket.market_id,
+              ticker:          leg.bracket.market_id,
+              side:            leg.side,
+              amount_dollars:  legAmt,
+              limit_price:     legPrice,
               market_question: `${group.title} — ${leg.bracket.range.label}`,
               target_date:     leg.bracket.end_date,
-              side:            leg.side,
-              amount_usdc:     parseFloat(legAmount(leg, totalBudget).toFixed(2)),
               market_pct:      leg.bracket.yes_pct,
               my_pct:          leg.confidence,
               edge:            leg.confidence - leg.bracket.yes_pct,
               signal:          leg.bracket.signal,
-              outcome:         "pending",
-              pnl:             null,
-              polymarket_url:  kalshiUrl(leg.bracket.market_id),
             }),
-          })
-        )
-      );
+          });
+          const json = await res.json();
+          if (!res.ok) return { id: leg.id, ok: false as const, order_id: null, error: json.error ?? "Failed" };
+          return { id: leg.id, ok: true  as const, order_id: json.order_id ?? null };
+        } catch (err) {
+          return { id: leg.id, ok: false as const, order_id: null, error: String(err) };
+        }
+      })
+    );
 
-      // Open Kalshi on the primary bracket
-      window.open(kalshiUrl(target.market_id), "_blank", "noopener");
-      setSubmitted(true);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setSubmitting(false);
-    }
+    setLegResults(results);
+    setSubmitting(false);
+    setSubmitted(true);
   }
 
   if (submitted) {
+    const okCount   = legResults.filter((r) => r.ok).length;
+    const failCount = legResults.filter((r) => !r.ok).length;
+    const allOk     = failCount === 0;
+
     return (
       <ModalShell onClose={onClose}>
-        <div className="p-8 text-center space-y-3">
-          <p className="text-4xl">✅</p>
-          <p className="text-white font-semibold text-lg">Position Logged</p>
-          <p className="text-slate-400 text-sm">
-            {enabledLegs.length} trade{enabledLegs.length !== 1 ? "s" : ""} saved ·{" "}
-            ${totalDeployed.toFixed(2)} total
-          </p>
+        <div className="p-6 space-y-4">
+          <div className="text-center space-y-2">
+            <p className="text-4xl">{allOk ? "✅" : failCount === legResults.length ? "❌" : "⚠️"}</p>
+            <p className="text-white font-bold text-lg">
+              {allOk
+                ? "All Orders Placed!"
+                : failCount === legResults.length
+                ? "Orders Failed"
+                : `${okCount} of ${legResults.length} Orders Placed`}
+            </p>
+            <p className="text-slate-400 text-sm">
+              ${totalDeployed.toFixed(2)} · {enabledLegs.length} leg{enabledLegs.length !== 1 ? "s" : ""}
+            </p>
+          </div>
+
+          {/* Per-leg results */}
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {legResults.map((r) => {
+              const leg = enabledLegs.find((l) => l.id === r.id);
+              if (!leg) return null;
+              return (
+                <div key={r.id}
+                  className={`rounded-lg px-3 py-2 text-sm flex items-start justify-between gap-2 ${
+                    r.ok
+                      ? "bg-emerald-500/10 border border-emerald-500/20"
+                      : "bg-red-500/10 border border-red-500/20"
+                  }`}>
+                  <div className="min-w-0">
+                    <span className={r.ok ? "text-emerald-400" : "text-red-400"}>
+                      {r.ok ? "✓" : "✗"}
+                    </span>
+                    <span className="text-white ml-2">{leg.label}</span>
+                    {!r.ok && r.error && (
+                      <p className="text-red-400 text-xs mt-0.5 truncate">{r.error}</p>
+                    )}
+                    {r.ok && r.order_id && (
+                      <p className="text-slate-500 text-xs font-mono mt-0.5 truncate">
+                        {r.order_id}
+                      </p>
+                    )}
+                  </div>
+                  {!r.ok && (
+                    <a href={kalshiUrl(leg.bracket.market_id)} target="_blank" rel="noopener noreferrer"
+                      className="text-xs text-sky-400 hover:text-sky-300 shrink-0 whitespace-nowrap">
+                      Kalshi ↗
+                    </a>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
           <button onClick={onClose}
-            className="mt-2 px-6 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm transition-colors">
+            className="w-full py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors">
             Close
           </button>
         </div>
@@ -380,8 +433,8 @@ export default function PositionBuilderModal({ group, onClose }: Props) {
           <button onClick={handleConfirm} disabled={submitting || enabledLegs.length === 0}
             className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors">
             {submitting
-              ? "Logging…"
-              : `Log ${enabledLegs.length} Trade${enabledLegs.length !== 1 ? "s" : ""} & Open Kalshi →`}
+              ? `Placing ${enabledLegs.length} order${enabledLegs.length !== 1 ? "s" : ""}…`
+              : `Place ${enabledLegs.length} Trade${enabledLegs.length !== 1 ? "s" : ""}`}
           </button>
         </div>
       </div>

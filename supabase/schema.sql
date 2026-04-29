@@ -41,8 +41,12 @@ create table if not exists public.trades (
   signal           text not null check (signal in ('strong-buy', 'buy', 'neutral', 'avoid')),
   outcome          text not null default 'pending' check (outcome in ('pending', 'win', 'loss')),
   pnl              numeric(12, 2),
-  polymarket_url   text
+  polymarket_url   text,
+  kalshi_order_id  text          -- Kalshi order UUID returned after placement
 );
+
+-- Migration: run this if the table already exists
+-- alter table public.trades add column if not exists kalshi_order_id text;
 
 create index if not exists trades_target_date_idx on public.trades (target_date);
 create index if not exists trades_outcome_idx on public.trades (outcome);

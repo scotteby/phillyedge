@@ -26,6 +26,7 @@ export interface Trade {
   outcome: "pending" | "win" | "loss";
   pnl: number | null;
   polymarket_url: string | null;
+  kalshi_order_id: string | null;
 }
 
 export interface MarketCache {

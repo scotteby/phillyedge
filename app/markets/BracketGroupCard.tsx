@@ -175,6 +175,20 @@ function BracketRow({ bracket, onTrade }: { bracket: BracketMarket; onTrade: () 
 
 // ── Bracket trade modal ───────────────────────────────────────────────────────
 
+type TradeStatus = "idle" | "placing" | "success" | "error";
+
+const SERIES_SLUGS: Record<string, string> = {
+  kxhighphil:   "highest-temperature-in-philadelphia",
+  kxlowtphil:   "lowest-temperature-in-philadelphia",
+  kxprecipphil: "precipitation-in-philadelphia",
+};
+
+function buildKalshiUrl(marketId: string): string {
+  const series = marketId.split("-")[0].toLowerCase();
+  const slug   = SERIES_SLUGS[series] ?? series;
+  return `https://kalshi.com/markets/${series}/${slug}/${marketId.toLowerCase()}`;
+}
+
 function BracketTradeModal({
   bracket,
   groupTitle,
@@ -186,62 +200,98 @@ function BracketTradeModal({
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const [side, setSide] = useState<"YES" | "NO">("YES");
+  const [side, setSide]     = useState<"YES" | "NO">("YES");
   const [amount, setAmount] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<TradeStatus>("idle");
+  const [error, setError]   = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    order_id: string | null;
+    count:    number;
+    price:    number;
+  } | null>(null);
 
-  const usdc = parseFloat(amount) || 0;
-  const price = side === "YES" ? bracket.yes_price : 1 - bracket.yes_price;
-  const shares = price > 0 ? usdc / price : 0;
-  const maxProfit = shares - usdc;
+  const kalshiUrl  = buildKalshiUrl(bracket.market_id);
+  const usdc       = parseFloat(amount) || 0;
+  const price      = side === "YES" ? bracket.yes_price : 1 - bracket.yes_price;
+  const shares     = price > 0 ? usdc / price : 0;
+  const maxProfit  = shares - usdc;
 
-  const seriesLower = bracket.market_id.split("-")[0].toLowerCase();
-  const tickerLower = bracket.market_id.toLowerCase();
-  const SERIES_SLUGS: Record<string, string> = {
-    kxhighphil:   "highest-temperature-in-philadelphia",
-    kxlowtphil:   "lowest-temperature-in-philadelphia",
-    kxprecipphil: "precipitation-in-philadelphia",
-  };
-  const kalshiUrl = `https://kalshi.com/markets/${seriesLower}/${SERIES_SLUGS[seriesLower] ?? seriesLower}/${tickerLower}`;
-
-  async function handleConfirm() {
+  async function handlePlace() {
     if (!usdc || usdc <= 0) { setError("Enter a valid USDC amount."); return; }
-    setSubmitting(true);
+    setStatus("placing");
     setError(null);
 
     try {
-      const res = await fetch("/api/trades", {
-        method: "POST",
+      const res  = await fetch("/api/place-trade", {
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          market_id:       bracket.market_id,
+          ticker:          bracket.market_id,
+          side,
+          amount_dollars:  usdc,
+          limit_price:     price,
           market_question: `${groupTitle} — ${bracket.range.label}`,
           target_date:     bracket.end_date,
-          side,
-          amount_usdc:     usdc,
           market_pct:      bracket.yes_pct,
           my_pct:          bracket.confidence,
           edge:            bracket.edge,
           signal:          bracket.signal,
-          outcome:         "pending",
-          pnl:             null,
-          polymarket_url:  kalshiUrl,
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Failed to log trade");
-      window.open(kalshiUrl, "_blank", "noopener");
+
+      if (!res.ok) {
+        setError(json.error ?? "Order failed.");
+        setStatus("error");
+        return;
+      }
+
+      setResult({ order_id: json.order_id, count: json.count, price: json.price_dollars });
+      setStatus("success");
       onConfirm();
     } catch (err) {
       setError(String(err));
-      setSubmitting(false);
+      setStatus("error");
     }
+  }
+
+  // ── Success screen ──────────────────────────────────────────────────────────
+  if (status === "success" && result) {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl p-8 text-center space-y-4">
+          <p className="text-5xl">✅</p>
+          <div>
+            <p className="text-white font-bold text-lg">Order Placed!</p>
+            <p className="text-slate-400 text-sm mt-1">
+              {result.count} contract{result.count !== 1 ? "s" : ""} ·{" "}
+              {(result.price * 100).toFixed(0)}¢ each · ${usdc.toFixed(2)} deployed
+            </p>
+          </div>
+          {result.order_id && (
+            <p className="text-xs text-slate-500 font-mono bg-slate-700/60 rounded-lg px-3 py-1.5 break-all">
+              Order ID: {result.order_id}
+            </p>
+          )}
+          <div className="flex gap-3 pt-2">
+            <a href={kalshiUrl} target="_blank" rel="noopener noreferrer"
+              className="flex-1 py-2 rounded-xl border border-slate-600 text-slate-300 text-sm font-medium hover:bg-slate-700 transition-colors text-center">
+              View on Kalshi ↗
+            </a>
+            <button onClick={onClose}
+              className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl">
+        {/* Header */}
         <div className="p-6 border-b border-slate-700">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -261,6 +311,7 @@ function BracketTradeModal({
         </div>
 
         <div className="p-6 space-y-4">
+          {/* Side */}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Side</label>
             <div className="flex gap-2">
@@ -276,6 +327,7 @@ function BracketTradeModal({
             </div>
           </div>
 
+          {/* Amount */}
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Amount (USDC)</label>
             <div className="relative">
@@ -287,16 +339,34 @@ function BracketTradeModal({
             </div>
           </div>
 
+          {/* Stats */}
           <div className="bg-slate-700/50 rounded-xl p-4 space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-slate-400">Price ({side})</span><span className="text-white">{(price * 100).toFixed(1)}¢</span></div>
-            <div className="flex justify-between"><span className="text-slate-400">Shares</span><span className="text-white">{shares > 0 ? shares.toFixed(2) : "—"}</span></div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Price ({side})</span>
+              <span className="text-white">{(price * 100).toFixed(1)}¢</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Contracts</span>
+              <span className="text-white">{shares > 0 ? Math.floor(shares).toLocaleString() : "—"}</span>
+            </div>
             <div className="border-t border-slate-600 pt-2 flex justify-between font-semibold">
               <span className="text-slate-300">Max Profit</span>
               <span className="text-emerald-400">{maxProfit > 0 ? `+$${maxProfit.toFixed(2)}` : "—"}</span>
             </div>
           </div>
 
-          {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-400 text-sm">{error}</div>}
+          {/* Error */}
+          {status === "error" && error && (
+            <div className="space-y-2">
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-400 text-sm">
+                {error}
+              </div>
+              <a href={kalshiUrl} target="_blank" rel="noopener noreferrer"
+                className="block w-full text-center py-2 rounded-lg border border-slate-600 text-slate-300 text-sm hover:bg-slate-700 transition-colors">
+                Open on Kalshi instead ↗
+              </a>
+            </div>
+          )}
         </div>
 
         <div className="p-6 pt-0 flex gap-3">
@@ -304,9 +374,9 @@ function BracketTradeModal({
             className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-300 text-sm font-medium hover:bg-slate-700 transition-colors">
             Cancel
           </button>
-          <button onClick={handleConfirm} disabled={submitting}
-            className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:bg-slate-600 text-white text-sm font-semibold transition-colors">
-            {submitting ? "Logging..." : "Confirm & Open Kalshi →"}
+          <button onClick={handlePlace} disabled={status === "placing"}
+            className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors">
+            {status === "placing" ? "Placing…" : "Place Trade"}
           </button>
         </div>
       </div>
