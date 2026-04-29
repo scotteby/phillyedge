@@ -534,10 +534,10 @@ function TradeCard({
         </a>
       </div>
 
-      {/* Row 2: side + amount + order status + P&L */}
-      <div className="flex items-start justify-between gap-3">
-        {/* Left: side / amount / signal / order status */}
-        <div className="flex flex-wrap items-center gap-2 text-sm">
+      {/* Row 2: side + amount + order status | P&L (pinned right) */}
+      <div className="flex items-center justify-between gap-3">
+        {/* Left: badges — wraps on very small screens, but P&L stays on this row */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
           <span className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
             {trade.side}
           </span>
@@ -548,33 +548,27 @@ function TradeCard({
             <button
               onClick={onCancel}
               disabled={canceling}
-              className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors min-h-[44px] px-1"
+              className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors py-1 px-1"
             >
               {canceling ? "Canceling…" : "Cancel"}
             </button>
           )}
         </div>
 
-        {/* Right: P&L */}
+        {/* Right: P&L — shrink-0 keeps it pinned to the right edge */}
         <div className="shrink-0 text-right">
           {trade.pnl != null ? (
-            <span className={`font-semibold ${pnlColor}`}>
+            <span className={`font-medium ${pnlColor}`}>
               {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
             </span>
           ) : mtm != null ? (
-            <div className="flex items-baseline gap-1">
-              <span className="text-xs text-slate-500">~</span>
-              <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                {mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
-              </span>
-            </div>
+            <span className={`font-medium ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
+            </span>
           ) : forecastEv != null ? (
-            <div className="flex items-baseline gap-1">
-              <span className="text-xs text-slate-500">~</span>
-              <span className={`font-semibold ${forecastEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                {forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
-              </span>
-            </div>
+            <span className={`font-medium ${forecastEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              ~{forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
+            </span>
           ) : (
             <span className="text-slate-600 text-sm">—</span>
           )}
