@@ -121,6 +121,28 @@ function toSignal(edge: number): Signal {
   return "avoid";
 }
 
+// ── Observation date extraction ───────────────────────────────────────────────
+// The event key encodes the calendar day the weather is measured: "KXHIGHPHIL-26APR29"
+// → 2026-04-29.  This is NOT the same as end_date, which is the market's close
+// time (often midnight the following day for overnight low-temp markets).
+
+const MONTH_MAP: Record<string, string> = {
+  JAN: "01", FEB: "02", MAR: "03", APR: "04", MAY: "05", JUN: "06",
+  JUL: "07", AUG: "08", SEP: "09", OCT: "10", NOV: "11", DEC: "12",
+};
+
+function observationDate(eventKey: string): string | null {
+  const parts = eventKey.toUpperCase().split("-");
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const m = parts[i].match(/^(\d{2})([A-Z]{3})(\d{2})$/);
+    if (m) {
+      const mm = MONTH_MAP[m[2]];
+      if (mm) return `20${m[1]}-${mm}-${m[3]}`;
+    }
+  }
+  return null;
+}
+
 // ── Main grouping function ────────────────────────────────────────────────────
 
 export function groupBracketMarkets(
@@ -146,11 +168,22 @@ export function groupBracketMarkets(
     const cfg     = BRACKET_SERIES[series];
     const endDate = eventMarkets[0].end_date;
 
-    // Closest forecast for this date
-    const forecast = forecasts.find((f) => f.target_date === endDate);
+    // Use the observation date (from event key) for forecast lookup.
+    // end_date is the market close time — for low-temp markets it's midnight
+    // the next calendar day, so matching on it finds the wrong forecast row.
+    const obsDate  = observationDate(eventKey) ?? endDate;
+    const forecast = forecasts.find((f) => f.target_date === obsDate);
     const fVal = forecast
       ? (forecast[cfg?.forecastKey ?? "high_temp"] as number | undefined)
       : undefined;
+
+    console.log(
+      `[brackets] ${series} ${eventKey}:`,
+      `end_date=${endDate}  obs_date=${obsDate}  matched_forecast=${obsDate}`,
+      forecast
+        ? `${cfg?.forecastKey}=${fVal}`
+        : "no forecast row found",
+    );
 
     const brackets: BracketMarket[] = eventMarkets.map((m) => {
       const range   = parseBracketRange(m.question);
