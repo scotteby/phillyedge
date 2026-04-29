@@ -391,7 +391,7 @@ export default function HistoryClient({ initialTrades }: Props) {
         />
       </div>
 
-      {/* Table */}
+      {/* Trades — empty state */}
       {trades.length === 0 ? (
         <div className="text-center py-20 text-slate-500">
           <p className="text-4xl mb-3">📊</p>
@@ -399,40 +399,61 @@ export default function HistoryClient({ initialTrades }: Props) {
           <p className="text-sm mt-1">Head to Markets to find edges and log your first trade.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700">
-                <th className="pb-3 pr-4">Date</th>
-                <th className="pb-3 pr-4">Market</th>
-                <th className="pb-3 pr-4">Side</th>
-                <th className="pb-3 pr-4">Amount</th>
-                <th className="pb-3 pr-4">Signal</th>
-                <th className="pb-3 pr-4">Edge</th>
-                <th className="pb-3 pr-4">Order</th>
-                <th className="pb-3 pr-4">Live Price</th>
-                <th className="pb-3 pr-4">Outcome</th>
-                <th className="pb-3">P&L</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-700/50">
-              {trades.map((trade) => (
-                <TradeRow
-                  key={trade.id}
-                  trade={trade}
-                  liveYesPrice={livePrices.get(trade.market_id)}
-                  today={today}
-                  updating={updating === trade.id}
-                  canceling={canceling === trade.id}
-                  onUpdateOutcome={(outcome) =>
-                    updateOutcome(trade.id, outcome, trade.amount_usdc, trade.market_pct)
-                  }
-                  onCancel={() => cancelOrder(trade.id)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {/* ── Mobile card list (< md) ─────────────────────────────────── */}
+          <div className="md:hidden space-y-3">
+            {trades.map((trade) => (
+              <TradeCard
+                key={trade.id}
+                trade={trade}
+                liveYesPrice={livePrices.get(trade.market_id)}
+                today={today}
+                updating={updating === trade.id}
+                canceling={canceling === trade.id}
+                onUpdateOutcome={(outcome) =>
+                  updateOutcome(trade.id, outcome, trade.amount_usdc, trade.market_pct)
+                }
+                onCancel={() => cancelOrder(trade.id)}
+              />
+            ))}
+          </div>
+
+          {/* ── Desktop table (≥ md) ────────────────────────────────────── */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700">
+                  <th className="pb-3 pr-4">Date</th>
+                  <th className="pb-3 pr-4">Market</th>
+                  <th className="pb-3 pr-4">Side</th>
+                  <th className="pb-3 pr-4">Amount</th>
+                  <th className="pb-3 pr-4">Signal</th>
+                  <th className="pb-3 pr-4">Edge</th>
+                  <th className="pb-3 pr-4">Order</th>
+                  <th className="pb-3 pr-4">Live Price</th>
+                  <th className="pb-3 pr-4">Outcome</th>
+                  <th className="pb-3">P&L</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {trades.map((trade) => (
+                  <TradeRow
+                    key={trade.id}
+                    trade={trade}
+                    liveYesPrice={livePrices.get(trade.market_id)}
+                    today={today}
+                    updating={updating === trade.id}
+                    canceling={canceling === trade.id}
+                    onUpdateOutcome={(outcome) =>
+                      updateOutcome(trade.id, outcome, trade.amount_usdc, trade.market_pct)
+                    }
+                    onCancel={() => cancelOrder(trade.id)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
@@ -459,15 +480,9 @@ function SummaryCard({
   );
 }
 
-function TradeRow({
-  trade,
-  liveYesPrice,
-  today,
-  updating,
-  canceling,
-  onUpdateOutcome,
-  onCancel,
-}: {
+// ── Shared props type ─────────────────────────────────────────────────────────
+
+interface TradeRowProps {
   trade: Trade;
   liveYesPrice: number | undefined;
   today: string;
@@ -475,7 +490,147 @@ function TradeRow({
   canceling: boolean;
   onUpdateOutcome: (outcome: Trade["outcome"]) => void;
   onCancel: () => void;
-}) {
+}
+
+// ── Mobile card ───────────────────────────────────────────────────────────────
+
+function TradeCard({
+  trade, liveYesPrice, today, updating, canceling, onUpdateOutcome, onCancel,
+}: TradeRowProps) {
+  const isPending   = trade.outcome === "pending";
+  const hasFuture   = trade.target_date >= today;
+  const eligible    = isPending && hasFuture;
+
+  const entryYes    = getEntryYesPrice(trade);
+  const entryPrice  = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const livePrice   = liveYesPrice != null
+    ? (trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice)
+    : null;
+  const priceDelta  = livePrice != null ? livePrice - entryPrice : null;
+  const movedFavorably = priceDelta != null && priceDelta > 0.005;
+  const movedAgainst   = priceDelta != null && priceDelta < -0.005;
+
+  const mtm         = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const forecastEv  = isPending ? calcForecastEv(trade) : null;
+  const pnlColor    = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+
+  const showCancel  = trade.kalshi_order_id &&
+    (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
+
+  return (
+    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
+      {/* Row 1: date + market name */}
+      <div className="flex items-start gap-3">
+        <span className="shrink-0 text-xs text-slate-500 pt-0.5 whitespace-nowrap">
+          {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+        </span>
+        <a
+          href={trade.polymarket_url ?? "#"}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-slate-200 hover:text-sky-400 transition-colors text-sm leading-snug"
+        >
+          {trade.market_question}
+        </a>
+      </div>
+
+      {/* Row 2: side + amount + order status + P&L */}
+      <div className="flex items-start justify-between gap-3">
+        {/* Left: side / amount / signal / order status */}
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+            {trade.side}
+          </span>
+          <span className="text-slate-300">${trade.amount_usdc.toFixed(2)}</span>
+          <SignalBadge signal={trade.signal} />
+          {trade.order_status && <OrderStatusBadge status={trade.order_status} />}
+          {showCancel && (
+            <button
+              onClick={onCancel}
+              disabled={canceling}
+              className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors min-h-[44px] px-1"
+            >
+              {canceling ? "Canceling…" : "Cancel"}
+            </button>
+          )}
+        </div>
+
+        {/* Right: P&L */}
+        <div className="shrink-0 text-right">
+          {trade.pnl != null ? (
+            <span className={`font-semibold ${pnlColor}`}>
+              {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+            </span>
+          ) : mtm != null ? (
+            <div className="flex flex-col items-end gap-0.5">
+              <div className="flex items-baseline gap-1">
+                <span className="text-xs text-slate-500">~</span>
+                <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
+                </span>
+              </div>
+              <span className="text-xs text-slate-600">if sold now</span>
+            </div>
+          ) : forecastEv != null ? (
+            <div className="flex flex-col items-end gap-0.5">
+              <div className="flex items-baseline gap-1">
+                <span className="text-xs text-slate-500">~</span>
+                <span className={`font-semibold ${forecastEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
+                </span>
+              </div>
+              <span className="text-xs text-slate-600">Forecast EV</span>
+            </div>
+          ) : (
+            <span className="text-slate-600 text-sm">—</span>
+          )}
+        </div>
+      </div>
+
+      {/* Row 3: live price (if eligible) + outcome selector */}
+      <div className="flex items-center justify-between gap-3 pt-1 border-t border-slate-700/50">
+        {/* Live price */}
+        <div className="text-xs">
+          {eligible ? (
+            livePrice != null ? (
+              <span className={
+                movedFavorably ? "text-emerald-400" :
+                movedAgainst   ? "text-red-400" :
+                "text-slate-400"
+              }>
+                {movedFavorably ? "↑ " : movedAgainst ? "↓ " : ""}
+                {(livePrice * 100).toFixed(1)}¢
+                <span className="text-slate-500 ml-1">
+                  (entry {(entryPrice * 100).toFixed(1)}¢)
+                </span>
+              </span>
+            ) : (
+              <span className="text-slate-500 animate-pulse">fetching…</span>
+            )
+          ) : (
+            <span className="text-slate-600">—</span>
+          )}
+        </div>
+
+        {/* Outcome selector */}
+        <select
+          value={trade.outcome}
+          disabled={updating}
+          onChange={(e) => onUpdateOutcome(e.target.value as Trade["outcome"])}
+          className="bg-slate-700 border border-slate-600 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50 min-h-[44px]"
+        >
+          <option value="pending">Pending</option>
+          <option value="win">Win</option>
+          <option value="loss">Loss</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
+// ── Desktop table row ─────────────────────────────────────────────────────────
+
+function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOutcome, onCancel }: TradeRowProps) {
   const edgeColor =
     trade.edge >= 25 ? "text-emerald-400" :
     trade.edge >= 10 ? "text-sky-400" :

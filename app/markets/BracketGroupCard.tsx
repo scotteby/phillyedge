@@ -62,8 +62,8 @@ export default function BracketGroupCard({ group }: Props) {
 
       {/* Bracket rows */}
       <div>
-        {/* Column headers */}
-        <div className="grid grid-cols-[1fr_80px_80px_80px_80px_100px] px-5 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
+        {/* Column headers — desktop only */}
+        <div className="hidden md:grid grid-cols-[1fr_80px_80px_80px_80px_100px] px-5 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
           <div>Bracket</div>
           <div className="text-right">Kalshi %</div>
           <div className="text-right">Our %</div>
@@ -118,58 +118,119 @@ function BracketRow({ bracket, onTrade }: { bracket: BracketMarket; onTrade: () 
     "text-slate-600";
 
   return (
-    <div className={`grid grid-cols-[1fr_80px_80px_80px_80px_100px] items-center px-5 py-2.5 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg}`}>
-      {/* Bracket label */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-white">{bracket.range.label}</span>
-        {isForecast && (
-          <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
-            YOUR FORECAST
-          </span>
-        )}
-        {isAdjacent && (
-          <span className="text-xs text-slate-500 italic">adjacent</span>
-        )}
+    <>
+      {/* ── Desktop row ────────────────────────────────────────────────── */}
+      <div className={`hidden md:grid grid-cols-[1fr_80px_80px_80px_80px_100px] items-center px-5 py-2.5 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg}`}>
+        {/* Bracket label */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-white">{bracket.range.label}</span>
+          {isForecast && (
+            <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
+              YOUR FORECAST
+            </span>
+          )}
+          {isAdjacent && (
+            <span className="text-xs text-slate-500 italic">adjacent</span>
+          )}
+        </div>
+
+        {/* Kalshi % */}
+        <div className="text-right text-sm text-slate-200">{bracket.yes_pct}%</div>
+
+        {/* Our % */}
+        <div className="text-right text-sm">
+          {bracket.confidence > 0 ? (
+            <span className={isForecast ? "text-emerald-400 font-semibold" : "text-slate-400"}>
+              ~{bracket.confidence}%
+            </span>
+          ) : (
+            <span className="text-slate-600 text-xs italic">no fcst</span>
+          )}
+        </div>
+
+        {/* Edge */}
+        <div className={`text-right text-sm font-semibold ${edgeColor}`}>
+          {bracket.confidence > 0
+            ? `${bracket.edge > 0 ? "+" : ""}${bracket.edge}`
+            : <span className="text-slate-600 text-xs italic">—</span>}
+        </div>
+
+        {/* Signal */}
+        <div className="flex justify-center">
+          {bracket.confidence > 0
+            ? <SignalBadge signal={bracket.signal} />
+            : <span className="text-slate-600 text-xs">—</span>}
+        </div>
+
+        {/* Trade button */}
+        <div className="flex justify-end">
+          <button
+            onClick={onTrade}
+            className="text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+          >
+            Trade
+          </button>
+        </div>
       </div>
 
-      {/* Kalshi % */}
-      <div className="text-right text-sm text-slate-200">{bracket.yes_pct}%</div>
+      {/* ── Mobile card ────────────────────────────────────────────────── */}
+      <div className={`md:hidden px-4 py-3 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg}`}>
+        {/* Row 1: label + tags + signal */}
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-medium text-white">{bracket.range.label}</span>
+            {isForecast && (
+              <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold shrink-0">
+                FORECAST
+              </span>
+            )}
+            {isAdjacent && (
+              <span className="text-xs text-slate-500 italic shrink-0">adjacent</span>
+            )}
+          </div>
+          <div className="shrink-0">
+            {bracket.confidence > 0
+              ? <SignalBadge signal={bracket.signal} />
+              : <span className="text-slate-600 text-xs">—</span>}
+          </div>
+        </div>
 
-      {/* Our % */}
-      <div className="text-right text-sm">
-        {bracket.confidence > 0 ? (
-          <span className={isForecast ? "text-emerald-400 font-semibold" : "text-slate-400"}>
-            ~{bracket.confidence}%
-          </span>
-        ) : (
-          <span className="text-slate-600 text-xs italic">no fcst</span>
-        )}
-      </div>
+        {/* Row 2: stats + trade button */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-4 text-xs">
+            <div className="flex flex-col">
+              <span className="text-slate-500 uppercase tracking-wide text-[10px]">Kalshi</span>
+              <span className="text-slate-200 font-medium">{bracket.yes_pct}%</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-slate-500 uppercase tracking-wide text-[10px]">Ours</span>
+              {bracket.confidence > 0 ? (
+                <span className={isForecast ? "text-emerald-400 font-semibold" : "text-slate-400"}>
+                  ~{bracket.confidence}%
+                </span>
+              ) : (
+                <span className="text-slate-600 italic">—</span>
+              )}
+            </div>
+            <div className="flex flex-col">
+              <span className="text-slate-500 uppercase tracking-wide text-[10px]">Edge</span>
+              <span className={`font-semibold ${edgeColor}`}>
+                {bracket.confidence > 0
+                  ? `${bracket.edge > 0 ? "+" : ""}${bracket.edge}`
+                  : "—"}
+              </span>
+            </div>
+          </div>
 
-      {/* Edge */}
-      <div className={`text-right text-sm font-semibold ${edgeColor}`}>
-        {bracket.confidence > 0
-          ? `${bracket.edge > 0 ? "+" : ""}${bracket.edge}`
-          : <span className="text-slate-600 text-xs italic">—</span>}
+          <button
+            onClick={onTrade}
+            className="shrink-0 bg-sky-600 hover:bg-sky-500 active:bg-sky-400 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors min-h-[44px]"
+          >
+            Trade
+          </button>
+        </div>
       </div>
-
-      {/* Signal */}
-      <div className="flex justify-center">
-        {bracket.confidence > 0
-          ? <SignalBadge signal={bracket.signal} />
-          : <span className="text-slate-600 text-xs">—</span>}
-      </div>
-
-      {/* Trade button */}
-      <div className="flex justify-end">
-        <button
-          onClick={onTrade}
-          className="text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
-        >
-          Trade
-        </button>
-      </div>
-    </div>
+    </>
   );
 }
 
