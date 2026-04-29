@@ -94,14 +94,25 @@ export default function BracketGroupCard({
 
         {/* Banners — priority: confirmed > locked > warning > best trade */}
         {group.observed_value !== null ? (
-          <div className="mt-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
-            <p className="text-xs text-amber-300 font-semibold">
-              ⚠️ Observed {isHigh ? "high" : "low"} already recorded: {group.observed_value}°F
-            </p>
-            <p className="text-[10px] text-amber-400/70 mt-0.5">
-              Market outcome is likely determined — arbitrage opportunity
-            </p>
-          </div>
+          isLow ? (
+            <div className="mt-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2">
+              <p className="text-xs text-yellow-300 font-semibold">
+                ⭐ Current low: {group.observed_value}°F — likely winner
+              </p>
+              <p className="text-[10px] text-yellow-400/70 mt-0.5">
+                A lower temp near midnight is still possible — trades remain open
+              </p>
+            </div>
+          ) : (
+            <div className="mt-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+              <p className="text-xs text-amber-300 font-semibold">
+                ⚠️ Observed high already recorded: {group.observed_value}°F
+              </p>
+              <p className="text-[10px] text-amber-400/70 mt-0.5">
+                Market outcome is likely determined — arbitrage opportunity
+              </p>
+            </div>
+          )
         ) : isLocked ? (
           <TimeGateBanner status="locked" isHigh={isHigh} isLow={isLow}
             currentObsF={currentObsF} currentObsAt={currentObsAt}
@@ -141,14 +152,25 @@ export default function BracketGroupCard({
 
         {/* Banners — desktop */}
         {group.observed_value !== null ? (
-          <div className="mt-3 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2.5">
-            <p className="text-sm text-amber-300 font-semibold">
-              ⚠️ Observed {isHigh ? "high" : "low"} already recorded: {group.observed_value}°F
-            </p>
-            <p className="text-xs text-amber-400/70 mt-0.5">
-              Market outcome is likely determined — arbitrage opportunity. Kalshi prices may not yet reflect this.
-            </p>
-          </div>
+          isLow ? (
+            <div className="mt-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-4 py-2.5">
+              <p className="text-sm text-yellow-300 font-semibold">
+                ⭐ Current low: {group.observed_value}°F — likely winner
+              </p>
+              <p className="text-xs text-yellow-400/70 mt-0.5">
+                A lower temp near midnight is still possible — trades remain open
+              </p>
+            </div>
+          ) : (
+            <div className="mt-3 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2.5">
+              <p className="text-sm text-amber-300 font-semibold">
+                ⚠️ Observed high already recorded: {group.observed_value}°F
+              </p>
+              <p className="text-xs text-amber-400/70 mt-0.5">
+                Market outcome is likely determined — arbitrage opportunity. Kalshi prices may not yet reflect this.
+              </p>
+            </div>
+          )
         ) : isLocked ? (
           <TimeGateBanner status="locked" isHigh={isHigh} isLow={isLow}
             currentObsF={currentObsF} currentObsAt={currentObsAt}
@@ -181,7 +203,7 @@ export default function BracketGroupCard({
             onTrade={() => setTradeTarget(b)}
             observed={group.observed_value}
             timeStatus={timeStatus}
-            isLikelyWinner={likelyWinnerId === b.market_id}
+            isLikelyWinner={likelyWinnerId === b.market_id || b.relation === "likely_winner"}
             isLeading={leadingId === b.market_id}
           />
         ))}

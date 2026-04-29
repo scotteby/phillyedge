@@ -70,7 +70,7 @@ export interface BracketRange {
   label: string;        // display label extracted from Kalshi title
 }
 
-export type BracketRelation = "forecast" | "adjacent" | "neutral" | "confirmed";
+export type BracketRelation = "forecast" | "adjacent" | "neutral" | "confirmed" | "likely_winner";
 
 export interface BracketMarket {
   market_id:   string;
@@ -301,7 +301,9 @@ export function groupBracketMarkets(
       if (seriesObs !== null) {
         // ── Observed outcome mode ────────────────────────────────────────────
         if (inRange(seriesObs, range)) {
-          relation   = "confirmed";
+          // Low temp: observed low could still be beaten near midnight, so mark
+          // as "likely_winner" (trades allowed) rather than locking it as "confirmed"
+          relation   = series === "KXLOWTPHIL" ? "likely_winner" : "confirmed";
           confidence = 92;
         } else {
           relation   = "neutral";
