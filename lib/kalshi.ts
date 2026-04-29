@@ -65,6 +65,18 @@ function getEndDate(m: KalshiMarket): string {
   return new Date().toISOString().split("T")[0];
 }
 
+/** Keep the first row per market_id — guards against duplicate DB rows. */
+function dedupeByMarketId(rows: Record<string, unknown>[] | null): Record<string, unknown>[] | null {
+  if (!rows) return null;
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    const id = r.market_id as string;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 export interface FetchMarketsResult {
   data:         Record<string, unknown>[] | null;
   fromCache:    boolean;
@@ -94,7 +106,7 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
         .eq("active", true)
         .gte("end_date", today)
         .order("volume", { ascending: false });
-      return { data, fromCache: true, lastUpdated: cached[0].fetched_at, rawCount: 0 };
+      return { data: dedupeByMarketId(data), fromCache: true, lastUpdated: cached[0].fetched_at, rawCount: 0 };
     }
   }
 
@@ -199,5 +211,5 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     .gte("end_date", today)
     .order("volume", { ascending: false });
 
-  return { data, fromCache: false, lastUpdated: fetchedAt, rawCount };
+  return { data: dedupeByMarketId(data), fromCache: false, lastUpdated: fetchedAt, rawCount };
 }
