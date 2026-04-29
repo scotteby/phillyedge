@@ -62,17 +62,18 @@ export interface BracketRange {
 export type BracketRelation = "forecast" | "adjacent" | "neutral" | "confirmed";
 
 export interface BracketMarket {
-  market_id:  string;
-  question:   string;
-  end_date:   string;
-  yes_price:  number;
-  yes_pct:    number;
-  volume:     number;
-  range:      BracketRange;
-  relation:   BracketRelation;
-  confidence: number; // our estimated probability 0–100
-  edge:       number;
-  signal:     Signal;
+  market_id:   string;
+  question:    string;
+  end_date:    string;
+  yes_price:   number;
+  yes_pct:     number;
+  volume:      number;
+  range:       BracketRange;
+  relation:    BracketRelation;
+  confidence:  number;            // our estimated probability 0–100
+  edge:        number;            // confidence − yes_pct (positive = YES edge, negative = NO edge)
+  signal:      Signal;
+  trade_side:  "YES" | "NO" | null; // recommended side, null when neutral or no forecast
 }
 
 export interface BracketGroup {
@@ -152,10 +153,11 @@ function isAdjacent(value: number, r: BracketRange, withinDeg = 2): boolean {
 }
 
 function toSignal(edge: number): Signal {
-  if (edge >= 25) return "strong-buy";
-  if (edge >= 10) return "buy";
-  if (edge > -10) return "neutral";
-  return "avoid";
+  if (edge >= 25)  return "strong-buy";
+  if (edge >= 10)  return "buy";
+  if (edge > -10)  return "neutral";
+  if (edge > -25)  return "sell";
+  return "strong-sell";
 }
 
 // ── Observation date extraction ───────────────────────────────────────────────
@@ -280,7 +282,11 @@ export function groupBracketMarkets(
         else                              relation = "neutral";
       }
 
-      const edge = confidence > 0 ? confidence - yes_pct : 0;
+      const edge   = confidence > 0 ? confidence - yes_pct : 0;
+      const signal = toSignal(edge);
+      const trade_side: "YES" | "NO" | null =
+        signal === "strong-buy" || signal === "buy"       ? "YES" :
+        signal === "sell"       || signal === "strong-sell" ? "NO"  : null;
 
       return {
         market_id: m.market_id,
@@ -293,17 +299,29 @@ export function groupBracketMarkets(
         relation,
         confidence,
         edge,
-        signal:    toSignal(edge),
+        signal,
+        trade_side,
       };
     });
 
     // Sort brackets ascending by lower bound (null min = −∞ goes first)
     brackets.sort((a, b) => (a.range.min ?? -999) - (b.range.min ?? -999));
 
-    // Best trade = highest positive edge among brackets we have a view on
-    const best = [...brackets]
-      .filter((b) => b.confidence > 0 && b.edge > 0)
+    // Best trade = highest absolute edge across YES and NO opportunities
+    const bestYes = [...brackets]
+      .filter((b) => b.trade_side === "YES")
       .sort((a, b) => b.edge - a.edge)[0] ?? null;
+
+    const bestNo = [...brackets]
+      .filter((b) => b.trade_side === "NO")
+      .sort((a, b) => a.edge - b.edge)[0] ?? null; // most-negative edge = strongest NO
+
+    let best: BracketMarket | null = null;
+    if (bestYes && bestNo) {
+      best = bestYes.edge >= Math.abs(bestNo.edge) ? bestYes : bestNo;
+    } else {
+      best = bestYes ?? bestNo;
+    }
 
     groups.push({
       series,

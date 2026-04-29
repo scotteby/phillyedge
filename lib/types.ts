@@ -56,7 +56,7 @@ export interface MarketCache {
   active: boolean;
 }
 
-export type Signal = "strong-buy" | "buy" | "neutral" | "avoid";
+export type Signal = "strong-buy" | "buy" | "neutral" | "sell" | "strong-sell" | "avoid";
 
 export interface MarketWithEdge extends MarketCache {
   market_type: "precip" | "high_temp" | "low_temp" | "dry_day" | "unknown";

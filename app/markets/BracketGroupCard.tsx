@@ -61,15 +61,7 @@ export default function BracketGroupCard({ group }: Props) {
         )}
 
         {group.observed_value === null && group.best && (
-          <div className="mt-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
-            <p className="text-xs text-white">
-              <span className="text-emerald-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">Best Trade</span>
-              <span className="font-semibold">{group.best.range.label} YES @ {group.best.yes_pct}%</span>
-              <span className={`ml-1.5 font-bold ${group.best.edge >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                {group.best.edge > 0 ? "+" : ""}{group.best.edge}pt edge
-              </span>
-            </p>
-          </div>
+          <BestTradeBanner best={group.best} forecastValue={group.forecast_value} compact />
         )}
       </div>
 
@@ -110,20 +102,7 @@ export default function BracketGroupCard({ group }: Props) {
         )}
 
         {group.observed_value === null && group.best && (
-          <div className="mt-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2.5">
-            <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
-            <p className="text-sm text-white">
-              <span className="font-semibold">{group.best.range.label} YES @ {group.best.yes_pct}%</span>
-              {group.forecast_value !== null && (
-                <span className="text-slate-300">
-                  {" "}— our forecast of {group.forecast_value}°F puts this bracket at ~{group.best.confidence}% likely
-                </span>
-              )}
-              <span className={`ml-2 font-bold ${group.best.edge >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                {group.best.edge > 0 ? "+" : ""}{group.best.edge}pt edge
-              </span>
-            </p>
-          </div>
+          <BestTradeBanner best={group.best} forecastValue={group.forecast_value} />
         )}
       </div>
 
@@ -165,6 +144,68 @@ export default function BracketGroupCard({ group }: Props) {
   );
 }
 
+// ── Best trade banner ─────────────────────────────────────────────────────────
+
+function BestTradeBanner({
+  best,
+  forecastValue,
+  compact = false,
+}: {
+  best: BracketMarket;
+  forecastValue: number | null;
+  compact?: boolean;
+}) {
+  const isNo       = best.trade_side === "NO";
+  const absEdge    = Math.abs(best.edge);
+  const noPricePct = Math.round((1 - best.yes_price) * 100);
+
+  const outerClass = compact
+    ? "mt-2 rounded-lg px-3 py-2"
+    : "mt-3 rounded-lg px-4 py-2.5";
+
+  if (isNo) {
+    return (
+      <div className={`${outerClass} bg-orange-500/10 border border-orange-500/30`}>
+        {!compact && (
+          <p className="text-xs text-orange-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
+        )}
+        <p className={compact ? "text-xs text-white" : "text-sm text-white"}>
+          {compact && <span className="text-orange-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">Best Trade</span>}
+          <span className="font-semibold">{best.range.label} NO @ {noPricePct}¢</span>
+          {forecastValue !== null && (
+            <span className="text-slate-300">
+              {" "}— market overpricing at {best.yes_pct}%, our model ~{best.confidence}%
+            </span>
+          )}
+          <span className="ml-1.5 font-bold text-orange-400">
+            +{absEdge}pt NO edge
+          </span>
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${outerClass} bg-emerald-500/10 border border-emerald-500/30`}>
+      {!compact && (
+        <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
+      )}
+      <p className={compact ? "text-xs text-white" : "text-sm text-white"}>
+        {compact && <span className="text-emerald-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">Best Trade</span>}
+        <span className="font-semibold">{best.range.label} YES @ {best.yes_pct}%</span>
+        {forecastValue !== null && (
+          <span className="text-slate-300">
+            {" "}— our forecast of {forecastValue}°F puts this at ~{best.confidence}% likely
+          </span>
+        )}
+        <span className={`ml-1.5 font-bold ${best.edge >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+          {best.edge > 0 ? "+" : ""}{best.edge}pt edge
+        </span>
+      </p>
+    </div>
+  );
+}
+
 // ── Bracket row ───────────────────────────────────────────────────────────────
 
 function BracketRow({ bracket, onTrade, observed }: { bracket: BracketMarket; onTrade: () => void; observed: number | null }) {
@@ -181,10 +222,11 @@ function BracketRow({ bracket, onTrade, observed }: { bracket: BracketMarket; on
     : "hover:bg-slate-700/20";
 
   const edgeColor =
-    bracket.edge >= 25 ? "text-emerald-400" :
-    bracket.edge >= 10 ? "text-sky-400" :
-    bracket.edge <= -10 ? "text-red-400" :
-    bracket.edge !== 0 ? "text-slate-300" :
+    bracket.edge >= 25  ? "text-emerald-400" :
+    bracket.edge >= 10  ? "text-sky-400"     :
+    bracket.edge <= -25 ? "text-orange-300"  :
+    bracket.edge <= -10 ? "text-orange-400"  :
+    bracket.edge !== 0  ? "text-slate-300"   :
     "text-slate-600";
 
   return (
@@ -241,9 +283,13 @@ function BracketRow({ bracket, onTrade, observed }: { bracket: BracketMarket; on
         <div className="flex justify-end">
           <button
             onClick={onTrade}
-            className="text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
+              bracket.trade_side === "NO"
+                ? "bg-orange-600/80 hover:bg-orange-500 text-white"
+                : "bg-sky-600 hover:bg-sky-500 text-white"
+            }`}
           >
-            Trade
+            {bracket.trade_side === "NO" ? "Trade NO" : "Trade"}
           </button>
         </div>
       </div>
@@ -274,12 +320,14 @@ function BracketRow({ bracket, onTrade, observed }: { bracket: BracketMarket; on
           <button
             onClick={onTrade}
             className={`shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border ${
-              bracket.signal === "avoid"
+              bracket.trade_side === "NO"
+                ? "border-orange-600 text-orange-400 hover:bg-orange-600/20 active:bg-orange-600/30"
+                : bracket.trade_side === null
                 ? "border-slate-600 text-slate-500 hover:bg-slate-700/50"
                 : "border-sky-600 text-sky-400 hover:bg-sky-600/20 active:bg-sky-600/30"
             }`}
           >
-            Trade
+            {bracket.trade_side === "NO" ? "Trade NO" : "Trade"}
           </button>
         </div>
 
@@ -327,7 +375,7 @@ function BracketTradeModal({
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const [side, setSide]     = useState<"YES" | "NO">("YES");
+  const [side, setSide]     = useState<"YES" | "NO">(bracket.trade_side === "NO" ? "NO" : "YES");
   const [amount, setAmount] = useState("");
   const [status, setStatus] = useState<TradeStatus>("idle");
   const [error, setError]   = useState<string | null>(null);
