@@ -5,63 +5,37 @@
  *   KALSHI_API_KEY_ID   — UUID from Kalshi settings → API keys
  *   KALSHI_PRIVATE_KEY  — PEM-encoded RSA private key
  *
- * Key format notes:
- *   • Supports PKCS#1 (-----BEGIN RSA PRIVATE KEY-----) and
- *     PKCS#8 (-----BEGIN PRIVATE KEY-----)
- *   • Handles .env.local quirks: escaped \n, stripped line-breaks,
- *     Windows CRLF endings
+ * Supports PKCS#1 (-----BEGIN RSA PRIVATE KEY-----) and
+ * PKCS#8 (-----BEGIN PRIVATE KEY-----), with or without
+ * escaped \n sequences in the env value.
  */
 
-import { createPrivateKey, sign, constants, type KeyObject } from "crypto";
+import { createSign, constants } from "crypto";
 
 // ── PEM normalisation ─────────────────────────────────────────────────────────
 
 function normalisePem(raw: string): string {
-  // 1. Convert literal \n (from some env editors) to real newlines
-  let pem = raw.replace(/\\n/g, "\n").replace(/\\r/g, "").replace(/\r\n/g, "\n").trim();
+  // 1. Convert escaped newlines (e.g. stored as literal \n in some env editors)
+  let pem = raw
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "")
+    .replace(/\r\n/g, "\n")
+    .trim();
 
-  // 2. If the entire key ended up on one line (no newlines in the body),
-  //    reformat it with standard 64-character base-64 lines.
-  const oneLineMatch = pem.match(
-    /^(-----BEGIN (?:RSA )?PRIVATE KEY-----)([\s\S]+?)(-----END (?:RSA )?PRIVATE KEY-----)$/
+  // 2. Extract header, body, footer and reformat body into 64-char lines.
+  //    This handles the case where line-breaks were stripped from the body.
+  const m = pem.match(
+    /^(-----BEGIN [^-]+-----)([\s\S]+?)(-----END [^-]+-----)$/
   );
-  if (oneLineMatch) {
-    const header = oneLineMatch[1];
-    const body   = oneLineMatch[2].replace(/\s+/g, ""); // strip all whitespace
-    const footer = oneLineMatch[3];
-    if (!body.includes("\n")) {
-      // Reformat body into 64-char lines
-      const lines = (body.match(/.{1,64}/g) ?? []).join("\n");
-      pem = `${header}\n${lines}\n${footer}`;
-    }
+  if (m) {
+    const header = m[1];
+    const body   = m[2].replace(/\s+/g, ""); // strip all whitespace from body
+    const footer = m[3];
+    const lines  = (body.match(/.{1,64}/g) ?? []).join("\n");
+    pem = `${header}\n${lines}\n${footer}`;
   }
 
   return pem;
-}
-
-// ── Key loading (cached per process) ─────────────────────────────────────────
-
-let _cachedKey: KeyObject | null = null;
-
-function loadPrivateKey(): KeyObject {
-  if (_cachedKey) return _cachedKey;
-
-  const raw = process.env.KALSHI_PRIVATE_KEY ?? "";
-  if (!raw) throw new Error("KALSHI_PRIVATE_KEY is not set in environment");
-
-  const pem = normalisePem(raw);
-
-  try {
-    _cachedKey = createPrivateKey({ key: pem, format: "pem" });
-    return _cachedKey;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Cannot parse KALSHI_PRIVATE_KEY: ${msg}. ` +
-      "Ensure it is a valid PEM-encoded RSA private key " +
-      "(PKCS#1 or PKCS#8) with correct line breaks."
-    );
-  }
 }
 
 // ── Header builder ────────────────────────────────────────────────────────────
@@ -75,22 +49,44 @@ export function buildKalshiAuthHeaders(
   path: string
 ): Record<string, string> {
   const accessKey = process.env.KALSHI_API_KEY_ID ?? "";
-  if (!accessKey) throw new Error("KALSHI_API_KEY_ID is not set in environment");
+  const rawKey    = process.env.KALSHI_PRIVATE_KEY ?? "";
 
-  const privateKey = loadPrivateKey(); // throws with a clear message on failure
+  if (!accessKey) throw new Error("KALSHI_API_KEY_ID is not set in environment");
+  if (!rawKey)    throw new Error("KALSHI_PRIVATE_KEY is not set in environment");
+
+  const pem = normalisePem(rawKey);
+
+  // Log non-sensitive diagnostics so failures are visible in server logs
+  console.log(
+    `[kalshi-sign] key: ${pem.split("\n").length} lines, ` +
+    `${pem.length} chars, ` +
+    `starts: "${pem.split("\n")[0]}"`
+  );
 
   const timestamp = String(Date.now());
   const message   = timestamp + method.toUpperCase() + path;
 
-  const signature = sign(
-    "SHA256",
-    Buffer.from(message),
-    {
-      key:        privateKey,
-      padding:    constants.RSA_PKCS1_PSS_PADDING,
-      saltLength: 32, // SHA-256 digest length — equivalent to RSA_PSS_SALTLEN_DIGEST
-    }
-  ).toString("base64");
+  let signature: string;
+  try {
+    const signer = createSign("SHA256");
+    signer.update(message);
+    signer.end();
+    signature = signer.sign(
+      {
+        key:        pem,
+        padding:    constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: 32, // SHA-256 digest length; equivalent to RSA_PSS_SALTLEN_DIGEST
+      },
+      "base64"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `RSA-PSS signing failed (key ${pem.length} chars, ` +
+      `${pem.split("\n").length} lines, ` +
+      `header: "${pem.split("\n")[0]}"): ${msg}`
+    );
+  }
 
   return {
     "Content-Type":             "application/json",
