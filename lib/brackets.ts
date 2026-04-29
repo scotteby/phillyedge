@@ -155,16 +155,16 @@ function groupTitle(series: string, eventKey: string): string {
   const obsDate = observationDate(eventKey);
   if (!obsDate) return base;
 
+  const dateLabel = new Date(obsDate + "T12:00:00").toLocaleDateString("en-US", {
+    month: "short", day: "numeric",
+  });
+
   const todayStr    = new Date().toISOString().split("T")[0];
   const tomorrowStr = new Date(Date.now() + 86_400_000).toISOString().split("T")[0];
 
-  if (obsDate === todayStr)    return `${base} · Today`;
-  if (obsDate === tomorrowStr) return `${base} · Tomorrow`;
-
-  const label = new Date(obsDate + "T12:00:00").toLocaleDateString("en-US", {
-    month: "short", day: "numeric",
-  });
-  return `${base} · ${label}`;
+  if (obsDate === todayStr)    return `${base} · Today, ${dateLabel}`;
+  if (obsDate === tomorrowStr) return `${base} · Tomorrow, ${dateLabel}`;
+  return `${base} · ${dateLabel}`;
 }
 
 // ── Main grouping function ────────────────────────────────────────────────────
