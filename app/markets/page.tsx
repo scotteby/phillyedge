@@ -2,7 +2,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { fetchAndCacheMarkets } from "@/lib/kalshi";
 import { calculateEdge, deduplicateByEvent } from "@/lib/edge";
 import { groupBracketMarkets } from "@/lib/brackets";
-import { fetchNWSObservation, observationTimeGates } from "@/lib/nws";
+import { fetchNWSObservation, fetchCurrentObservation, observationTimeGates, todayMarketTimeGates } from "@/lib/nws";
+import type { MarketTimeGates, CurrentObservation } from "@/lib/nws";
 import type { Forecast, MarketCache } from "@/lib/types";
 import MarketsClient from "./MarketsClient";
 import Link from "next/link";
@@ -52,11 +53,13 @@ export default async function MarketsPage() {
     );
   }
 
-  // Fetch markets + NWS observation in parallel
-  const gates = observationTimeGates();
-  const [{ data: marketsData, lastUpdated, rawCount }, nwsObs] = await Promise.all([
+  // Fetch markets + NWS observations in parallel
+  const gates     = observationTimeGates();
+  const timeGates = todayMarketTimeGates();
+  const [{ data: marketsData, lastUpdated, rawCount }, nwsObs, currentObs] = await Promise.all([
     fetchAndCacheMarkets(),
     (gates.useLow || gates.useHigh) ? fetchNWSObservation() : Promise.resolve(null),
+    fetchCurrentObservation(),
   ]);
   const allMarkets = (marketsData as MarketCache[] | null) ?? [];
 
@@ -87,6 +90,9 @@ export default async function MarketsPage() {
       markets={singleWithEdge}
       lastUpdatedLabel={lastUpdatedLabel}
       rawCount={rawCount}
+      today={today}
+      timeGates={timeGates}
+      currentObs={currentObs}
     />
   );
 }

@@ -92,6 +92,7 @@ export interface BracketGroup {
   event_key:       string;
   title:           string;
   end_date:        string;
+  obs_date:        string;              // actual weather observation date (from event key)
   brackets:        BracketMarket[];     // sorted low → high
   best:            BracketMarket | null; // highest-edge bracket with a view
   forecast_value:  number | null;        // our forecast temp for this series
@@ -373,6 +374,7 @@ export function groupBracketMarkets(
       event_key:      eventKey,
       title:          groupTitle(series, eventKey),
       end_date:       endDate,
+      obs_date:       obsDate,
       brackets,
       best,
       forecast_value: fVal ?? null,

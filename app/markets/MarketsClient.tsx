@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { MarketWithEdge } from "@/lib/types";
 import type { BracketGroup } from "@/lib/brackets";
+import type { MarketTimeGates, MarketTimeStatus, CurrentObservation } from "@/lib/nws";
 import SignalBadge from "@/components/SignalBadge";
 import TradeModal from "./TradeModal";
 import BracketGroupCard from "./BracketGroupCard";
@@ -10,13 +11,22 @@ import BracketGroupCard from "./BracketGroupCard";
 type Filter = "all" | "strong-buy" | "buy" | "avoid";
 
 interface Props {
-  groups: BracketGroup[];
-  markets: MarketWithEdge[];
+  groups:           BracketGroup[];
+  markets:          MarketWithEdge[];
   lastUpdatedLabel: string | null;
-  rawCount?: number;
+  rawCount?:        number;
+  today:            string;
+  timeGates:        MarketTimeGates;
+  currentObs:       CurrentObservation | null;
 }
 
-export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCount }: Props) {
+export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCount, today, timeGates, currentObs }: Props) {
+  function groupTimeStatus(g: BracketGroup): MarketTimeStatus {
+    if (g.obs_date !== today) return "active";
+    if (g.series === "KXHIGHPHIL") return timeGates.highStatus;
+    if (g.series === "KXLOWTPHIL") return timeGates.lowStatus;
+    return "active";
+  }
   const [filter, setFilter] = useState<Filter>("all");
   const [selectedMarket, setSelectedMarket] = useState<MarketWithEdge | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -123,7 +133,13 @@ export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCo
       {filteredGroups.length > 0 && (
         <div className="space-y-4 mb-6">
           {filteredGroups.map((g) => (
-            <BracketGroupCard key={g.event_key} group={g} />
+            <BracketGroupCard
+              key={g.event_key}
+              group={g}
+              timeStatus={groupTimeStatus(g)}
+              currentObsF={g.series === "KXHIGHPHIL" && g.obs_date === today ? (currentObs?.tempF ?? null) : null}
+              currentObsAt={g.series === "KXHIGHPHIL" && g.obs_date === today ? (currentObs?.observedAt ?? null) : null}
+            />
           ))}
         </div>
       )}

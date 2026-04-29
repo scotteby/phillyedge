@@ -112,3 +112,64 @@ export function observationTimeGates(): { useHigh: boolean; useLow: boolean } {
     useHigh: hourET >= 18,
   };
 }
+
+// ── Market validity time gates ────────────────────────────────────────────────
+
+/** "active" = full signals, "warning" = near resolution, "locked" = past resolution */
+export type MarketTimeStatus = "active" | "warning" | "locked";
+
+export interface MarketTimeGates {
+  /** KXHIGHPHIL today: active < 11 AM, warning 11–2 PM, locked ≥ 2 PM */
+  highStatus: MarketTimeStatus;
+  /** KXLOWTPHIL today: active < 8 AM, warning 8–10 AM, locked ≥ 10 AM */
+  lowStatus:  MarketTimeStatus;
+}
+
+export function todayMarketTimeGates(): MarketTimeGates {
+  const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const h = nowET.getHours() + nowET.getMinutes() / 60;
+  return {
+    highStatus: h < 11 ? "active" : h < 14 ? "warning" : "locked",
+    lowStatus:  h < 8  ? "active" : h < 10 ? "warning" : "locked",
+  };
+}
+
+// ── Live single-observation fetch ─────────────────────────────────────────────
+
+export interface CurrentObservation {
+  tempF:      number | null;  // instantaneous temp in °F
+  observedAt: string | null;  // ISO timestamp from NWS
+  fetchedAt:  string;
+}
+
+/**
+ * Fetches the latest KPHL observation (single reading, not historical).
+ * Used to display "current observed temp" and determine LIKELY WINNER bracket.
+ * Cached for 60 s at the fetch level.
+ */
+export async function fetchCurrentObservation(): Promise<CurrentObservation> {
+  const empty: CurrentObservation = { tempF: null, observedAt: null, fetchedAt: new Date().toISOString() };
+  try {
+    const res = await fetch("https://api.weather.gov/stations/KPHL/observations/latest", {
+      headers: {
+        "User-Agent": "PhillyEdge/1.0 (scott.m.eby@gmail.com)",
+        Accept:       "application/geo+json",
+      },
+      next: { revalidate: 60 },
+    });
+    if (!res.ok) {
+      console.warn("[nws] Current obs fetch failed:", res.status);
+      return empty;
+    }
+    const json  = await res.json();
+    const props = json.properties ?? {};
+    const tempC = (props.temperature as { value?: number | null } | null)?.value;
+    const tempF = cToF(tempC);
+    const observedAt = (props.timestamp as string | null) ?? null;
+    console.log(`[nws] Current KPHL: ${tempF ?? "—"}°F at ${observedAt ?? "unknown"}`);
+    return { tempF, observedAt, fetchedAt: new Date().toISOString() };
+  } catch (err) {
+    console.error("[nws] Current obs error:", err);
+    return empty;
+  }
+}
