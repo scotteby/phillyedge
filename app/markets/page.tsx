@@ -1,6 +1,6 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { fetchAndCacheMarkets } from "@/lib/kalshi";
-import { calculateEdge } from "@/lib/edge";
+import { calculateEdge, deduplicateByEvent } from "@/lib/edge";
 import type { Forecast, MarketCache } from "@/lib/types";
 import MarketsClient from "./MarketsClient";
 import Link from "next/link";
@@ -55,7 +55,7 @@ export default async function MarketsPage() {
   // Fetch (or serve from cache) Polymarket markets
   const { data: marketsData, lastUpdated, rawCount } = await fetchAndCacheMarkets();
   const markets = (marketsData as MarketCache[] | null) ?? [];
-  const marketsWithEdge = markets.map((m) => calculateEdge(m, deduped));
+  const marketsWithEdge = deduplicateByEvent(markets.map((m) => calculateEdge(m, deduped)));
 
   const lastUpdatedLabel = lastUpdated
     ? new Date(lastUpdated).toLocaleString("en-US", {

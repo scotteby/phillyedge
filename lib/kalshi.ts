@@ -10,23 +10,26 @@ interface KalshiMarket {
   ticker: string;
   event_ticker: string;
   title: string;
-  subtitle: string;
-  yes_price_dollars: number; // 0-1 decimal (replaced yes_price cents on 2026-03-12)
+  yes_bid_dollars: string;
+  yes_ask_dollars: string;
+  last_price_dollars: string;
   volume_fp: number;
   status: string;
-  expiration_time: string;
+  occurrence_datetime: string; // the actual weather date
+  strike_type: string;         // "greater" | "less" | "between"
 }
 
 function getYesPrice(m: KalshiMarket): number {
-  return m.yes_price_dollars ?? 0.5;
+  const bid = parseFloat(m.yes_bid_dollars ?? "0");
+  const ask = parseFloat(m.yes_ask_dollars ?? "0");
+  if (bid > 0 && ask > 0) return (bid + ask) / 2;
+  const last = parseFloat(m.last_price_dollars ?? "0");
+  return last > 0 ? last : 0.5;
 }
 
 function getEndDate(m: KalshiMarket): string {
-  return m.expiration_time ? m.expiration_time.split("T")[0] : "";
-}
-
-function buildQuestion(m: KalshiMarket): string {
-  return m.title || m.subtitle || m.ticker;
+  // occurrence_datetime is the date the weather event actually happens
+  return m.occurrence_datetime ? m.occurrence_datetime.split("T")[0] : "";
 }
 
 export interface FetchMarketsResult {
@@ -58,8 +61,8 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     }
   }
 
-  // Fetch all 3 Philadelphia series in parallel
-  let phillyMarkets: KalshiMarket[] = [];
+  // Fetch all Philadelphia series in parallel
+  let allMarkets: KalshiMarket[] = [];
   let rawCount = 0;
 
   try {
@@ -75,60 +78,50 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     for (const json of results) {
       const markets: KalshiMarket[] = json.markets ?? [];
       rawCount += markets.length;
-      phillyMarkets = phillyMarkets.concat(markets);
+      // Skip "between" bracket markets — only trade directional markets
+      allMarkets = allMarkets.concat(
+        markets.filter((m) => m.strike_type === "greater" || m.strike_type === "less")
+      );
     }
 
-    // Fallback: if series returned nothing, scan open markets and filter by city name
-    if (phillyMarkets.length === 0) {
-      console.log("[kalshi] Series fetch returned 0 markets — trying open market scan fallback");
-
+    // Fallback: if series returned nothing, scan and filter more carefully
+    if (allMarkets.length === 0) {
+      console.log("[kalshi] Series fetch returned 0 markets — trying fallback scan");
       const fallbackRes = await fetch(
         `${KALSHI_BASE}/markets?status=open&limit=200`,
         { headers: { Accept: "application/json" }, cache: "no-store" }
       );
-
       if (fallbackRes.ok) {
-        const fallbackJson = await fallbackRes.json();
-        const allMarkets: KalshiMarket[] = fallbackJson.markets ?? [];
-        rawCount += allMarkets.length;
-
-        console.log(`[kalshi] Fallback: ${allMarkets.length} open markets total`);
-        console.log("[kalshi] Sample titles:", allMarkets.slice(0, 10).map((m) => m.title));
-
-        // Match Philadelphia weather markets only — not sports (Eagles, Phillies, 76ers etc.)
-        const WEATHER_KW = ["temperature", "temp", "precip", "rain", "snow", "high", "low"];
-        phillyMarkets = allMarkets.filter((m) => {
-          const ticker = (m.ticker ?? "").toLowerCase();
-          const title = (m.title ?? "").toLowerCase();
-          const isPhilly = ticker.includes("phil") || title.includes("philadelphia") || title.includes("philly");
-          const isWeather = WEATHER_KW.some((k) => title.includes(k)) || ticker.startsWith("kxhigh") || ticker.startsWith("kxlowt") || ticker.startsWith("kxprecip");
-          return isPhilly && isWeather;
+        const fb = await fallbackRes.json();
+        const all: KalshiMarket[] = fb.markets ?? [];
+        rawCount += all.length;
+        console.log("[kalshi] Fallback sample:", all.slice(0, 5).map((m) => m.ticker));
+        allMarkets = all.filter((m) => {
+          const t = m.ticker.toLowerCase();
+          return (t.startsWith("kxhigh") || t.startsWith("kxlowt") || t.startsWith("kxprecip")) &&
+            t.includes("phil") &&
+            (m.strike_type === "greater" || m.strike_type === "less");
         });
-
-        console.log(`[kalshi] Fallback matched ${phillyMarkets.length} Philly markets:`, phillyMarkets.map((m) => m.ticker));
+        console.log("[kalshi] Fallback matched:", allMarkets.map((m) => m.ticker));
       }
     }
   } catch (err) {
     console.error("[kalshi] Fetch error:", err);
-    // Fall through to stale cache
   }
 
   const fetchedAt = new Date().toISOString();
 
-  if (phillyMarkets.length > 0) {
-    // Mark old records inactive
-    await supabase
-      .from("market_cache")
-      .update({ active: false })
-      .neq("id", "00000000-0000-0000-0000-000000000000");
+  if (allMarkets.length > 0) {
+    // Wipe old cache rows and insert fresh ones
+    await supabase.from("market_cache").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-    const rows = phillyMarkets.map((m) => ({
+    const rows = allMarkets.map((m) => ({
       fetched_at: fetchedAt,
       market_id: m.ticker,
-      question: buildQuestion(m),
+      question: m.title.replace(/\*\*/g, ""), // strip Kalshi markdown bold
       end_date: getEndDate(m),
       yes_price: getYesPrice(m),
-      volume: m.volume_fp ?? 0,
+      volume: parseFloat(String(m.volume_fp)) || 0,
       active: true,
     }));
 

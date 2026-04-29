@@ -1,40 +1,65 @@
 import type { Forecast, MarketCache, MarketWithEdge, Signal } from "./types";
 
-function classifyMarket(question: string): {
+function classifyMarket(question: string, marketId: string): {
   type: MarketWithEdge["market_type"];
   threshold?: number;
+  direction?: "greater" | "less";
 } {
+  const id = marketId.toUpperCase();
   const q = question.toLowerCase();
 
-  // Dry day: "dry day", "no rain", "no precipitation"
-  if (q.includes("dry day") || q.includes("no rain") || q.includes("no precip")) {
-    return { type: "dry_day" };
+  // --- Kalshi series detection (ticker-based, reliable) ---
+  if (id.startsWith("KXHIGHPHIL")) {
+    const threshold = extractThreshold(q);
+    const direction = extractDirection(q);
+    return { type: "high_temp", threshold, direction };
   }
-
-  // Precip: "rain", "precipitation", "snow" without a temp threshold
-  const precipMatch = q.match(/\bright\b|precipitation|will it rain|chance of rain|chance of snow/);
-  if (precipMatch && !q.includes("high") && !q.includes("low") && !q.includes("temperature")) {
+  if (id.startsWith("KXLOWTPHIL")) {
+    const threshold = extractThreshold(q);
+    const direction = extractDirection(q);
+    return { type: "low_temp", threshold, direction };
+  }
+  if (id.startsWith("KXPRECIPPHIL")) {
     return { type: "precip" };
   }
 
-  // High temp threshold: "high temperature above/over/exceed X"
-  const highMatch = q.match(/high(?:\s+temp(?:erature)?)?\s+(?:above|over|exceed(?:s)?|at\s+least|reach(?:es)?)\s+(\d+)/i);
-  if (highMatch) {
-    return { type: "high_temp", threshold: parseInt(highMatch[1]) };
+  // --- Generic title-based detection (fallback) ---
+  // Dry day
+  if (q.includes("dry day") || q.includes("no rain") || q.includes("no precip")) {
+    return { type: "dry_day" };
   }
-
-  // Low temp threshold: "low temperature below/under X"
-  const lowMatch = q.match(/low(?:\s+temp(?:erature)?)?\s+(?:below|under|at\s+most|drop(?:s)?\s+(?:to|below))\s+(\d+)/i);
+  // High temp threshold
+  const highMatch = q.match(/high\b.*?(above|over|exceed|>)\s*(\d+)/i) ||
+    q.match(/(\d+)\s*°?\s*(or above|or higher)/i);
+  if (highMatch && (q.includes("high") || q.includes("warm"))) {
+    const threshold = parseInt(highMatch[2] ?? highMatch[1]);
+    return { type: "high_temp", threshold, direction: "greater" };
+  }
+  // Low temp threshold
+  const lowMatch = q.match(/low\b.*?(below|under|<)\s*(\d+)/i);
   if (lowMatch) {
-    return { type: "low_temp", threshold: parseInt(lowMatch[1]) };
+    const threshold = parseInt(lowMatch[2]);
+    return { type: "low_temp", threshold, direction: "less" };
   }
-
-  // Fallback precip detection
+  // Precip
   if (q.includes("rain") || q.includes("snow") || q.includes("precip")) {
     return { type: "precip" };
   }
 
   return { type: "unknown" };
+}
+
+// Extract threshold from Kalshi titles: ">71°" → 71, "<64°" → 64
+function extractThreshold(q: string): number | undefined {
+  const m = q.match(/[><](\d+)[°\s]/);
+  return m ? parseInt(m[1]) : undefined;
+}
+
+// Extract direction from Kalshi titles: "be >71°" → greater, "be <64°" → less
+function extractDirection(q: string): "greater" | "less" | undefined {
+  if (q.includes(">")) return "greater";
+  if (q.includes("<")) return "less";
+  return undefined;
 }
 
 function toSignal(edge: number): Signal {
@@ -49,13 +74,10 @@ export function calculateEdge(
   forecasts: Forecast[]
 ): MarketWithEdge {
   const marketPct = Math.round(market.yes_price * 100);
-
-  // Find the forecast for the market's target date
   const forecast = forecasts.find((f) => f.target_date === market.end_date);
+  const { type, threshold, direction } = classifyMarket(market.question, market.market_id);
 
-  const { type, threshold } = classifyMarket(market.question);
-
-  let myPct = 50; // default when no matching forecast
+  let myPct = 50;
 
   if (forecast) {
     switch (type) {
@@ -66,17 +88,19 @@ export function calculateEdge(
         myPct = 100 - forecast.precip_chance;
         break;
       case "high_temp":
-        if (threshold !== undefined) {
-          myPct = forecast.high_temp > threshold ? 75 : 25;
+        if (threshold !== undefined && direction) {
+          myPct = direction === "greater"
+            ? (forecast.high_temp > threshold ? 75 : 25)
+            : (forecast.high_temp < threshold ? 75 : 25);
         }
         break;
       case "low_temp":
-        if (threshold !== undefined) {
-          myPct = forecast.low_temp < threshold ? 70 : 30;
+        if (threshold !== undefined && direction) {
+          myPct = direction === "less"
+            ? (forecast.low_temp < threshold ? 75 : 25)
+            : (forecast.low_temp > threshold ? 75 : 25);
         }
         break;
-      default:
-        myPct = 50;
     }
   }
 
@@ -91,4 +115,19 @@ export function calculateEdge(
     edge,
     signal: toSignal(edge),
   };
+}
+
+// After calculating edges for all markets, keep only the best-edge bracket per event.
+// Kalshi event ticker = first two hyphen segments of ticker: KXHIGHPHIL-26APR29-T71 → KXHIGHPHIL-26APR29
+export function deduplicateByEvent(markets: MarketWithEdge[]): MarketWithEdge[] {
+  const best = new Map<string, MarketWithEdge>();
+  for (const m of markets) {
+    const parts = m.market_id.split("-");
+    const eventKey = parts.length >= 2 ? `${parts[0]}-${parts[1]}` : m.market_id;
+    const existing = best.get(eventKey);
+    if (!existing || Math.abs(m.edge) > Math.abs(existing.edge)) {
+      best.set(eventKey, m);
+    }
+  }
+  return Array.from(best.values());
 }
