@@ -101,14 +101,14 @@ export async function fetchNWSObservation(): Promise<NWSObservation> {
 
 /**
  * Returns { useHigh, useLow } based on current ET time.
- * Low temp:  available after 10 AM ET — overnight low is almost certainly set.
- * High temp: available after 6 PM ET  — daytime high is almost certainly set.
+ * Low temp:  available after 7 AM ET — overnight low is almost certainly set.
+ * High temp: available after 6 PM ET — daytime high is almost certainly set.
  */
 export function observationTimeGates(): { useHigh: boolean; useLow: boolean } {
   const nowET  = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
   const hourET = nowET.getHours();
   return {
-    useLow:  hourET >= 10,
+    useLow:  hourET >= 7,
     useHigh: hourET >= 18,
   };
 }
