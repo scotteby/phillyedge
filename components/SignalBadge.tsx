@@ -10,7 +10,7 @@ const config: Record<Signal, { label: string; className: string }> = {
 export default function SignalBadge({ signal }: { signal: Signal }) {
   const { label, className } = config[signal];
   return (
-    <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${className}`}>
+    <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold whitespace-nowrap ${className}`}>
       {label}
     </span>
   );

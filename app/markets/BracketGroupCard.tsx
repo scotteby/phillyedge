@@ -130,7 +130,7 @@ export default function BracketGroupCard({ group }: Props) {
       {/* Bracket rows */}
       <div>
         {/* Column headers — desktop only */}
-        <div className="hidden md:grid grid-cols-[1fr_80px_80px_80px_80px_100px] px-5 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
+        <div className="hidden md:grid grid-cols-[1fr_80px_80px_80px_100px_90px] px-5 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
           <div>Bracket</div>
           <div className="text-right">Kalshi %</div>
           <div className="text-right">Our %</div>
@@ -190,7 +190,7 @@ function BracketRow({ bracket, onTrade, observed }: { bracket: BracketMarket; on
   return (
     <>
       {/* ── Desktop row ────────────────────────────────────────────────── */}
-      <div className={`hidden md:grid grid-cols-[1fr_80px_80px_80px_80px_100px] items-center px-5 py-2.5 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg}`}>
+      <div className={`hidden md:grid grid-cols-[1fr_80px_80px_80px_100px_90px] items-center px-5 py-2.5 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg}`}>
         {/* Bracket label */}
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-white">{bracket.range.label}</span>
