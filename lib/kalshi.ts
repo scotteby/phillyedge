@@ -147,6 +147,14 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     }));
 
     await supabase.from("market_cache").insert(rows);
+  } else {
+    // Kalshi returned nothing — reactivate whatever was in the cache so the
+    // page doesn't go blank. This handles the bust=true → Kalshi 0-result case.
+    console.log("[kalshi] 0 markets from Kalshi — reactivating existing cache rows");
+    await supabase
+      .from("market_cache")
+      .update({ active: true })
+      .neq("id", "00000000-0000-0000-0000-000000000000");
   }
 
   const { data } = await supabase
