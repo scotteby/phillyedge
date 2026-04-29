@@ -61,11 +61,9 @@ export function buildKalshiAuthHeaders(
 
   const pem = normalisePem(rawKey);
 
-  // Log non-sensitive diagnostics so failures are visible in server logs
+  // Log non-sensitive structural diagnostics (no key material)
   console.log(
-    `[kalshi-sign] key: ${pem.split("\n").length} lines, ` +
-    `${pem.length} chars, ` +
-    `starts: "${pem.split("\n")[0]}"`
+    `[kalshi-sign] key: ${pem.split("\n").length} lines, ${pem.length} chars`
   );
 
   const timestamp = String(Date.now());
@@ -88,8 +86,7 @@ export function buildKalshiAuthHeaders(
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `RSA-PSS signing failed (key ${pem.length} chars, ` +
-      `${pem.split("\n").length} lines, ` +
-      `header: "${pem.split("\n")[0]}"): ${msg}`
+      `${pem.split("\n").length} lines): ${msg}`
     );
   }
 
