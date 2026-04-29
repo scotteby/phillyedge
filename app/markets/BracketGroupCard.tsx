@@ -327,6 +327,11 @@ function BestTradeBanner({
   }
 
   // YES best trade
+  // Secondary YES: other actionable YES brackets sorted by edge descending
+  const secondaryYes = brackets
+    .filter((b) => b.trade_side === "YES" && b.market_id !== best.market_id)
+    .sort((a, b) => b.edge - a.edge);
+
   return (
     <div className={`${outerClass} bg-emerald-500/10 border border-emerald-500/30`}>
       {!compact && (
@@ -348,6 +353,19 @@ function BestTradeBanner({
           {best.edge > 0 ? "+" : ""}{best.edge}pt edge
         </span>
       </p>
+      {secondaryYes.length > 0 && (
+        <p className={`${compact ? "text-[10px]" : "text-xs"} text-slate-400 mt-1`}>
+          Also consider:{" "}
+          {secondaryYes.map((b, i) => (
+            <span key={b.market_id}>
+              {i > 0 && " · "}
+              <span className="text-slate-200 font-medium">{b.range.label} YES @ {b.yes_pct}%</span>
+              {" "}as a hedge
+              <span className="text-emerald-400 font-semibold ml-1">+{b.edge}pt</span>
+            </span>
+          ))}
+        </p>
+      )}
     </div>
   );
 }

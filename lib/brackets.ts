@@ -382,10 +382,17 @@ export function groupBracketMarkets(
       console.log(`[brackets] ${series} N(mean=${meanLabel}, σ=${std}) Σ≈${total}%: ${dist}`);
     }
 
-    // Best trade = highest absolute edge across YES and NO opportunities
-    const bestYes = [...brackets]
-      .filter((b) => b.trade_side === "YES")
-      .sort((a, b) => b.edge - a.edge)[0] ?? null;
+    // Best YES = forecast bracket when it has edge >= 10, so the banner always
+    // anchors on the bracket that matches our actual forecast rather than an
+    // adjacent bracket with marginally higher edge.  Fall back to highest-edge
+    // YES only when the forecast bracket isn't itself actionable.
+    const forecastBkt = brackets.find((b) => b.relation === "forecast");
+    const bestYes: BracketMarket | null =
+      forecastBkt?.trade_side === "YES"
+        ? forecastBkt
+        : ([...brackets]
+            .filter((b) => b.trade_side === "YES")
+            .sort((a, b) => b.edge - a.edge)[0] ?? null);
 
     const bestNo = [...brackets]
       .filter((b) => b.trade_side === "NO")
