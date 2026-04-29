@@ -17,20 +17,26 @@ function normalCDF(x: number, mean: number, std: number): number {
 }
 
 /**
- * Probability mass of N(mean,std) in the bracket, matching Kalshi's resolution:
- *   "<M"    → P(X < M)         = normalCDF(M)
- *   "[m,M]" → P(m ≤ X ≤ M)    ≈ normalCDF(M) − normalCDF(m)
- *   ">m"    → P(X ≥ m+1)       = 1 − normalCDF(m+1)
- * Returns a 0–100 integer.
+ * Probability mass of N(mean,std) in the bracket using half-integer continuity correction.
+ *
+ * Kalshi resolves to integer °F, so each bucket owns the half-degree on each side:
+ *   "<M°"   → high ≤ M−1°F  → P(X < M−0.5)       = normalCDF(M − 0.5)
+ *   "[m,M]°"→ high is m…M°F → P(m−0.5 < X < M+0.5) = normalCDF(M+0.5) − normalCDF(m−0.5)
+ *   ">m°"   → high ≥ m+1°F  → P(X > m+0.5)        = 1 − normalCDF(m + 0.5)
+ *
+ * Without this correction, a "<64°" bracket with forecast=64° integrates to
+ * normalCDF(64,64,σ) = 50% — the half-distribution bug.
+ *
+ * Returns a 0–100 integer, floored at 1 so every bracket always has a defined edge.
  */
 function bracketProb(range: BracketRange, mean: number, std: number): number {
   const { min, max } = range;
   let p: number;
   if      (min === null && max === null) p = 1;
-  else if (min === null)  p = normalCDF(max!, mean, std);
-  else if (max === null)  p = 1 - normalCDF(min + 1, mean, std);
-  else                    p = normalCDF(max, mean, std) - normalCDF(min, mean, std);
-  return Math.max(1, Math.round(p * 100)); // floor at 1% so edge is always defined
+  else if (min === null)  p = normalCDF(max! - 0.5,  mean, std);                             // <M°
+  else if (max === null)  p = 1 - normalCDF(min + 0.5, mean, std);                           // >m°
+  else                    p = normalCDF(max + 0.5, mean, std) - normalCDF(min - 0.5, mean, std); // [m,M]°
+  return Math.max(1, Math.round(p * 100));
 }
 
 /** Std-dev in °F for each confidence level. */
@@ -306,6 +312,14 @@ export function groupBracketMarkets(
 
     // Sort brackets ascending by lower bound (null min = −∞ goes first)
     brackets.sort((a, b) => (a.range.min ?? -999) - (b.range.min ?? -999));
+
+    // Diagnostic: log probability distribution so we can verify the math
+    if (fVal !== undefined && fVal !== null && seriesObs === null) {
+      const dist = brackets
+        .map((b) => `${b.range.label}=${b.confidence}% (kalshi=${b.yes_pct}%, edge=${b.edge > 0 ? "+" : ""}${b.edge})`)
+        .join("  ");
+      console.log(`[brackets] ${series} N(${fVal}°, σ=${std}): ${dist}`);
+    }
 
     // Best trade = highest absolute edge across YES and NO opportunities
     const bestYes = [...brackets]
