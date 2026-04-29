@@ -92,6 +92,16 @@ function isLivePriceEligible(trade: Trade, today: string): boolean {
   return trade.outcome === "pending" && trade.target_date >= today;
 }
 
+/** Can the user manually sell this position right now? */
+function isSellable(trade: Trade): boolean {
+  return (
+    trade.outcome === "pending" &&
+    (trade.filled_count ?? 0) > 0 &&
+    trade.kalshi_order_id != null &&
+    (trade.order_status === "filled" || trade.order_status === "partially_filled")
+  );
+}
+
 // ── Order status helpers ──────────────────────────────────────────────────────
 
 function isActiveOrder(trade: Trade): boolean {
@@ -132,9 +142,11 @@ function formatTimeAgo(date: Date): string {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function HistoryClient({ initialTrades }: Props) {
-  const [trades, setTrades]   = useState<Trade[]>(initialTrades);
+  const [trades, setTrades]       = useState<Trade[]>(initialTrades);
   const [canceling, setCanceling] = useState<string | null>(null);
-  const [showAll, setShowAll]   = useState(false);
+  const [selling, setSelling]     = useState<string | null>(null);
+  const [sellModalTrade, setSellModalTrade] = useState<Trade | null>(null);
+  const [showAll, setShowAll]     = useState(false);
   const { toasts, addToast, dismiss } = useToasts();
 
   // Live price state
@@ -252,6 +264,41 @@ export default function HistoryClient({ initialTrades }: Props) {
     return () => clearInterval(interval);
   }, [pollOrder]);
 
+  // ── Sell position ─────────────────────────────────────────────────────────
+
+  async function sellPosition(tradeId: string) {
+    setSelling(tradeId);
+    setSellModalTrade(null);
+    try {
+      const res  = await fetch("/api/sell-position", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ trade_id: tradeId }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setTrades((prev) =>
+          prev.map((t) =>
+            t.id === tradeId
+              ? { ...t, outcome: "sold" as Trade["outcome"], pnl: json.pnl ?? null }
+              : t
+          )
+        );
+        const pnl = json.pnl as number | null;
+        addToast(
+          `💰 Sold — ${pnl != null ? `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}` : "P&L pending"}`,
+          "fill"
+        );
+      } else {
+        addToast(`Sell failed: ${json.error ?? "unknown error"}`, "error");
+      }
+    } catch (err) {
+      addToast(`Sell error: ${String(err)}`, "error");
+    } finally {
+      setSelling(null);
+    }
+  }
+
   // ── Cancel order ─────────────────────────────────────────────────────────
 
   async function cancelOrder(tradeId: string) {
@@ -291,7 +338,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   // ── Summary stats (always off effectiveTrades) ────────────────────────────
 
   const total    = effectiveTrades.length;
-  const settled  = effectiveTrades.filter((t) => t.outcome !== "pending");
+  const settled  = effectiveTrades.filter((t) => t.outcome !== "pending");  // includes win/loss/sold
   const pending  = effectiveTrades.filter((t) => t.outcome === "pending");
   const wins     = effectiveTrades.filter((t) => t.outcome === "win").length;
   const winRate  = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
@@ -429,6 +476,8 @@ export default function HistoryClient({ initialTrades }: Props) {
                 today={today}
                 canceling={canceling === trade.id}
                 onCancel={() => cancelOrder(trade.id)}
+                selling={selling === trade.id}
+                onSell={() => setSellModalTrade(trade)}
               />
             ))}
           </div>
@@ -458,12 +507,24 @@ export default function HistoryClient({ initialTrades }: Props) {
                     today={today}
                     canceling={canceling === trade.id}
                     onCancel={() => cancelOrder(trade.id)}
+                    selling={selling === trade.id}
+                    onSell={() => setSellModalTrade(trade)}
                   />
                 ))}
               </tbody>
             </table>
           </div>
         </>
+      )}
+      {/* Sell confirmation modal */}
+      {sellModalTrade && (
+        <SellModal
+          trade={sellModalTrade}
+          liveYesPrice={livePrices.get(sellModalTrade.market_id)}
+          selling={selling === sellModalTrade.id}
+          onConfirm={() => sellPosition(sellModalTrade.id)}
+          onClose={() => setSellModalTrade(null)}
+        />
       )}
     </div>
   );
@@ -490,6 +551,122 @@ function SummaryCard({
   );
 }
 
+// ── Sell confirmation modal ───────────────────────────────────────────────────
+
+function SellModal({
+  trade, liveYesPrice, selling, onConfirm, onClose,
+}: {
+  trade: Trade;
+  liveYesPrice: number | undefined;
+  selling: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const entryYes   = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const livePrice  = liveYesPrice != null
+    ? (trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice)
+    : null;
+
+  const contracts  = trade.filled_count ?? 0;
+  const costBasis  = contracts * entryPrice;
+  const estProceeds = livePrice != null ? contracts * livePrice : null;
+  const estPnl      = estProceeds != null ? estProceeds - costBasis : null;
+  const pnlColor    = estPnl == null ? "text-slate-400"
+    : estPnl > 0  ? "text-emerald-400"
+    : estPnl < 0  ? "text-red-400"
+    : "text-slate-300";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="px-5 pt-5 pb-4 border-b border-slate-700">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-white font-bold text-lg">Sell Position</h2>
+              <p className="text-slate-400 text-sm mt-0.5 leading-snug">{trade.market_question}</p>
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xl leading-none mt-0.5">×</button>
+          </div>
+        </div>
+
+        {/* Details grid */}
+        <div className="px-5 py-4 grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Side</p>
+            <p className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+              {trade.side}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Contracts</p>
+            <p className="text-white font-semibold">{contracts}</p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Entry Price</p>
+            <p className="text-slate-200 font-medium">{(entryPrice * 100).toFixed(1)}¢</p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Live Price</p>
+            {livePrice != null
+              ? <p className="text-slate-200 font-medium">{(livePrice * 100).toFixed(1)}¢</p>
+              : <p className="text-slate-500">—</p>}
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Cost Basis</p>
+            <p className="text-slate-200 font-medium">${costBasis.toFixed(2)}</p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Est. Proceeds</p>
+            {estProceeds != null
+              ? <p className="text-slate-200 font-medium">${estProceeds.toFixed(2)}</p>
+              : <p className="text-slate-500">—</p>}
+          </div>
+        </div>
+
+        {/* Est. P&L */}
+        {estPnl != null && (
+          <div className="px-5 pb-3">
+            <div className="flex items-center justify-between bg-slate-900/50 rounded-lg px-4 py-2.5">
+              <span className="text-slate-400 text-sm">Estimated P&amp;L</span>
+              <span className={`font-bold text-base ${pnlColor}`}>
+                {estPnl >= 0 ? "+" : ""}${estPnl.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Disclaimer */}
+        <div className="px-5 pb-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            ⚠️ This places a <strong className="text-slate-400">market order</strong> on Kalshi.
+            Final fill price may differ slightly from the live estimate above.
+          </p>
+        </div>
+
+        {/* Buttons */}
+        <div className="px-5 pb-5 flex gap-3">
+          <button
+            onClick={onClose}
+            disabled={selling}
+            className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white transition-colors disabled:opacity-40 text-sm font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={selling}
+            className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white font-bold transition-colors text-sm"
+          >
+            {selling ? "Selling…" : `Sell ${contracts} contract${contracts !== 1 ? "s" : ""}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Shared props type ─────────────────────────────────────────────────────────
 
 interface TradeRowProps {
@@ -498,6 +675,8 @@ interface TradeRowProps {
   today: string;
   canceling: boolean;
   onCancel: () => void;
+  selling: boolean;
+  onSell: () => void;
 }
 
 // ── Outcome badge ─────────────────────────────────────────────────────────────
@@ -507,6 +686,7 @@ function OutcomeBadge({ outcome }: { outcome: Trade["outcome"] }) {
     pending: { label: "🟡 Pending", classes: "bg-yellow-500/15 text-yellow-300 border-yellow-500/30" },
     win:     { label: "🟢 Win",     classes: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
     loss:    { label: "🔴 Loss",    classes: "bg-red-500/15 text-red-300 border-red-500/30" },
+    sold:    { label: "⚪ Sold",    classes: "bg-slate-500/20 text-slate-400 border-slate-500/30" },
   };
   const { label, classes } = map[outcome ?? "pending"];
   return (
@@ -519,7 +699,7 @@ function OutcomeBadge({ outcome }: { outcome: Trade["outcome"] }) {
 // ── Mobile card ───────────────────────────────────────────────────────────────
 
 function TradeCard({
-  trade, liveYesPrice, today, canceling, onCancel,
+  trade, liveYesPrice, today, canceling, onCancel, selling, onSell,
 }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -539,6 +719,7 @@ function TradeCard({
 
   const showCancel = trade.kalshi_order_id &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
+  const showSell = isSellable(trade);
 
   const contractCount = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
 
@@ -583,6 +764,15 @@ function TradeCard({
                 className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors py-1 px-1"
               >
                 {canceling ? "Canceling…" : "Cancel"}
+              </button>
+            )}
+            {showSell && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onSell(); }}
+                disabled={selling}
+                className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors py-1 px-1 font-medium"
+              >
+                {selling ? "Selling…" : "Sell"}
               </button>
             )}
           </div>
@@ -660,7 +850,7 @@ function TradeCard({
 
 // ── Desktop table row ─────────────────────────────────────────────────────────
 
-function TradeRow({ trade, liveYesPrice, today, canceling, onCancel }: TradeRowProps) {
+function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, onSell }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
   const edgeColor =
@@ -671,6 +861,7 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel }: TradeRowP
   const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
   const showCancel = trade.kalshi_order_id &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
+  const showSell = isSellable(trade);
 
   const isPending  = trade.outcome === "pending";
   const entryYes   = getEntryYesPrice(trade);
@@ -740,6 +931,12 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel }: TradeRowP
                   <button onClick={onCancel} disabled={canceling}
                     className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors">
                     {canceling ? "Canceling…" : "Cancel"}
+                  </button>
+                )}
+                {showSell && (
+                  <button onClick={onSell} disabled={selling}
+                    className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors font-medium">
+                    {selling ? "Selling…" : "Sell"}
                   </button>
                 )}
               </>

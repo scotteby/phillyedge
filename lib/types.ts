@@ -34,7 +34,7 @@ export interface Trade {
   my_pct: number;
   edge: number;
   signal: "strong-buy" | "buy" | "neutral" | "avoid";
-  outcome: "pending" | "win" | "loss";
+  outcome: "pending" | "win" | "loss" | "sold";
   pnl: number | null;
   polymarket_url: string | null;
   kalshi_order_id: string | null;

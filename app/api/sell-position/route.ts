@@ -1,0 +1,171 @@
+import { NextRequest, NextResponse } from "next/server";
+import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
+import { createServiceClient } from "@/lib/supabase/server";
+
+const DEMO_MODE   = process.env.KALSHI_DEMO_MODE === "true";
+const KALSHI_BASE = DEMO_MODE
+  ? "https://demo-api.kalshi.co/trade-api/v2"
+  : "https://api.elections.kalshi.com/trade-api/v2";
+const ORDER_PATH  = "/trade-api/v2/portfolio/orders";
+
+export async function POST(req: NextRequest) {
+  let body: { trade_id: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  const { trade_id } = body;
+  if (!trade_id) {
+    return NextResponse.json({ error: "Missing trade_id" }, { status: 400 });
+  }
+
+  const supabase = createServiceClient();
+
+  // Look up the trade
+  const { data: trade, error: dbErr } = await supabase
+    .from("trades")
+    .select("id, market_id, side, filled_count, entry_yes_price, market_pct, kalshi_order_id, outcome, order_status")
+    .eq("id", trade_id)
+    .single();
+
+  if (dbErr || !trade) {
+    return NextResponse.json({ error: "Trade not found" }, { status: 404 });
+  }
+
+  if (trade.outcome !== "pending") {
+    return NextResponse.json({ error: "Trade is already settled" }, { status: 422 });
+  }
+
+  const filledCount = (trade.filled_count as number | null) ?? 0;
+  if (filledCount < 1) {
+    return NextResponse.json({ error: "No filled contracts to sell" }, { status: 422 });
+  }
+
+  const ticker = trade.market_id as string;
+  const side   = (trade.side as string).toLowerCase() as "yes" | "no";
+
+  // Build market sell order — market type fills at best available price
+  const orderBody = {
+    ticker,
+    action: "sell",
+    side,
+    type:   "market",
+    count:  filledCount,
+  };
+
+  console.log("[sell-position] order body:", JSON.stringify(orderBody));
+
+  // Sign the request
+  let headers: Record<string, string>;
+  try {
+    headers = buildKalshiAuthHeaders("POST", ORDER_PATH);
+  } catch (err) {
+    return NextResponse.json(
+      { error: `Signing error: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 }
+    );
+  }
+
+  // Submit sell order to Kalshi
+  let sellOrderId: string | null = null;
+  let initialOrder: Record<string, unknown> = {};
+
+  try {
+    const kalshiRes = await fetch(`${KALSHI_BASE}/portfolio/orders`, {
+      method:  "POST",
+      headers,
+      body:    JSON.stringify(orderBody),
+    });
+
+    const kalshiJson = await kalshiRes.json();
+
+    if (!kalshiRes.ok) {
+      console.error(`[sell-position] Kalshi ${kalshiRes.status}:`, JSON.stringify(kalshiJson));
+      const raw = kalshiJson?.message ?? kalshiJson?.error ?? kalshiJson;
+      const msg = typeof raw === "string" ? raw : JSON.stringify(raw);
+      return NextResponse.json({ error: `Kalshi rejected sell: ${msg}` }, { status: 502 });
+    }
+
+    initialOrder = (kalshiJson?.order ?? kalshiJson) as Record<string, unknown>;
+    sellOrderId  = (initialOrder.order_id as string | null) ?? null;
+    console.log("[sell-position] Kalshi response:", JSON.stringify(initialOrder));
+  } catch (err) {
+    return NextResponse.json(
+      { error: `Network error: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 502 }
+    );
+  }
+
+  // Attempt to fetch the sell order status for fill price
+  let filledOrder: Record<string, unknown> = initialOrder;
+  if (sellOrderId) {
+    try {
+      const apiPath    = `/trade-api/v2/portfolio/orders/${sellOrderId}`;
+      const getHeaders = buildKalshiAuthHeaders("GET", apiPath);
+      const statusRes  = await fetch(`${KALSHI_BASE}/portfolio/orders/${sellOrderId}`, {
+        method:  "GET",
+        headers: getHeaders,
+        cache:   "no-store",
+      });
+      if (statusRes.ok) {
+        const statusJson = await statusRes.json();
+        filledOrder = (statusJson.order ?? statusJson) as Record<string, unknown>;
+        console.log("[sell-position] fill status:", JSON.stringify(filledOrder));
+      }
+    } catch { /* non-fatal — fall back to initial response */ }
+  }
+
+  // Extract avg fill price (YES price in 0–1 decimal or integer cents)
+  // Kalshi may use different field names depending on version
+  const rawPrice =
+    filledOrder.avg_yes_price  ??
+    filledOrder.avg_fill_price ??
+    filledOrder.yes_price      ??
+    initialOrder.avg_yes_price ??
+    initialOrder.avg_fill_price ??
+    null;
+
+  let avgFillYesPrice: number | null = null;
+  if (rawPrice != null) {
+    const n = Number(rawPrice);
+    // Kalshi can return integer cents (e.g. 45) or decimal (e.g. 0.45)
+    avgFillYesPrice = n > 1 ? n / 100 : n;
+  }
+
+  // Calculate P&L
+  // entry_yes_price is always stored as the YES side price (0–1 decimal)
+  const entryYes: number =
+    (trade.entry_yes_price as number | null) ??
+    (side === "yes"
+      ? (trade.market_pct as number) / 100
+      : 1 - (trade.market_pct as number) / 100);
+
+  const entryCostPerContract   = side === "yes" ? entryYes       : 1 - entryYes;
+  const proceedsPerContract    = avgFillYesPrice != null
+    ? (side === "yes" ? avgFillYesPrice : 1 - avgFillYesPrice)
+    : null;
+
+  const pnl = proceedsPerContract != null
+    ? parseFloat(((proceedsPerContract - entryCostPerContract) * filledCount).toFixed(2))
+    : null;
+
+  // Update trade in Supabase: mark as sold
+  const now = new Date().toISOString();
+  await supabase
+    .from("trades")
+    .update({ outcome: "sold", pnl, last_checked_at: now })
+    .eq("id", trade_id);
+
+  console.log(`[sell-position] ${ticker} sold ${filledCount}×${side} avgFillYes=${avgFillYesPrice} pnl=${pnl}`);
+
+  return NextResponse.json({
+    ok:             true,
+    trade_id,
+    sell_order_id:  sellOrderId,
+    contracts_sold: filledCount,
+    avg_fill_yes_price: avgFillYesPrice,
+    pnl,
+  });
+}
