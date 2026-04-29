@@ -69,23 +69,6 @@ function calcMarkToMarket(trade: Trade, liveYesPrice: number): number {
   return trade.amount_usdc * (livePrice / entryPrice - 1);
 }
 
-/**
- * Forecast EV — expected profit/loss if held to expiry, based on our probability estimate.
- *
- *   p(win)        = my_pct/100  (YES) or (100−my_pct)/100  (NO)
- *   profit_if_win = amount × (1/entry_price − 1)
- *   EV            = p(win) × profit_if_win − (1−p(win)) × amount
- *
- * Uses the ENTRY price (what was actually paid), not the live price.
- * Answers: "given what I paid, what do I expect to make if my forecast is right?"
- */
-function calcForecastEv(trade: Trade): number {
-  const entryYes   = getEntryYesPrice(trade);
-  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
-  const pWin       = trade.side === "YES" ? trade.my_pct / 100 : (100 - trade.my_pct) / 100;
-  const profit     = entryPrice > 0 ? trade.amount_usdc * (1 - entryPrice) / entryPrice : 0;
-  return pWin * profit - (1 - pWin) * trade.amount_usdc;
-}
 
 /** Is this trade eligible for live-price polling? */
 function isLivePriceEligible(trade: Trade, today: string): boolean {
@@ -510,9 +493,8 @@ function TradeCard({
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
 
-  const mtm         = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
-  const forecastEv  = isPending ? calcForecastEv(trade) : null;
-  const pnlColor    = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const mtm        = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
   const showCancel  = trade.kalshi_order_id &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
@@ -564,10 +546,6 @@ function TradeCard({
           ) : mtm != null ? (
             <span className={`font-medium ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
               ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
-            </span>
-          ) : forecastEv != null ? (
-            <span className={`font-medium ${forecastEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-              ~{forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
             </span>
           ) : (
             <span className="text-slate-600 text-sm">—</span>
@@ -648,8 +626,7 @@ function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOut
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
 
   // P&L numbers for pending trades
-  const mtm         = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
-  const forecastEv  = isPending ? calcForecastEv(trade) : null;
+  const mtm = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
 
   return (
     <tr className="hover:bg-slate-800/50 transition-colors">
@@ -763,34 +740,10 @@ function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOut
             {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
           </span>
         ) : mtm != null ? (
-          // Pending with live price — mark-to-market + forecast EV label
-          <div className="flex flex-col gap-0.5">
-            {/* MTM — the real number */}
-            <div className="flex items-baseline gap-1">
-              <span className="text-xs text-slate-500 font-normal">~</span>
-              <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                {mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
-              </span>
-            </div>
-            <span className="text-xs text-slate-600">if sold now</span>
-            {/* Forecast EV — clearly labelled as speculative */}
-            {forecastEv != null && (
-              <span className={`text-xs mt-0.5 ${forecastEv >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                Forecast EV: {forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
-              </span>
-            )}
-          </div>
-        ) : forecastEv != null ? (
-          // Pending, no live price yet — forecast EV only
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-baseline gap-1">
-              <span className="text-xs text-slate-500 font-normal">~</span>
-              <span className={`font-semibold ${forecastEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                {forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
-              </span>
-            </div>
-            <span className="text-xs text-slate-600">Forecast EV</span>
-          </div>
+          // Pending with live price — mark-to-market
+          <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
+          </span>
         ) : (
           <span className="text-slate-600">—</span>
         )}
