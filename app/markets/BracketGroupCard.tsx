@@ -48,7 +48,19 @@ export default function BracketGroupCard({ group }: Props) {
           </button>
         </div>
 
-        {group.best && (
+        {/* Observed outcome banner */}
+        {group.observed_value !== null && (
+          <div className="mt-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+            <p className="text-xs text-amber-300 font-semibold">
+              ⚠️ Observed {group.series === "KXHIGHPHIL" ? "high" : "low"} already recorded: {group.observed_value}°F
+            </p>
+            <p className="text-[10px] text-amber-400/70 mt-0.5">
+              Market outcome is likely determined — arbitrage opportunity
+            </p>
+          </div>
+        )}
+
+        {group.observed_value === null && group.best && (
           <div className="mt-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
             <p className="text-xs text-white">
               <span className="text-emerald-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">Best Trade</span>
@@ -85,7 +97,19 @@ export default function BracketGroupCard({ group }: Props) {
           </button>
         </div>
 
-        {group.best && (
+        {/* Observed outcome banner — desktop */}
+        {group.observed_value !== null && (
+          <div className="mt-3 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2.5">
+            <p className="text-sm text-amber-300 font-semibold">
+              ⚠️ Observed {group.series === "KXHIGHPHIL" ? "high" : "low"} already recorded: {group.observed_value}°F
+            </p>
+            <p className="text-xs text-amber-400/70 mt-0.5">
+              Market outcome is likely determined — arbitrage opportunity. Kalshi prices may not yet reflect this.
+            </p>
+          </div>
+        )}
+
+        {group.observed_value === null && group.best && (
           <div className="mt-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2.5">
             <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
             <p className="text-sm text-white">
@@ -116,7 +140,7 @@ export default function BracketGroupCard({ group }: Props) {
         </div>
 
         {group.brackets.map((b) => (
-          <BracketRow key={b.market_id} bracket={b} onTrade={() => setTradeTarget(b)} />
+          <BracketRow key={b.market_id} bracket={b} onTrade={() => setTradeTarget(b)} observed={group.observed_value} />
         ))}
       </div>
 
@@ -143,11 +167,14 @@ export default function BracketGroupCard({ group }: Props) {
 
 // ── Bracket row ───────────────────────────────────────────────────────────────
 
-function BracketRow({ bracket, onTrade }: { bracket: BracketMarket; onTrade: () => void }) {
-  const isForecast = bracket.relation === "forecast";
-  const isAdjacent = bracket.relation === "adjacent";
+function BracketRow({ bracket, onTrade, observed }: { bracket: BracketMarket; onTrade: () => void; observed: number | null }) {
+  const isForecast  = bracket.relation === "forecast";
+  const isAdjacent  = bracket.relation === "adjacent";
+  const isConfirmed = bracket.relation === "confirmed";
 
-  const rowBg = isForecast
+  const rowBg = isConfirmed
+    ? "bg-amber-500/10 hover:bg-amber-500/15"
+    : isForecast
     ? "bg-emerald-500/8 hover:bg-emerald-500/12"
     : isAdjacent
     ? "bg-slate-700/20 hover:bg-slate-700/30"
@@ -167,7 +194,12 @@ function BracketRow({ bracket, onTrade }: { bracket: BracketMarket; onTrade: () 
         {/* Bracket label */}
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-white">{bracket.range.label}</span>
-          {isForecast && (
+          {isConfirmed && (
+            <span className="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-semibold">
+              CONFIRMED
+            </span>
+          )}
+          {isForecast && !isConfirmed && (
             <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
               YOUR FORECAST
             </span>
@@ -221,7 +253,12 @@ function BracketRow({ bracket, onTrade }: { bracket: BracketMarket; onTrade: () 
         {/* Row 1: label · tag · signal · trade btn */}
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-white flex-1 min-w-0">{bracket.range.label}</span>
-          {isForecast && (
+          {isConfirmed && (
+            <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
+              ✓ CONFIRMED
+            </span>
+          )}
+          {isForecast && !isConfirmed && (
             <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
               FCST
             </span>

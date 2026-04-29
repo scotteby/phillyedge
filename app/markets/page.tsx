@@ -2,6 +2,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { fetchAndCacheMarkets } from "@/lib/kalshi";
 import { calculateEdge, deduplicateByEvent } from "@/lib/edge";
 import { groupBracketMarkets } from "@/lib/brackets";
+import { fetchNWSObservation, observationTimeGates } from "@/lib/nws";
 import type { Forecast, MarketCache } from "@/lib/types";
 import MarketsClient from "./MarketsClient";
 import Link from "next/link";
@@ -51,12 +52,21 @@ export default async function MarketsPage() {
     );
   }
 
-  // Fetch markets
-  const { data: marketsData, lastUpdated, rawCount } = await fetchAndCacheMarkets();
+  // Fetch markets + NWS observation in parallel
+  const gates = observationTimeGates();
+  const [{ data: marketsData, lastUpdated, rawCount }, nwsObs] = await Promise.all([
+    fetchAndCacheMarkets(),
+    (gates.useLow || gates.useHigh) ? fetchNWSObservation() : Promise.resolve(null),
+  ]);
   const allMarkets = (marketsData as MarketCache[] | null) ?? [];
 
+  const observed = {
+    low:  gates.useLow  ? (nwsObs?.observedLow  ?? null) : null,
+    high: gates.useHigh ? (nwsObs?.observedHigh ?? null) : null,
+  };
+
   // Split bracket groups from single binary markets
-  const { groups, singles } = groupBracketMarkets(allMarkets, deduped);
+  const { groups, singles } = groupBracketMarkets(allMarkets, deduped, observed);
 
   // Edge-calculate single markets (deduplicated)
   const singleWithEdge = deduplicateByEvent(

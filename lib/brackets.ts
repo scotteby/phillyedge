@@ -19,7 +19,7 @@ export interface BracketRange {
   label: string;        // display label extracted from Kalshi title
 }
 
-export type BracketRelation = "forecast" | "adjacent" | "neutral";
+export type BracketRelation = "forecast" | "adjacent" | "neutral" | "confirmed";
 
 export interface BracketMarket {
   market_id:  string;
@@ -36,13 +36,14 @@ export interface BracketMarket {
 }
 
 export interface BracketGroup {
-  series:         string;
-  event_key:      string;
-  title:          string;
-  end_date:       string;
-  brackets:       BracketMarket[];     // sorted low → high
-  best:           BracketMarket | null; // highest-edge bracket with a view
-  forecast_value: number | null;        // our forecast temp for this series
+  series:          string;
+  event_key:       string;
+  title:           string;
+  end_date:        string;
+  brackets:        BracketMarket[];     // sorted low → high
+  best:            BracketMarket | null; // highest-edge bracket with a view
+  forecast_value:  number | null;        // our forecast temp for this series
+  observed_value:  number | null;        // NWS observed temp — non-null = outcome known
 }
 
 // ── Label extraction ──────────────────────────────────────────────────────────
@@ -173,7 +174,8 @@ function groupTitle(series: string, eventKey: string): string {
 
 export function groupBracketMarkets(
   markets:   MarketCache[],
-  forecasts: Forecast[]
+  forecasts: Forecast[],
+  observed?: { low: number | null; high: number | null }
 ): { groups: BracketGroup[]; singles: MarketCache[] } {
   const bracketMarkets = markets.filter((m) => isBracketSeries(m.market_id));
   const singles        = markets.filter((m) => !isBracketSeries(m.market_id));
@@ -203,38 +205,49 @@ export function groupBracketMarkets(
       ? (forecast[cfg?.forecastKey ?? "high_temp"] as number | undefined)
       : undefined;
 
+    // Observed NWS temp — only applies to today's markets
+    const todayStr    = new Date().toISOString().split("T")[0];
+    const isToday     = obsDate === todayStr;
+    const seriesObs   = isToday
+      ? (series === "KXHIGHPHIL" ? (observed?.high ?? null) : (observed?.low ?? null))
+      : null;
+
     console.log(
       `[brackets] ${series} ${eventKey}:`,
-      `end_date=${endDate}  obs_date=${obsDate}  matched_forecast=${obsDate}`,
-      forecast
-        ? `${cfg?.forecastKey}=${fVal}`
-        : "no forecast row found",
+      `end_date=${endDate}  obs_date=${obsDate}`,
+      forecast ? `${cfg?.forecastKey}=${fVal}` : "no forecast",
+      seriesObs != null ? `observed=${seriesObs}°F` : "",
     );
 
     const brackets: BracketMarket[] = eventMarkets.map((m) => {
       const range   = parseBracketRange(m.question);
       const yes_pct = Math.round(m.yes_price * 100);
 
-      // ── Confidence model ───────────────────────────────────────────────────
-      // Every bracket gets OUR % so every row shows edge data.
-      // When forecast is unavailable, confidence = 0 (no view).
       let relation:   BracketRelation = "neutral";
       let confidence  = 0;
 
-      if (fVal !== undefined && fVal !== null) {
+      if (seriesObs !== null) {
+        // ── Observed outcome mode ────────────────────────────────────────────
+        // NWS has already recorded the temp — treat as near-certain outcome.
+        if (inRange(seriesObs, range)) {
+          relation   = "confirmed";
+          confidence = 92; // high confidence — awaiting final NWS report
+        } else {
+          relation   = "neutral";
+          confidence = 5; // almost certainly NO — good for NO trades
+        }
+      } else if (fVal !== undefined && fVal !== null) {
+        // ── Forecast model ───────────────────────────────────────────────────
         if (inRange(fVal, range)) {
-          // Forecast lands in this bracket
           const dist = distToBoundary(fVal, range);
           relation   = "forecast";
-          confidence = dist <= 2 ? 40 : 60; // lower confidence near boundary
+          confidence = dist <= 2 ? 40 : 60;
         } else if (isAdjacent(fVal, range)) {
-          // Forecast is within 2° of this bracket's boundary
           relation   = "adjacent";
           confidence = 25;
         } else {
-          // Forecast is clearly outside this bracket
           relation   = "neutral";
-          confidence = 5; // very unlikely — useful for NO trades
+          confidence = 5;
         }
       }
 
@@ -271,6 +284,7 @@ export function groupBracketMarkets(
       brackets,
       best,
       forecast_value: fVal ?? null,
+      observed_value: seriesObs,
     });
   }
 
