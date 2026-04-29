@@ -1,6 +1,9 @@
 import { createServiceClient } from "@/lib/supabase/server";
 
-const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
+const DEMO_MODE   = process.env.KALSHI_DEMO_MODE === "true";
+const KALSHI_BASE = DEMO_MODE
+  ? "https://demo-api.kalshi.co/trade-api/v2"
+  : "https://api.elections.kalshi.com/trade-api/v2";
 const CACHE_TTL_MINUTES = 30;
 
 // Philadelphia weather series tickers (confirmed from kalshi.com URLs)

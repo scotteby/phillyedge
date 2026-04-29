@@ -53,11 +53,23 @@ export function buildKalshiAuthHeaders(
   method: string,
   path: string
 ): Record<string, string> {
-  const accessKey = process.env.KALSHI_API_KEY_ID ?? "";
-  const rawKey    = process.env.KALSHI_PRIVATE_KEY ?? "";
+  const demo = process.env.KALSHI_DEMO_MODE === "true";
 
-  if (!accessKey) throw new Error("KALSHI_API_KEY_ID is not set in environment");
-  if (!rawKey)    throw new Error("KALSHI_PRIVATE_KEY is not set in environment");
+  const accessKey = demo
+    ? (process.env.KALSHI_DEMO_API_KEY_ID ?? "")
+    : (process.env.KALSHI_API_KEY_ID       ?? "");
+  const rawKey = demo
+    ? (process.env.KALSHI_DEMO_PRIVATE_KEY ?? "")
+    : (process.env.KALSHI_PRIVATE_KEY      ?? "");
+
+  if (!accessKey) throw new Error(
+    demo ? "KALSHI_DEMO_API_KEY_ID is not set in environment"
+         : "KALSHI_API_KEY_ID is not set in environment"
+  );
+  if (!rawKey) throw new Error(
+    demo ? "KALSHI_DEMO_PRIVATE_KEY is not set in environment"
+         : "KALSHI_PRIVATE_KEY is not set in environment"
+  );
 
   const pem = normalisePem(rawKey);
 
