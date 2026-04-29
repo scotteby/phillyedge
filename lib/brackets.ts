@@ -143,6 +143,30 @@ function observationDate(eventKey: string): string | null {
   return null;
 }
 
+// ── Dynamic group title ───────────────────────────────────────────────────────
+
+const BASE_TITLES: Record<string, string> = {
+  KXHIGHPHIL: "High Temperature Philadelphia",
+  KXLOWTPHIL: "Low Temperature Philadelphia",
+};
+
+function groupTitle(series: string, eventKey: string): string {
+  const base    = BASE_TITLES[series] ?? `${series} Markets`;
+  const obsDate = observationDate(eventKey);
+  if (!obsDate) return base;
+
+  const todayStr    = new Date().toISOString().split("T")[0];
+  const tomorrowStr = new Date(Date.now() + 86_400_000).toISOString().split("T")[0];
+
+  if (obsDate === todayStr)    return `${base} · Today`;
+  if (obsDate === tomorrowStr) return `${base} · Tomorrow`;
+
+  const label = new Date(obsDate + "T12:00:00").toLocaleDateString("en-US", {
+    month: "short", day: "numeric",
+  });
+  return `${base} · ${label}`;
+}
+
 // ── Main grouping function ────────────────────────────────────────────────────
 
 export function groupBracketMarkets(
@@ -240,7 +264,7 @@ export function groupBracketMarkets(
     groups.push({
       series,
       event_key:      eventKey,
-      title:          cfg?.title ?? `${series} Markets`,
+      title:          groupTitle(series, eventKey),
       end_date:       endDate,
       brackets,
       best,

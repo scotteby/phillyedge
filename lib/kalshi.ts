@@ -186,18 +186,17 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     console.error("[kalshi] Fetch error:", err);
   }
 
-  // ── Keep only markets whose observation date is today ─────────────────────
-  // Kalshi sometimes returns yesterday's still-"open" markets (pending NWS
-  // resolution) and briefly shows tomorrow's markets. We only want today.
-  const todayStr = today; // already "YYYY-MM-DD"
+  // ── Drop past markets (yesterday's still-"open" pending-resolution markets) ─
+  // Kalshi keeps previous-day markets in "open" status while waiting for NWS
+  // data. Filter them out so only today's and future markets are shown.
   const beforeFilter = allMarkets.length;
   allMarkets = allMarkets.filter((m) => {
     const obs = parseObsDate(m.event_ticker ?? m.ticker);
-    return obs === null || obs === todayStr;
+    return obs === null || obs >= today;
   });
   if (allMarkets.length !== beforeFilter) {
     console.log(
-      `[kalshi] Date filter: kept ${allMarkets.length}/${beforeFilter} markets for ${todayStr}`
+      `[kalshi] Date filter: kept ${allMarkets.length}/${beforeFilter} markets (obs >= ${today})`
     );
   }
 
