@@ -178,6 +178,108 @@ function formatTimeAgo(date: Date): string {
   return `${Math.floor(mins / 60)}h ago`;
 }
 
+// ── Trade grouping ────────────────────────────────────────────────────────────
+
+const SERIES_NAMES: Record<string, string> = {
+  KXHIGHPHIL:   "High Temperature Philadelphia",
+  KXLOWTPHIL:   "Low Temperature Philadelphia",
+  KXPRECIPPHIL: "Precipitation Philadelphia",
+};
+
+function getTomorrow(today: string): string {
+  const d = new Date(today + "T12:00:00");
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().split("T")[0];
+}
+
+function getDateLabel(targetDate: string, today: string, tomorrow: string): string {
+  if (targetDate === today)    return "Today";
+  if (targetDate === tomorrow) return "Tomorrow";
+  return new Date(targetDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** Strip the series+date prefix from a market_question, leaving just the bracket range. */
+function getBracketLabel(question: string): string {
+  const sep = question.lastIndexOf(" — ");
+  return sep >= 0 ? question.slice(sep + 3) : question;
+}
+
+interface TradeGroup {
+  key:        string;   // "KXHIGHPHIL__2026-04-30"
+  series:     string;
+  seriesName: string;
+  targetDate: string;
+  dateLabel:  string;
+  trades:     Trade[];
+}
+
+const SIGNAL_RANK: Record<string, number> = {
+  "strong-buy": 0, "buy": 1, "neutral": 2, "avoid": 3,
+};
+
+function buildGroups(trades: Trade[], today: string): TradeGroup[] {
+  const tomorrow = getTomorrow(today);
+  const map = new Map<string, Trade[]>();
+
+  for (const t of trades) {
+    const series = t.market_id.split("-")[0].toUpperCase();
+    const key    = `${series}__${t.target_date}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(t);
+  }
+
+  const groups: TradeGroup[] = [];
+  for (const [key, gTrades] of map) {
+    const [series, targetDate] = key.split("__");
+    const seriesName = SERIES_NAMES[series] ?? series;
+    const dateLabel  = getDateLabel(targetDate, today, tomorrow);
+    // Sort within group: Strong Buy → Buy → Neutral → Avoid
+    const sorted = [...gTrades].sort((a, b) => {
+      const ra = SIGNAL_RANK[deriveTradeSignal(a.side, a.edge)] ?? 2;
+      const rb = SIGNAL_RANK[deriveTradeSignal(b.side, b.edge)] ?? 2;
+      return ra - rb;
+    });
+    groups.push({ key, series, seriesName, targetDate, dateLabel, trades: sorted });
+  }
+
+  // Sort groups: today → tomorrow → future (asc) → past (desc)
+  return groups.sort((a, b) => {
+    const rank = (g: TradeGroup) =>
+      g.targetDate === today    ? 0 :
+      g.targetDate === tomorrow ? 1 :
+      g.targetDate > today      ? 2 : 3;
+    const ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    return ra <= 2
+      ? a.targetDate.localeCompare(b.targetDate)   // future: oldest first
+      : b.targetDate.localeCompare(a.targetDate);  // past: newest first
+  });
+}
+
+function useCollapsedGroups() {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("phillyedge_collapsed_groups");
+      if (stored) setCollapsed(new Set(JSON.parse(stored) as string[]));
+    } catch { /* ignore */ }
+  }, []);
+
+  const toggle = useCallback((key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      try {
+        localStorage.setItem("phillyedge_collapsed_groups", JSON.stringify([...next]));
+      } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  return { collapsed, toggle };
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function HistoryClient({ initialTrades }: Props) {
@@ -191,6 +293,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [balance, setBalance]     = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
+  const { collapsed, toggle: toggleGroup } = useCollapsedGroups();
 
   // Live price state
   const [livePrices, setLivePrices]       = useState<Map<string, number>>(new Map());
@@ -460,21 +563,30 @@ export default function HistoryClient({ initialTrades }: Props) {
   // ── Summary stats (always off effectiveTrades) ────────────────────────────
 
   const total    = effectiveTrades.length;
-  const settled  = effectiveTrades.filter((t) => t.outcome !== "pending");  // includes win/loss/sold
+  const settled  = effectiveTrades.filter((t) => t.outcome !== "pending");
   const pending  = effectiveTrades.filter((t) => t.outcome === "pending");
   const wins     = effectiveTrades.filter((t) => t.outcome === "win").length;
   const winRate  = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
   const settledPnl = settled.reduce((s, t) => s + (t.pnl ?? 0), 0);
 
-  // Projected P&L: MTM for pending trades with live prices.
-  // Skip trades with no position yet (resting/cancelled with 0 fills).
   const projectedPnl = pending.reduce((sum, t) => {
     if (hasNoPosition(t)) return sum;
     const live = livePrices.get(t.market_id);
     return sum + (live != null ? calcMarkToMarket(t, live) : 0);
   }, 0);
 
+  const combinedPotential = pending.reduce((sum, t) => {
+    const p = calcPotentialProfit(t);
+    return p != null ? sum + p : sum;
+  }, 0);
+
   const liveCount = pending.filter((t) => livePrices.has(t.market_id)).length;
+
+  // ── Grouped view ─────────────────────────────────────────────────────────────
+  const groups = buildGroups(visibleTrades, today);
+  const activeMarketCount = groups.filter(
+    (g) => g.targetDate >= today && g.trades.some((t) => t.outcome === "pending")
+  ).length;
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -560,37 +672,38 @@ export default function HistoryClient({ initialTrades }: Props) {
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <SummaryCard label="Total Trades" value={String(total)}
-          sub={pending.length > 0 ? `${pending.length} pending` : undefined}
+        <SummaryCard
+          label="Active Markets"
+          value={String(activeMarketCount)}
+          sub={pending.length > 0 ? `${pending.length} open trade${pending.length !== 1 ? "s" : ""}` : "No pending trades"}
         />
         <SummaryCard
-          label="Win Rate"
-          value={winRate !== null ? `${winRate}%` : "—"}
-          sub={settled.length > 0 ? `${wins}/${settled.length} settled` : "No settled trades"}
+          label="Total Trades"
+          value={String(total)}
+          sub={settled.length > 0 ? `${wins}/${settled.length} settled won` : "No settled trades"}
         />
         <SummaryCard
-          label="Settled P&L"
-          value={settledPnl !== 0 ? `${settledPnl >= 0 ? "+" : ""}$${settledPnl.toFixed(2)}` : "$0.00"}
-          valueClass={settledPnl > 0 ? "text-emerald-400" : settledPnl < 0 ? "text-red-400" : "text-white"}
-          sub={settled.length > 0 ? `${settled.length} settled trade${settled.length !== 1 ? "s" : ""}` : undefined}
-        />
-        <SummaryCard
-          label="Projected P&L"
+          label="Net Projected P&L"
           value={pending.length > 0
             ? `${projectedPnl >= 0 ? "+" : ""}$${projectedPnl.toFixed(2)}`
-            : "—"}
-          valueClass={pending.length === 0 ? "text-slate-500"
-            : projectedPnl > 0 ? "text-emerald-400"
-            : projectedPnl < 0 ? "text-red-400"
-            : "text-white"}
+            : settledPnl !== 0 ? `${settledPnl >= 0 ? "+" : ""}$${settledPnl.toFixed(2)}` : "—"}
+          valueClass={
+            (pending.length > 0 ? projectedPnl : settledPnl) > 0 ? "text-emerald-400" :
+            (pending.length > 0 ? projectedPnl : settledPnl) < 0 ? "text-red-400" : "text-white"}
           sub={pending.length > 0
-            ? liveCount > 0 ? `live prices · ${liveCount} of ${pending.length}` : `${pending.length} pending · EV`
-            : "No pending trades"}
-          projected
+            ? liveCount > 0 ? `live · ${liveCount} of ${pending.length} priced` : "mark-to-market"
+            : settled.length > 0 ? `${settled.length} settled` : undefined}
+          projected={pending.length > 0}
+        />
+        <SummaryCard
+          label="Combined If Correct"
+          value={combinedPotential > 0 ? `+$${combinedPotential.toFixed(2)}` : "—"}
+          valueClass={combinedPotential > 0 ? "text-sky-400" : "text-slate-500"}
+          sub={pending.length > 0 ? "if all pending win" : undefined}
         />
       </div>
 
-      {/* Trades — empty state */}
+      {/* Trades — empty state or grouped list */}
       {visibleTrades.length === 0 ? (
         <div className="text-center py-20 text-slate-500">
           <p className="text-4xl mb-3">📊</p>
@@ -604,60 +717,88 @@ export default function HistoryClient({ initialTrades }: Props) {
           </p>
         </div>
       ) : (
-        <>
-          {/* ── Mobile card list (< md) ─────────────────────────────────── */}
-          <div className="md:hidden space-y-3">
-            {visibleTrades.map((trade) => (
-              <TradeCard
-                key={trade.id}
-                trade={trade}
-                liveYesPrice={livePrices.get(trade.market_id)}
-                today={today}
-                canceling={canceling === trade.id}
-                onCancel={() => cancelOrder(trade.id)}
-                selling={selling === trade.id}
-                onSell={() => setSellModalTrade(trade)}
-                boosting={boosting === trade.id}
-                onBoost={() => setBoostModalTrade(trade)}
-              />
-            ))}
-          </div>
+        <div className="space-y-4">
+          {groups.map((group) => {
+            const isCollapsed = collapsed.has(group.key);
+            const sharedProps = {
+              livePrices, today, canceling, selling, boosting,
+              onCancel: (id: string) => cancelOrder(id),
+              onSell:   (t: Trade)   => setSellModalTrade(t),
+              onBoost:  (t: Trade)   => setBoostModalTrade(t),
+            };
+            return (
+              <div key={group.key}>
+                {/* Group header */}
+                <GroupHeader
+                  group={group}
+                  collapsed={isCollapsed}
+                  onToggle={() => toggleGroup(group.key)}
+                  livePrices={livePrices}
+                  today={today}
+                />
 
-          {/* ── Desktop table (≥ md) ────────────────────────────────────── */}
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700">
-                  <th className="pb-3 pr-4">Date</th>
-                  <th className="pb-3 pr-4">Market</th>
-                  <th className="pb-3 pr-4">Side</th>
-                  <th className="pb-3 pr-4">Amount</th>
-                  <th className="pb-3 pr-4">Signal</th>
-                  <th className="pb-3 pr-4">Edge</th>
-                  <th className="pb-3 pr-4">Order</th>
-                  <th className="pb-3 pr-4">Outcome</th>
-                  <th className="pb-3">P&L</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700/50">
-                {visibleTrades.map((trade) => (
-                  <TradeRow
-                    key={trade.id}
-                    trade={trade}
-                    liveYesPrice={livePrices.get(trade.market_id)}
-                    today={today}
-                    canceling={canceling === trade.id}
-                    onCancel={() => cancelOrder(trade.id)}
-                    selling={selling === trade.id}
-                    onSell={() => setSellModalTrade(trade)}
-                    boosting={boosting === trade.id}
-                    onBoost={() => setBoostModalTrade(trade)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+                {/* Trades within group */}
+                {!isCollapsed && (
+                  <>
+                    {/* ── Mobile ──────────────────────────────────────── */}
+                    <div className="md:hidden mt-2 pl-2 space-y-2">
+                      {group.trades.map((trade) => (
+                        <TradeCard
+                          key={trade.id}
+                          trade={trade}
+                          liveYesPrice={livePrices.get(trade.market_id)}
+                          today={today}
+                          canceling={canceling === trade.id}
+                          onCancel={() => cancelOrder(trade.id)}
+                          selling={selling === trade.id}
+                          onSell={() => setSellModalTrade(trade)}
+                          boosting={boosting === trade.id}
+                          onBoost={() => setBoostModalTrade(trade)}
+                          groupMode
+                        />
+                      ))}
+                    </div>
+
+                    {/* ── Desktop ──────────────────────────────────────── */}
+                    <div className="hidden md:block mt-1 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
+                            <th className="py-2 pr-4 pl-4">Bracket</th>
+                            <th className="py-2 pr-4">Side</th>
+                            <th className="py-2 pr-4">Amount</th>
+                            <th className="py-2 pr-4">Signal</th>
+                            <th className="py-2 pr-4">Edge</th>
+                            <th className="py-2 pr-4">Order</th>
+                            <th className="py-2 pr-4">Outcome</th>
+                            <th className="py-2">P&L</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-700/30">
+                          {group.trades.map((trade) => (
+                            <TradeRow
+                              key={trade.id}
+                              trade={trade}
+                              liveYesPrice={livePrices.get(trade.market_id)}
+                              today={today}
+                              canceling={canceling === trade.id}
+                              onCancel={() => cancelOrder(trade.id)}
+                              selling={selling === trade.id}
+                              onSell={() => setSellModalTrade(trade)}
+                              boosting={boosting === trade.id}
+                              onBoost={() => setBoostModalTrade(trade)}
+                              groupMode
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
       {/* Boost modal */}
       {boostModalTrade && (
@@ -1029,6 +1170,84 @@ function BoostModal({
   );
 }
 
+// ── Group header ──────────────────────────────────────────────────────────────
+
+function GroupHeader({
+  group, collapsed, onToggle, livePrices,
+}: {
+  group:      TradeGroup;
+  collapsed:  boolean;
+  onToggle:   () => void;
+  livePrices: Map<string, number>;
+  today:      string;
+}) {
+  const pendingTrades = group.trades.filter((t) => t.outcome === "pending");
+  const settledTrades = group.trades.filter((t) => t.outcome !== "pending");
+
+  const settledPnl   = settledTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  const projectedPnl = pendingTrades.reduce((sum, t) => {
+    if (hasNoPosition(t)) return sum;
+    const live = livePrices.get(t.market_id);
+    return sum + (live != null ? calcMarkToMarket(t, live) : 0);
+  }, 0);
+  const netPnl = settledPnl + projectedPnl;
+
+  const combinedPotential = pendingTrades.reduce((sum, t) => {
+    const p = calcPotentialProfit(t);
+    return p != null ? sum + p : sum;
+  }, 0);
+
+  const hasMtm  = pendingTrades.some((t) => livePrices.has(t.market_id));
+  const hasPnl  = settledTrades.length > 0 || hasMtm;
+  const showNet = hasPnl || settledTrades.length > 0;
+
+  const pendingCount  = pendingTrades.length;
+  const settledCount  = settledTrades.length;
+  const countLabel    = pendingCount > 0 && settledCount > 0
+    ? `${pendingCount} pending · ${settledCount} settled`
+    : pendingCount > 0
+    ? `${pendingCount} pending`
+    : `${settledCount} settled`;
+
+  return (
+    <button
+      onClick={onToggle}
+      className="w-full flex items-center justify-between gap-4 px-4 py-3 bg-slate-800/60 border border-slate-700 rounded-xl hover:border-slate-600 transition-colors text-left"
+    >
+      {/* Left: name + meta */}
+      <div className="flex items-center gap-3 min-w-0">
+        <span className={`text-slate-400 text-base leading-none transition-transform duration-150 shrink-0 ${collapsed ? "" : "rotate-90"}`}>›</span>
+        <div className="min-w-0">
+          <p className="text-white font-semibold text-sm">{group.seriesName}</p>
+          <p className="text-slate-400 text-xs mt-0.5">
+            {group.dateLabel} · {countLabel}
+          </p>
+        </div>
+      </div>
+
+      {/* Right: P&L / potential */}
+      <div className="flex items-center gap-5 shrink-0">
+        {showNet && (
+          <div className="text-right">
+            <p className="text-slate-500 uppercase tracking-wide text-[10px]">
+              {hasMtm ? "~Net P&L" : "Net P&L"}
+            </p>
+            <p className={`text-sm font-semibold ${netPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(2)}
+            </p>
+          </div>
+        )}
+        {combinedPotential > 0 && (
+          <div className="text-right">
+            <p className="text-slate-500 uppercase tracking-wide text-[10px]">If correct</p>
+            <p className="text-sm font-semibold text-sky-400">+${combinedPotential.toFixed(2)}</p>
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
 // ── Shared props type ─────────────────────────────────────────────────────────
 
 interface TradeRowProps {
@@ -1041,6 +1260,8 @@ interface TradeRowProps {
   onSell: () => void;
   boosting: boolean;
   onBoost: () => void;
+  /** When true: hide date column; show bracket label instead of full question */
+  groupMode?: boolean;
 }
 
 // ── Outcome badge ─────────────────────────────────────────────────────────────
@@ -1065,6 +1286,7 @@ function OutcomeBadge({ outcome }: { outcome: Trade["outcome"] }) {
 
 function TradeCard({
   trade, liveYesPrice, today, canceling, onCancel, selling, onSell, boosting, onBoost,
+  groupMode = false,
 }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -1098,9 +1320,11 @@ function TradeCard({
       <div className="p-4 space-y-3">
         {/* Row 1: date + market name + chevron */}
         <div className="flex items-start gap-2">
-          <span className="shrink-0 text-xs text-slate-500 pt-0.5 whitespace-nowrap">
-            {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-          </span>
+          {!groupMode && (
+            <span className="shrink-0 text-xs text-slate-500 pt-0.5 whitespace-nowrap">
+              {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+            </span>
+          )}
           <a
             href={trade.polymarket_url ?? "#"}
             target="_blank"
@@ -1108,7 +1332,7 @@ function TradeCard({
             className="flex-1 text-slate-200 hover:text-sky-400 transition-colors text-sm leading-snug"
             onClick={(e) => e.stopPropagation()}
           >
-            {trade.market_question}
+            {groupMode ? getBracketLabel(trade.market_question) : trade.market_question}
           </a>
           <span className={`shrink-0 text-slate-500 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>
             ›
@@ -1234,7 +1458,7 @@ function TradeCard({
 
 // ── Desktop table row ─────────────────────────────────────────────────────────
 
-function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, onSell, boosting, onBoost }: TradeRowProps) {
+function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, onSell, boosting, onBoost, groupMode = false }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
   const edgeColor =
@@ -1268,17 +1492,19 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
         className="hover:bg-slate-800/50 transition-colors cursor-pointer"
         onClick={() => setExpanded((v) => !v)}
       >
-        {/* Date */}
-        <td className="py-3 pr-4 text-slate-400 whitespace-nowrap">
-          {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-        </td>
+        {/* Date — hidden in groupMode */}
+        {!groupMode && (
+          <td className="py-3 pr-4 text-slate-400 whitespace-nowrap pl-4">
+            {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+          </td>
+        )}
 
-        {/* Market */}
-        <td className="py-3 pr-4 max-w-[200px]">
+        {/* Market / Bracket */}
+        <td className={`py-3 pr-4 max-w-[220px] ${groupMode ? "pl-4" : ""}`}>
           <a href={trade.polymarket_url ?? "#"} target="_blank" rel="noopener noreferrer"
             className="text-slate-200 hover:text-sky-400 transition-colors line-clamp-2 leading-snug"
             onClick={(e) => e.stopPropagation()}>
-            {trade.market_question}
+            {groupMode ? getBracketLabel(trade.market_question) : trade.market_question}
           </a>
         </td>
 
@@ -1381,7 +1607,7 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
       {/* Expandable detail row */}
       {expanded && (
         <tr>
-          <td colSpan={8} className="pb-3 pt-0">
+          <td colSpan={groupMode ? 8 : 9} className="pb-3 pt-0">
             <div className="mx-0 bg-slate-900/40 border border-slate-700/40 rounded-lg px-4 py-3 flex gap-8 text-xs">
               <div>
                 <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Entry</p>
