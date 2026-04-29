@@ -82,9 +82,22 @@ export async function POST(req: NextRequest) {
   // ── Sign and submit to Kalshi ────────────────────────────────────────────────
   let orderId: string | null = null;
 
+  // ── Sign the request (key errors surface here, before any network call) ────
+  let headers: Record<string, string>;
   try {
-    const headers = buildKalshiAuthHeaders("POST", ORDER_PATH);
+    headers = buildKalshiAuthHeaders("POST", ORDER_PATH);
+  } catch (err) {
+    return NextResponse.json(
+      {
+        error:      `Signing error: ${err instanceof Error ? err.message : String(err)}`,
+        kalshi_url: kalshiUrl(ticker),
+      },
+      { status: 500 }
+    );
+  }
 
+  // ── Submit order to Kalshi ──────────────────────────────────────────────────
+  try {
     const kalshiRes = await fetch(`${KALSHI_BASE}/portfolio/orders`, {
       method:  "POST",
       headers,
@@ -114,7 +127,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     return NextResponse.json(
       {
-        error:      `Network error reaching Kalshi: ${String(err)}`,
+        error:      `Network error reaching Kalshi: ${err instanceof Error ? err.message : String(err)}`,
         kalshi_url: kalshiUrl(ticker),
       },
       { status: 502 }
