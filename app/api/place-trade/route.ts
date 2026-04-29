@@ -116,7 +116,8 @@ export async function POST(req: NextRequest) {
       // Log full Kalshi response server-side for debugging
       console.error(`[place-trade] Kalshi ${kalshiRes.status}:`, JSON.stringify(kalshiJson));
 
-      const kalshiMsg = kalshiJson?.message ?? kalshiJson?.error ?? `HTTP ${kalshiRes.status}`;
+      const raw = kalshiJson?.message ?? kalshiJson?.error ?? kalshiJson;
+      const kalshiMsg = typeof raw === "string" ? raw : JSON.stringify(raw);
 
       // Build a user-facing error with a hint for common status codes
       let hint = "";
