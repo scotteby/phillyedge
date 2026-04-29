@@ -49,23 +49,42 @@ function getEntryYesPrice(trade: Trade): number {
 }
 
 /**
- * Expected value of a position given a YES price (0–1) and our win probability.
+ * Mark-to-market (unrealized) P&L — what you'd receive if you sold NOW.
  *
- * For a YES position: p(win) = my_pct/100, entry cost = yesPrice per dollar
- * For a NO  position: p(win) = 1 - my_pct/100, entry cost = (1-yesPrice) per dollar
+ *   contracts    = amount_paid / entry_price
+ *   current_value = contracts × live_price
+ *   MTM          = current_value − amount_paid
+ *                = amount × (live_price / entry_price − 1)
+ *
+ * Example: YES at 50¢, now 1¢, $5 invested
+ *   contracts = 5 / 0.50 = 10
+ *   current   = 10 × 0.01 = $0.10
+ *   MTM       = $0.10 − $5.00 = −$4.90  ✓
  */
-function calcEv(trade: Trade, yesPrice: number): number {
-  const { amount_usdc: amount, my_pct, side } = trade;
-  if (!amount || !yesPrice) return 0;
-  const price  = side === "YES" ? yesPrice : 1 - yesPrice;
-  const pWin   = side === "YES" ? my_pct / 100 : (100 - my_pct) / 100;
-  const profit = price > 0 ? amount * (1 - price) / price : 0;
-  return pWin * profit - (1 - pWin) * amount;
+function calcMarkToMarket(trade: Trade, liveYesPrice: number): number {
+  const entryYes  = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const livePrice  = trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice;
+  if (entryPrice <= 0) return 0;
+  return trade.amount_usdc * (livePrice / entryPrice - 1);
 }
 
-/** Entry EV using the recorded market price at placement. */
-function calcEntryEv(trade: Trade): number {
-  return calcEv(trade, getEntryYesPrice(trade));
+/**
+ * Forecast EV — expected profit/loss if held to expiry, based on our probability estimate.
+ *
+ *   p(win)        = my_pct/100  (YES) or (100−my_pct)/100  (NO)
+ *   profit_if_win = amount × (1/entry_price − 1)
+ *   EV            = p(win) × profit_if_win − (1−p(win)) × amount
+ *
+ * Uses the ENTRY price (what was actually paid), not the live price.
+ * Answers: "given what I paid, what do I expect to make if my forecast is right?"
+ */
+function calcForecastEv(trade: Trade): number {
+  const entryYes   = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const pWin       = trade.side === "YES" ? trade.my_pct / 100 : (100 - trade.my_pct) / 100;
+  const profit     = entryPrice > 0 ? trade.amount_usdc * (1 - entryPrice) / entryPrice : 0;
+  return pWin * profit - (1 - pWin) * trade.amount_usdc;
 }
 
 /** Is this trade eligible for live-price polling? */
@@ -284,10 +303,11 @@ export default function HistoryClient({ initialTrades }: Props) {
   const settledPnl = settled.reduce((s, t) => s + (t.pnl ?? 0), 0);
   const avgEdge    = total > 0 ? Math.round(trades.reduce((s, t) => s + t.edge, 0) / total) : 0;
 
-  // Projected P&L: use live price when available, else entry price
+  // Projected P&L summary: mark-to-market for priced trades, 0 for unpriced
+  // (MTM is the real current position value; unpriced contribute unknown MTM = excluded)
   const projectedPnl = pending.reduce((sum, t) => {
     const live = livePrices.get(t.market_id);
-    return sum + (live != null ? calcEv(t, live) : calcEntryEv(t));
+    return sum + (live != null ? calcMarkToMarket(t, live) : 0);
   }, 0);
 
   const liveCount = pending.filter((t) => livePrices.has(t.market_id)).length;
@@ -484,10 +504,9 @@ function TradeRow({
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
 
-  // EV numbers
-  const entryEv = isPending ? calcEntryEv(trade) : null;
-  const liveEv  = isPending && liveYesPrice != null ? calcEv(trade, liveYesPrice) : null;
-  const evDelta = liveEv != null && entryEv != null ? liveEv - entryEv : null;
+  // P&L numbers for pending trades
+  const mtm         = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const forecastEv  = isPending ? calcForecastEv(trade) : null;
 
   return (
     <tr className="hover:bg-slate-800/50 transition-colors">
@@ -596,29 +615,39 @@ function TradeRow({
       {/* P&L */}
       <td className="py-3 whitespace-nowrap">
         {trade.pnl != null ? (
-          // Settled — actual P&L
+          // Settled — actual realised P&L
           <span className={`font-semibold ${pnlColor}`}>
             {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
           </span>
-        ) : liveEv != null ? (
-          // Pending with live price — show live EV + delta from entry
+        ) : mtm != null ? (
+          // Pending with live price — mark-to-market + forecast EV label
           <div className="flex flex-col gap-0.5">
-            <span className={`font-semibold ${liveEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-              <span className="text-slate-500 font-normal text-xs mr-0.5">~</span>
-              {liveEv >= 0 ? "+" : ""}${liveEv.toFixed(2)}
-            </span>
-            {evDelta != null && Math.abs(evDelta) >= 0.01 && (
-              <span className={`text-xs ${evDelta > 0 ? "text-emerald-500" : "text-red-500"}`}>
-                {evDelta > 0 ? "↑" : "↓"} {evDelta > 0 ? "+" : ""}${evDelta.toFixed(2)} since entry
+            {/* MTM — the real number */}
+            <div className="flex items-baseline gap-1">
+              <span className="text-xs text-slate-500 font-normal">~</span>
+              <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
+              </span>
+            </div>
+            <span className="text-xs text-slate-600">if sold now</span>
+            {/* Forecast EV — clearly labelled as speculative */}
+            {forecastEv != null && (
+              <span className={`text-xs mt-0.5 ${forecastEv >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                Forecast EV: {forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
               </span>
             )}
           </div>
-        ) : entryEv != null ? (
-          // Pending, no live price yet — show entry EV
-          <span className={`${entryEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-            <span className="text-slate-500 font-normal text-xs mr-0.5">~</span>
-            <span className="font-semibold">{entryEv >= 0 ? "+" : ""}${entryEv.toFixed(2)}</span>
-          </span>
+        ) : forecastEv != null ? (
+          // Pending, no live price yet — forecast EV only
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-baseline gap-1">
+              <span className="text-xs text-slate-500 font-normal">~</span>
+              <span className={`font-semibold ${forecastEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
+              </span>
+            </div>
+            <span className="text-xs text-slate-600">Forecast EV</span>
+          </div>
         ) : (
           <span className="text-slate-600">—</span>
         )}
