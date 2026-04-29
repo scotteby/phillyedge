@@ -96,8 +96,9 @@ export function parseBracketRange(question: string): BracketRange {
 
 function inRange(value: number, r: BracketRange): boolean {
   const aboveMin = r.min === null || value >= r.min;
-  // Upper bound is inclusive — "49-50°" resolves YES for both 49 and 50
-  const belowMax = r.max === null || value <= r.max;
+  // "Between" brackets (both bounds set) are fully inclusive: 64-65° includes both 64 and 65.
+  // "Below X" brackets (min = null) are exclusive: <64° does NOT include 64.
+  const belowMax = r.max === null || (r.min !== null ? value <= r.max : value < r.max);
   return aboveMin && belowMax;
 }
 
