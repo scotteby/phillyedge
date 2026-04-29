@@ -34,6 +34,40 @@ function useToasts() {
   return { toasts, addToast, dismiss };
 }
 
+// ── Projected P&L ────────────────────────────────────────────────────────────
+
+/**
+ * Expected value of a pending trade using our forecast probability.
+ *
+ * YES trade: entry price = market_pct / 100
+ *   profit if win  = amount × (100/market_pct − 1)
+ *   p(win)         = my_pct / 100
+ *
+ * NO trade:  entry price = (100 − market_pct) / 100
+ *   profit if win  = amount × (100/(100−market_pct) − 1)
+ *   p(win)         = (100 − my_pct) / 100
+ *
+ * EV = p(win) × profit_if_win − (1 − p(win)) × amount
+ */
+function calcProjectedPnl(trade: Trade): number {
+  const { amount_usdc: amount, market_pct, my_pct, side } = trade;
+  if (!amount || !market_pct) return 0;
+
+  let profitIfWin: number;
+  let pWin: number;
+
+  if (side === "YES") {
+    profitIfWin = amount * (100 / market_pct - 1);
+    pWin        = my_pct / 100;
+  } else {
+    const noPrice = 100 - market_pct;
+    profitIfWin   = noPrice > 0 ? amount * (100 / noPrice - 1) : 0;
+    pWin          = (100 - my_pct) / 100;
+  }
+
+  return pWin * profitIfWin - (1 - pWin) * amount;
+}
+
 // ── Order status helpers ──────────────────────────────────────────────────────
 
 function isActiveOrder(trade: Trade): boolean {
@@ -195,10 +229,12 @@ export default function HistoryClient({ initialTrades }: Props) {
 
   const total   = trades.length;
   const settled = trades.filter((t) => t.outcome !== "pending");
+  const pending = trades.filter((t) => t.outcome === "pending");
   const wins    = trades.filter((t) => t.outcome === "win").length;
   const winRate = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
-  const totalPnl = trades.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-  const avgEdge  = total > 0 ? Math.round(trades.reduce((s, t) => s + t.edge, 0) / total) : 0;
+  const settledPnl   = settled.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+  const projectedPnl = pending.reduce((sum, t) => sum + calcProjectedPnl(t), 0);
+  const avgEdge      = total > 0 ? Math.round(trades.reduce((s, t) => s + t.edge, 0) / total) : 0;
 
   return (
     <div className="space-y-6">
@@ -226,18 +262,29 @@ export default function HistoryClient({ initialTrades }: Props) {
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <SummaryCard label="Total Trades" value={String(total)} />
+        <SummaryCard label="Total Trades" value={String(total)}
+          sub={pending.length > 0 ? `${pending.length} pending` : undefined}
+        />
         <SummaryCard
           label="Win Rate"
           value={winRate !== null ? `${winRate}%` : "—"}
           sub={settled.length > 0 ? `${wins}/${settled.length} settled` : "No settled trades"}
         />
         <SummaryCard
-          label="Total P&L"
-          value={totalPnl !== 0 ? `${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}` : "$0.00"}
-          valueClass={totalPnl > 0 ? "text-emerald-400" : totalPnl < 0 ? "text-red-400" : "text-white"}
+          label="Settled P&L"
+          value={settledPnl !== 0 ? `${settledPnl >= 0 ? "+" : ""}$${settledPnl.toFixed(2)}` : "$0.00"}
+          valueClass={settledPnl > 0 ? "text-emerald-400" : settledPnl < 0 ? "text-red-400" : "text-white"}
+          sub={settled.length > 0 ? `${settled.length} settled trade${settled.length !== 1 ? "s" : ""}` : undefined}
         />
-        <SummaryCard label="Avg Edge" value={`${avgEdge > 0 ? "+" : ""}${avgEdge} pts`} />
+        <SummaryCard
+          label="Projected P&L"
+          value={pending.length > 0
+            ? `${projectedPnl >= 0 ? "+" : ""}$${projectedPnl.toFixed(2)}`
+            : "—"}
+          valueClass={pending.length === 0 ? "text-slate-500" : projectedPnl > 0 ? "text-emerald-400" : projectedPnl < 0 ? "text-red-400" : "text-white"}
+          sub={pending.length > 0 ? `${pending.length} pending · EV` : "No pending trades"}
+          projected
+        />
       </div>
 
       {/* Table */}
@@ -291,16 +338,23 @@ function SummaryCard({
   value,
   sub,
   valueClass = "text-white",
+  projected = false,
 }: {
   label: string;
   value: string;
   sub?: string;
   valueClass?: string;
+  projected?: boolean;
 }) {
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
       <p className="text-xs text-slate-500 uppercase tracking-wider">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${valueClass}`}>{value}</p>
+      <p className={`text-2xl font-bold mt-1 ${valueClass}`}>
+        {projected && value !== "—" && (
+          <span className="text-base font-normal text-slate-500 mr-0.5">~</span>
+        )}
+        {value}
+      </p>
       {sub && <p className="text-xs text-slate-500 mt-0.5">{sub}</p>}
     </div>
   );
@@ -404,10 +458,25 @@ function TradeRow({
           <option value="loss">Loss</option>
         </select>
       </td>
-      <td className={`py-3 font-semibold whitespace-nowrap ${pnlColor}`}>
-        {trade.pnl != null
-          ? `${trade.pnl >= 0 ? "+" : ""}$${trade.pnl.toFixed(2)}`
-          : "—"}
+      <td className="py-3 whitespace-nowrap">
+        {trade.pnl != null ? (
+          // Settled — show actual P&L
+          <span className={`font-semibold ${pnlColor}`}>
+            {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+          </span>
+        ) : (
+          // Pending — show projected EV
+          (() => {
+            const ev = calcProjectedPnl(trade);
+            const evColor = ev > 0 ? "text-emerald-400" : ev < 0 ? "text-red-400" : "text-slate-400";
+            return (
+              <span className={`${evColor}`} title="Projected expected value based on your forecast">
+                <span className="text-slate-500 font-normal text-xs mr-0.5">~</span>
+                <span className="font-semibold">{ev >= 0 ? "+" : ""}${ev.toFixed(2)}</span>
+              </span>
+            );
+          })()
+        )}
       </td>
     </tr>
   );
