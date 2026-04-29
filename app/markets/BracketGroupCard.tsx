@@ -179,6 +179,7 @@ export default function BracketGroupCard({ group, timeStatus = "active", current
       {showPositionBuilder && (
         <PositionBuilderModal
           group={group}
+          timeStatus={timeStatus}
           onClose={() => setShowPositionBuilder(false)}
         />
       )}
