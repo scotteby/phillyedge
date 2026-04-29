@@ -560,9 +560,6 @@ function BracketRow({
               YOUR FORECAST
             </span>
           )}
-          {isAdjacent && (
-            <span className="text-xs text-slate-500 italic">adjacent</span>
-          )}
         </div>
 
         {/* Kalshi % */}
@@ -625,9 +622,6 @@ function BracketRow({
             <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
               FCST
             </span>
-          )}
-          {isAdjacent && (
-            <span className="text-[10px] text-slate-500 italic shrink-0">adj</span>
           )}
           <div className="shrink-0">
             {isLocked && !isLikelyWinner
