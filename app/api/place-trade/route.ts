@@ -159,6 +159,12 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Log to Supabase ──────────────────────────────────────────────────────────
+  // Normalize signal: DB column only accepts the 4 values in Trade["signal"].
+  // "sell" / "strong-sell" come from NO-bracket recommendations — store as "avoid"
+  // so the constraint doesn't reject the row.
+  const dbSignal =
+    signal === "sell" || signal === "strong-sell" ? "avoid" : signal;
+
   try {
     const supabase = createServiceClient();
     const { error: dbErr } = await supabase.from("trades").insert([
@@ -171,7 +177,7 @@ export async function POST(req: NextRequest) {
         market_pct,
         my_pct,
         edge,
-        signal,
+        signal:           dbSignal,
         outcome:          "pending",
         pnl:              null,
         polymarket_url:   kalshiUrl(ticker),
@@ -180,7 +186,11 @@ export async function POST(req: NextRequest) {
         entry_yes_price:  sideLower === "yes" ? price : 1 - price,
       },
     ]);
-    if (dbErr) console.error("[place-trade] Supabase insert failed:", dbErr.message);
+    if (dbErr) {
+      // Surface DB errors so they're visible in the response (non-fatal —
+      // the Kalshi order already succeeded at this point).
+      console.error("[place-trade] Supabase insert failed:", dbErr.message);
+    }
   } catch (err) {
     console.error("[place-trade] Supabase insert threw:", err);
   }

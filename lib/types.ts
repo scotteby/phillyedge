@@ -22,6 +22,8 @@ export type OrderStatus =
   | "expired"
   | null;
 
+export type Signal = "strong-buy" | "buy" | "neutral" | "sell" | "strong-sell" | "avoid";
+
 export interface Trade {
   id: string;
   created_at: string;
@@ -33,7 +35,7 @@ export interface Trade {
   market_pct: number;
   my_pct: number;
   edge: number;
-  signal: "strong-buy" | "buy" | "neutral" | "avoid";
+  signal: Signal;  // full range including "sell" / "strong-sell" for NO trades
   outcome: "pending" | "win" | "loss" | "sold" | "boosted";
   pnl: number | null;
   polymarket_url: string | null;
@@ -55,8 +57,6 @@ export interface MarketCache {
   volume: number;
   active: boolean;
 }
-
-export type Signal = "strong-buy" | "buy" | "neutral" | "sell" | "strong-sell" | "avoid";
 
 export interface MarketWithEdge extends MarketCache {
   market_type: "precip" | "high_temp" | "low_temp" | "dry_day" | "unknown";
