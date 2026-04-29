@@ -72,9 +72,22 @@ function calcMarkToMarket(trade: Trade, liveYesPrice: number): number {
   return amount * (livePrice / entryPrice - 1);
 }
 
-/** True when a cancelled order filled 0 contracts — nothing was spent. */
+/** True when a cancelled/boosted order filled 0 contracts — nothing was spent. */
 function isVoidCancelled(trade: Trade): boolean {
-  return trade.order_status === "canceled" && (trade.filled_count ?? 0) === 0;
+  return (
+    (trade.order_status === "canceled" || trade.outcome === "boosted") &&
+    (trade.filled_count ?? 0) === 0
+  );
+}
+
+/** Can this order be boosted (cancel + re-place at a higher price)? */
+function isBoostable(trade: Trade): boolean {
+  return (
+    trade.outcome === "pending" &&
+    (trade.filled_count ?? 0) === 0 &&
+    trade.order_status === "resting" &&
+    trade.kalshi_order_id != null
+  );
 }
 
 /**
@@ -146,7 +159,9 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [trades, setTrades]       = useState<Trade[]>(initialTrades);
   const [canceling, setCanceling] = useState<string | null>(null);
   const [selling, setSelling]     = useState<string | null>(null);
-  const [sellModalTrade, setSellModalTrade] = useState<Trade | null>(null);
+  const [sellModalTrade, setSellModalTrade]   = useState<Trade | null>(null);
+  const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
+  const [boosting, setBoosting]   = useState<string | null>(null);
   const [showAll, setShowAll]     = useState(false);
   const { toasts, addToast, dismiss } = useToasts();
 
@@ -297,6 +312,66 @@ export default function HistoryClient({ initialTrades }: Props) {
       addToast(`Sell error: ${String(err)}`, "error");
     } finally {
       setSelling(null);
+    }
+  }
+
+  // ── Boost order ──────────────────────────────────────────────────────────
+
+  async function boostOrder(tradeId: string, newPriceCents: number) {
+    setBoosting(tradeId);
+    setBoostModalTrade(null);
+    try {
+      const res  = await fetch("/api/boost-order", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ trade_id: tradeId, new_price_cents: newPriceCents }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        // Mark old trade as boosted; inject new trade at top of list
+        setTrades((prev) => {
+          const updated = prev.map((t) =>
+            t.id === tradeId
+              ? { ...t, outcome: "boosted" as Trade["outcome"], order_status: "canceled" as Trade["order_status"] }
+              : t
+          );
+          // Append a placeholder for the new trade — will be refreshed on next poll
+          if (json.new_trade_id) {
+            updated.unshift({
+              id:              json.new_trade_id,
+              created_at:      new Date().toISOString(),
+              market_id:       json.ticker,
+              market_question: prev.find((t) => t.id === tradeId)?.market_question ?? "",
+              target_date:     prev.find((t) => t.id === tradeId)?.target_date ?? "",
+              side:            json.side,
+              amount_usdc:     json.new_amount,
+              market_pct:      json.new_price_cents,
+              my_pct:          prev.find((t) => t.id === tradeId)?.my_pct ?? 50,
+              edge:            json.new_edge,
+              signal:          prev.find((t) => t.id === tradeId)?.signal ?? "buy",
+              outcome:         "pending",
+              pnl:             null,
+              polymarket_url:  prev.find((t) => t.id === tradeId)?.polymarket_url ?? null,
+              kalshi_order_id: json.new_order_id ?? null,
+              order_status:    "resting",
+              filled_count:    0,
+              remaining_count: json.count ?? null,
+              last_checked_at: null,
+              entry_yes_price: json.side === "YES"
+                ? json.new_price_cents / 100
+                : 1 - json.new_price_cents / 100,
+            });
+          }
+          return updated;
+        });
+        addToast(`↑ Boosted to ${newPriceCents}¢ — new order placed`, "fill");
+      } else {
+        addToast(`Boost failed: ${json.error ?? "unknown error"}`, "error");
+      }
+    } catch (err) {
+      addToast(`Boost error: ${String(err)}`, "error");
+    } finally {
+      setBoosting(null);
     }
   }
 
@@ -479,6 +554,8 @@ export default function HistoryClient({ initialTrades }: Props) {
                 onCancel={() => cancelOrder(trade.id)}
                 selling={selling === trade.id}
                 onSell={() => setSellModalTrade(trade)}
+                boosting={boosting === trade.id}
+                onBoost={() => setBoostModalTrade(trade)}
               />
             ))}
           </div>
@@ -510,6 +587,8 @@ export default function HistoryClient({ initialTrades }: Props) {
                     onCancel={() => cancelOrder(trade.id)}
                     selling={selling === trade.id}
                     onSell={() => setSellModalTrade(trade)}
+                    boosting={boosting === trade.id}
+                    onBoost={() => setBoostModalTrade(trade)}
                   />
                 ))}
               </tbody>
@@ -517,6 +596,16 @@ export default function HistoryClient({ initialTrades }: Props) {
           </div>
         </>
       )}
+      {/* Boost modal */}
+      {boostModalTrade && (
+        <BoostModal
+          trade={boostModalTrade}
+          boosting={boosting === boostModalTrade.id}
+          onConfirm={(cents) => boostOrder(boostModalTrade.id, cents)}
+          onClose={() => setBoostModalTrade(null)}
+        />
+      )}
+
       {/* Sell confirmation modal */}
       {sellModalTrade && (
         <SellModal
@@ -668,6 +757,206 @@ function SellModal({
   );
 }
 
+// ── Boost modal ───────────────────────────────────────────────────────────────
+
+function BoostModal({
+  trade, boosting, onConfirm, onClose,
+}: {
+  trade: Trade;
+  boosting: boolean;
+  onConfirm: (newPriceCents: number) => void;
+  onClose: () => void;
+}) {
+  const [askCents, setAskCents]       = useState<number | null>(null);
+  const [bidCents, setBidCents]       = useState<number | null>(null);
+  const [loadingAsk, setLoadingAsk]   = useState(true);
+  const [selected, setSelected]       = useState<"ask" | "+1" | "+2" | "custom">("ask");
+  const [customInput, setCustomInput] = useState("");
+
+  const entryYes   = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const currentCents = Math.round(entryPrice * 100);
+
+  // Fetch current ask on mount
+  useEffect(() => {
+    setLoadingAsk(true);
+    fetch(`/api/orderbook?ticker=${encodeURIComponent(trade.market_id)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        if (j) {
+          const ask = trade.side === "YES" ? j.yes_ask_cents : j.no_ask_cents;
+          const bid = trade.side === "YES" ? j.yes_bid_cents : j.no_bid_cents;
+          setAskCents(ask ?? null);
+          setBidCents(bid ?? null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingAsk(false));
+  }, [trade.market_id, trade.side]);
+
+  // Derive the chosen price in cents
+  const chosenCents: number | null = (() => {
+    if (selected === "ask")    return askCents ?? currentCents + 3;
+    if (selected === "+1")     return currentCents + 1;
+    if (selected === "+2")     return currentCents + 2;
+    if (selected === "custom") {
+      const n = parseInt(customInput, 10);
+      return !isNaN(n) && n >= 1 && n <= 99 ? n : null;
+    }
+    return null;
+  })();
+
+  const contracts = trade.remaining_count ??
+    (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
+
+  const newCost     = chosenCents != null ? (chosenCents / 100) * contracts : null;
+  const oldCost     = entryPrice * contracts;
+  const costDiff    = newCost != null ? newCost - oldCost : null;
+
+  // Edge at chosen price: my_pct - new_price_cents
+  const newEdge     = chosenCents != null ? trade.my_pct - chosenCents : null;
+  const edgeNegative = newEdge != null && newEdge < 0;
+
+  const options: { key: "ask" | "+1" | "+2" | "custom"; label: string; cents: number | null }[] = [
+    { key: "ask",    label: askCents != null ? `Match ask: ${askCents}¢ — fills now` : (loadingAsk ? "Match ask: loading…" : "Match ask"), cents: askCents },
+    { key: "+1",     label: `+1¢ → ${currentCents + 1}¢`,  cents: currentCents + 1 },
+    { key: "+2",     label: `+2¢ → ${currentCents + 2}¢`,  cents: currentCents + 2 },
+    { key: "custom", label: "Custom price",                 cents: null },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="px-5 pt-5 pb-4 border-b border-slate-700">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-white font-bold text-lg">Improve Order Price</h2>
+              <p className="text-slate-400 text-sm mt-0.5 leading-snug">{trade.market_question}</p>
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xl leading-none mt-0.5">×</button>
+          </div>
+        </div>
+
+        {/* Current order info */}
+        <div className="px-5 py-4 flex gap-6 text-sm border-b border-slate-700/50">
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Current limit</p>
+            <p className="text-white font-semibold">{currentCents}¢ {trade.side}</p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Current ask</p>
+            {loadingAsk ? (
+              <p className="text-slate-500 animate-pulse">…</p>
+            ) : askCents != null ? (
+              <p className="text-sky-300 font-semibold">{askCents}¢</p>
+            ) : (
+              <p className="text-slate-500">—</p>
+            )}
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Contracts</p>
+            <p className="text-white font-semibold">{contracts}</p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Orig edge</p>
+            <p className={`font-semibold ${trade.edge >= 10 ? "text-emerald-400" : trade.edge >= 0 ? "text-sky-400" : "text-red-400"}`}>
+              {trade.edge > 0 ? "+" : ""}{trade.edge}pt
+            </p>
+          </div>
+        </div>
+
+        {/* Price options */}
+        <div className="px-5 py-4 space-y-2">
+          {options.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => setSelected(opt.key)}
+              className={`w-full text-left px-4 py-2.5 rounded-xl border transition-colors text-sm ${
+                selected === opt.key
+                  ? "border-sky-500 bg-sky-500/10 text-sky-300"
+                  : "border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+          {selected === "custom" && (
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="number"
+                min={currentCents + 1}
+                max={99}
+                value={customInput}
+                onChange={(e) => setCustomInput(e.target.value)}
+                placeholder={`> ${currentCents}¢`}
+                className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
+                autoFocus
+              />
+              <span className="text-slate-400 text-sm">¢</span>
+            </div>
+          )}
+        </div>
+
+        {/* Cost + edge summary */}
+        {chosenCents != null && (
+          <div className="px-5 pb-4 space-y-2">
+            <div className="bg-slate-900/50 rounded-lg px-4 py-3 space-y-1.5 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Cost at {chosenCents}¢</span>
+                <span className="text-white font-medium">${newCost?.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Original cost</span>
+                <span className="text-slate-300">${oldCost.toFixed(2)}</span>
+              </div>
+              {costDiff != null && costDiff !== 0 && (
+                <div className="flex justify-between border-t border-slate-700/50 pt-1.5">
+                  <span className="text-slate-400">Difference</span>
+                  <span className={costDiff > 0 ? "text-amber-400" : "text-emerald-400"}>
+                    {costDiff > 0 ? "+" : ""}${costDiff.toFixed(2)} more
+                  </span>
+                </div>
+              )}
+            </div>
+            {newEdge != null && (
+              <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg border ${
+                edgeNegative
+                  ? "bg-red-500/10 border-red-500/30 text-red-400"
+                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+              }`}>
+                {edgeNegative ? (
+                  <span>⚠️ Edge goes negative at {chosenCents}¢ — you'd be overpaying vs your forecast</span>
+                ) : (
+                  <span>✓ Still {newEdge > 0 ? "+" : ""}{newEdge}pt edge at {chosenCents}¢</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Buttons */}
+        <div className="px-5 pb-5 flex gap-3">
+          <button
+            onClick={onClose}
+            disabled={boosting}
+            className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white transition-colors disabled:opacity-40 text-sm font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => chosenCents != null && onConfirm(chosenCents)}
+            disabled={boosting || chosenCents == null || chosenCents <= currentCents}
+            className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-white font-bold transition-colors text-sm"
+          >
+            {boosting ? "Boosting…" : chosenCents != null ? `Boost to ${chosenCents}¢ ↑` : "Select a price"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Shared props type ─────────────────────────────────────────────────────────
 
 interface TradeRowProps {
@@ -678,6 +967,8 @@ interface TradeRowProps {
   onCancel: () => void;
   selling: boolean;
   onSell: () => void;
+  boosting: boolean;
+  onBoost: () => void;
 }
 
 // ── Outcome badge ─────────────────────────────────────────────────────────────
@@ -688,6 +979,7 @@ function OutcomeBadge({ outcome }: { outcome: Trade["outcome"] }) {
     win:     { label: "🟢 Win",     classes: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
     loss:    { label: "🔴 Loss",    classes: "bg-red-500/15 text-red-300 border-red-500/30" },
     sold:    { label: "⚪ Sold",    classes: "bg-slate-500/20 text-slate-400 border-slate-500/30" },
+    boosted: { label: "↑ Boosted",  classes: "bg-sky-500/15 text-sky-400 border-sky-500/30" },
   };
   const { label, classes } = map[outcome ?? "pending"];
   return (
@@ -700,7 +992,7 @@ function OutcomeBadge({ outcome }: { outcome: Trade["outcome"] }) {
 // ── Mobile card ───────────────────────────────────────────────────────────────
 
 function TradeCard({
-  trade, liveYesPrice, today, canceling, onCancel, selling, onSell,
+  trade, liveYesPrice, today, canceling, onCancel, selling, onSell, boosting, onBoost,
 }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -720,7 +1012,8 @@ function TradeCard({
 
   const showCancel = trade.kalshi_order_id &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
-  const showSell = isSellable(trade);
+  const showSell  = isSellable(trade);
+  const showBoost = isBoostable(trade);
 
   const contractCount = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
 
@@ -774,6 +1067,15 @@ function TradeCard({
                 className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors py-1 px-1 font-medium"
               >
                 {selling ? "Selling…" : "Sell"}
+              </button>
+            )}
+            {showBoost && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onBoost(); }}
+                disabled={boosting}
+                className="text-xs text-sky-400 hover:text-sky-300 disabled:opacity-50 transition-colors py-1 px-1 font-medium"
+              >
+                {boosting ? "Boosting…" : "Boost ↑"}
               </button>
             )}
           </div>
@@ -851,7 +1153,7 @@ function TradeCard({
 
 // ── Desktop table row ─────────────────────────────────────────────────────────
 
-function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, onSell }: TradeRowProps) {
+function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, onSell, boosting, onBoost }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
   const edgeColor =
@@ -862,7 +1164,8 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
   const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
   const showCancel = trade.kalshi_order_id &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
-  const showSell = isSellable(trade);
+  const showSell  = isSellable(trade);
+  const showBoost = isBoostable(trade);
 
   const isPending  = trade.outcome === "pending";
   const entryYes   = getEntryYesPrice(trade);
@@ -938,6 +1241,12 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
                   <button onClick={onSell} disabled={selling}
                     className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors font-medium">
                     {selling ? "Selling…" : "Sell"}
+                  </button>
+                )}
+                {showBoost && (
+                  <button onClick={onBoost} disabled={boosting}
+                    className="text-xs text-sky-400 hover:text-sky-300 disabled:opacity-50 transition-colors font-medium">
+                    {boosting ? "Boosting…" : "Boost ↑"}
                   </button>
                 )}
               </>
