@@ -42,7 +42,7 @@ function bracketProb(range: BracketRange, mean: number, std: number): number {
 /** Std-dev in °F for each confidence level. */
 const CONFIDENCE_STD: Record<ForecastConfidence, number> = {
   very_confident: 1.0,
-  confident:      2.0,
+  confident:      1.5,
   uncertain:      4.0,
 };
 
@@ -150,6 +150,14 @@ function inRange(value: number, r: BracketRange): boolean {
   return aboveMin && belowMax;
 }
 
+
+/**
+ * Midpoint of a finite bracket, e.g. 64-65° → 64.5.
+ * Falls back to the raw forecast value for open-ended brackets (no midpoint is defined).
+ */
+function bracketMidpoint(r: BracketRange, fallback: number): number {
+  return r.min !== null && r.max !== null ? (r.min + r.max) / 2 : fallback;
+}
 
 function isAdjacent(value: number, r: BracketRange, withinDeg = 2): boolean {
   if (inRange(value, r)) return false;
@@ -261,7 +269,21 @@ export function groupBracketMarkets(
       seriesObs != null ? `observed=${seriesObs}°F` : "",
     );
 
-    const std = CONFIDENCE_STD[forecast?.forecast_confidence ?? "confident"] ?? 3.0;
+    const std = CONFIDENCE_STD[forecast?.forecast_confidence ?? "confident"] ?? 1.5;
+
+    // Snap distribution mean to the midpoint of whichever bracket contains the forecast.
+    // Without this, a forecast sitting on a bracket's lower edge (e.g. 64°F in 64-65°)
+    // splits the distribution 50/50 and inflates the bracket below it.
+    let effectiveMean: number | undefined = fVal;
+    if (fVal !== undefined && fVal !== null && seriesObs === null) {
+      for (const m of eventMarkets) {
+        const r = parseBracketRange(m.question);
+        if (inRange(fVal, r)) {
+          effectiveMean = bracketMidpoint(r, fVal);
+          break;
+        }
+      }
+    }
 
     const brackets: BracketMarket[] = eventMarkets.map((m) => {
       const range   = parseBracketRange(m.question);
@@ -279,13 +301,15 @@ export function groupBracketMarkets(
           relation   = "neutral";
           confidence = 5;
         }
-      } else if (fVal !== undefined && fVal !== null) {
+      } else if (effectiveMean !== undefined && effectiveMean !== null) {
         // ── Normal distribution model ────────────────────────────────────────
-        // Probability mass of N(fVal, std) within this bracket's bounds.
-        confidence = bracketProb(range, fVal, std);
-        if      (inRange(fVal, range))    relation = "forecast";
-        else if (isAdjacent(fVal, range)) relation = "adjacent";
-        else                              relation = "neutral";
+        // Use effectiveMean (bracket midpoint) so the forecast bracket always
+        // receives the peak probability mass.  Relation tags use raw fVal so
+        // "YOUR FORECAST" still marks the correct bracket.
+        confidence = bracketProb(range, effectiveMean, std);
+        if      (fVal !== undefined && inRange(fVal, range))    relation = "forecast";
+        else if (fVal !== undefined && isAdjacent(fVal, range)) relation = "adjacent";
+        else                                                     relation = "neutral";
       }
 
       const edge   = confidence > 0 ? confidence - yes_pct : 0;
@@ -315,10 +339,12 @@ export function groupBracketMarkets(
 
     // Diagnostic: log probability distribution so we can verify the math
     if (fVal !== undefined && fVal !== null && seriesObs === null) {
+      const meanLabel = effectiveMean !== fVal ? `${fVal}°→${effectiveMean}°` : `${fVal}°`;
       const dist = brackets
-        .map((b) => `${b.range.label}=${b.confidence}% (kalshi=${b.yes_pct}%, edge=${b.edge > 0 ? "+" : ""}${b.edge})`)
+        .map((b) => `${b.range.label}=${b.confidence}%${b.relation === "forecast" ? "*" : ""} (k=${b.yes_pct}%, e=${b.edge > 0 ? "+" : ""}${b.edge})`)
         .join("  ");
-      console.log(`[brackets] ${series} N(${fVal}°, σ=${std}): ${dist}`);
+      const total = brackets.filter((b) => b.confidence > 1).reduce((s, b) => s + b.confidence, 0);
+      console.log(`[brackets] ${series} N(mean=${meanLabel}, σ=${std}) Σ≈${total}%: ${dist}`);
     }
 
     // Best trade = highest absolute edge across YES and NO opportunities
