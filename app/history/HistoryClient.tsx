@@ -163,6 +163,8 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
   const [showAll, setShowAll]     = useState(false);
+  const [balance, setBalance]     = useState<number | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
 
   // Live price state
@@ -223,6 +225,25 @@ export default function HistoryClient({ initialTrades }: Props) {
       clearInterval(clockInterval);
     };
   }, [fetchLivePrices]);
+
+  // ── Kalshi balance ───────────────────────────────────────────────────────
+
+  const fetchBalance = useCallback(async () => {
+    setBalanceLoading(true);
+    try {
+      const res  = await fetch("/api/balance");
+      const json = await res.json();
+      if (res.ok && json.balance_dollars != null) {
+        setBalance(json.balance_dollars);
+      }
+    } catch { /* ignore */ } finally {
+      setBalanceLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBalance();
+  }, [fetchBalance]);
 
   // ── Order status polling ─────────────────────────────────────────────────
 
@@ -451,7 +472,24 @@ export default function HistoryClient({ initialTrades }: Props) {
 
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <h1 className="text-2xl font-bold text-white">Trades</h1>
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-2xl font-bold text-white">Trades</h1>
+          <button
+            onClick={fetchBalance}
+            disabled={balanceLoading}
+            title="Refresh balance"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-500 transition-colors disabled:opacity-50"
+          >
+            <span className="text-xs text-slate-500 uppercase tracking-wide">Balance</span>
+            {balanceLoading ? (
+              <span className="text-sm text-slate-500 animate-pulse">…</span>
+            ) : balance != null ? (
+              <span className="text-sm font-semibold text-emerald-400">${balance.toFixed(2)}</span>
+            ) : (
+              <span className="text-sm text-slate-600">—</span>
+            )}
+          </button>
+        </div>
 
         <div className="flex items-center gap-3 flex-wrap">
           {/* View toggle */}
