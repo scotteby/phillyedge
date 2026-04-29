@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -20,9 +20,16 @@ type RowStatus = "saved" | "unsaved" | "saving" | "error";
 type Confidence = "very_confident" | "confident" | "uncertain";
 
 const CONFIDENCE_OPTIONS: { value: Confidence; label: string; std: string }[] = [
-  { value: "very_confident", label: "🎯 High",      std: "±1.5°" },
-  { value: "confident",      label: "📊 Normal",    std: "±3°"   },
-  { value: "uncertain",      label: "🌫️ Low",      std: "±5°"   },
+  { value: "very_confident", label: "High",   std: "±1.5°" },
+  { value: "confident",      label: "Normal", std: "±3°"   },
+  { value: "uncertain",      label: "Low",    std: "±5°"   },
+];
+
+const PRECIP_TYPES: { value: PrecipType; label: string }[] = [
+  { value: "None", label: "None" },
+  { value: "Rain", label: "Rain" },
+  { value: "Snow", label: "Snow" },
+  { value: "Mix",  label: "Mix"  },
 ];
 
 interface DayRow {
@@ -57,9 +64,45 @@ const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function dayLabel(date: Date, index: number): { top: string; bottom: string } {
-  if (index === 0) return { top: "Today", bottom: `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}` };
+  if (index === 0) return { top: "Today",    bottom: `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}` };
   if (index === 1) return { top: "Tomorrow", bottom: `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}` };
   return { top: DAY_SHORT[date.getDay()], bottom: `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}` };
+}
+
+/** Label shown in the summary strip (compact) */
+function stripLabel(index: number, date: Date): string {
+  if (index === 0) return "Today";
+  if (index === 1) return "Tmrw";
+  return DAY_SHORT[date.getDay()];
+}
+
+// ── Pill sub-component ────────────────────────────────────────────────────────
+
+function Pill({
+  label,
+  selected,
+  title,
+  onClick,
+}: {
+  label: string;
+  selected: boolean;
+  title?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+        selected
+          ? "bg-blue-500 text-white border-blue-500"
+          : "border-gray-600 text-gray-400 hover:border-gray-400"
+      }`}
+    >
+      {label}
+    </button>
+  );
 }
 
 // ── component ────────────────────────────────────────────────────────────────
@@ -77,8 +120,8 @@ export default function ForecastForm({ today, initialDays }: Props) {
       const d = initialDays[i];
       const hasData = d?.high_temp != null || d?.low_temp != null || d?.precip_chance != null;
       return {
-        high_temp:           d?.high_temp    != null ? String(d.high_temp)    : "",
-        low_temp:            d?.low_temp     != null ? String(d.low_temp)     : "",
+        high_temp:           d?.high_temp     != null ? String(d.high_temp)     : "",
+        low_temp:            d?.low_temp      != null ? String(d.low_temp)      : "",
         precip_chance:       d?.precip_chance != null ? String(d.precip_chance) : "",
         precip_type:         (d?.precip_type as PrecipType) ?? "None",
         forecast_confidence: (d?.forecast_confidence as Confidence) ?? "confident",
@@ -86,6 +129,9 @@ export default function ForecastForm({ today, initialDays }: Props) {
       };
     })
   );
+
+  // Refs for each day card — used by the summary strip to scroll to the card
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   function updateField(i: number, field: keyof Omit<DayRow, "status">, value: string) {
     setRows((prev) => {
@@ -149,26 +195,30 @@ export default function ForecastForm({ today, initialDays }: Props) {
   const anySaved = rows.some((r) => r.status === "saved");
 
   return (
-    <div className="space-y-4 pb-24">
+    <div className="space-y-4 pb-28">
       {/* Page header */}
       <div>
         <h1 className="text-2xl font-bold text-white">7-Day Forecast</h1>
         <p className="text-slate-400 text-sm mt-0.5">Philadelphia — edit any field, saves when you leave the card</p>
       </div>
 
-      {/* Summary strip */}
+      {/* Summary strip — each chip scrolls to its day card */}
       <div className="overflow-x-auto">
         <div className="flex gap-2 min-w-max py-1">
           {rows.map((row, i) => {
-            const date = addDays(todayDate, i);
-            const { top } = dayLabel(date, i);
-            const icon = weatherIcon(row.precip_chance, row.precip_type);
+            const date  = addDays(todayDate, i);
+            const label = stripLabel(i, date);
+            const icon  = weatherIcon(row.precip_chance, row.precip_type);
             return (
-              <div
+              <button
                 key={i}
-                className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs"
+                type="button"
+                onClick={() =>
+                  cardRefs.current[i]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" })
+                }
+                className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs hover:border-slate-500 transition-colors cursor-pointer"
               >
-                <span className="text-slate-400 font-medium">{top.slice(0, 3)}</span>
+                <span className="text-slate-400 font-medium">{label}</span>
                 <span>{icon}</span>
                 {row.high_temp || row.low_temp ? (
                   <span className={`font-semibold ${highTempClass(row.high_temp)}`}>
@@ -181,7 +231,7 @@ export default function ForecastForm({ today, initialDays }: Props) {
                 {!row.high_temp && !row.low_temp && (
                   <span className="text-slate-600">—</span>
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
@@ -198,6 +248,7 @@ export default function ForecastForm({ today, initialDays }: Props) {
             return (
               <div
                 key={i}
+                ref={(el) => { cardRefs.current[i] = el; }}
                 tabIndex={-1}
                 onBlur={(e) => handleCardBlur(i, e)}
                 style={{ width: "calc((896px - 6 * 12px) / 7)", flexShrink: 0 }}
@@ -205,7 +256,7 @@ export default function ForecastForm({ today, initialDays }: Props) {
                   row.status === "error"
                     ? "border-red-500/60"
                     : row.status === "saved"
-                    ? "border-emerald-600/40"
+                    ? "border-green-500/30"
                     : "border-slate-700"
                 }`}
               >
@@ -240,54 +291,48 @@ export default function ForecastForm({ today, initialDays }: Props) {
                     onChange={(v) => updateField(i, "precip_chance", v)}
                   />
 
-                  {/* Precip type */}
+                  {/* Precip type — pill buttons */}
                   <div>
-                    <label className="block text-xs text-slate-500 mb-1">Type</label>
-                    <select
-                      value={row.precip_type}
-                      onChange={(e) => updateField(i, "precip_type", e.target.value)}
-                      className="w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-white text-xs focus:outline-none focus:ring-1 focus:ring-sky-500"
-                    >
-                      <option value="None">None</option>
-                      <option value="Rain">Rain</option>
-                      <option value="Snow">Snow</option>
-                      <option value="Mix">Mix</option>
-                    </select>
+                    <label className="block text-xs text-slate-500 mb-1.5">Type</label>
+                    <div className="flex flex-wrap gap-1">
+                      {PRECIP_TYPES.map((opt) => (
+                        <Pill
+                          key={opt.value}
+                          label={opt.label}
+                          selected={row.precip_type === opt.value}
+                          onClick={() => updateField(i, "precip_type", opt.value)}
+                        />
+                      ))}
+                    </div>
                   </div>
 
-                  {/* Confidence selector */}
+                  {/* Confidence — pill buttons */}
                   <div>
-                    <label className="block text-xs text-slate-500 mb-1">Confidence</label>
-                    <div className="flex gap-1">
+                    <label className="block text-xs text-slate-500 mb-1.5">Confidence</label>
+                    <div className="flex flex-wrap gap-1">
                       {CONFIDENCE_OPTIONS.map((opt) => (
-                        <button
+                        <Pill
                           key={opt.value}
-                          type="button"
+                          label={opt.label}
+                          selected={row.forecast_confidence === opt.value}
+                          title={`Std dev ${opt.std}`}
                           onClick={() => updateField(i, "forecast_confidence", opt.value)}
-                          title={`${opt.label} — std dev ${opt.std}`}
-                          className={`flex-1 text-[10px] py-1 rounded border transition-colors leading-tight ${
-                            row.forecast_confidence === opt.value
-                              ? "bg-sky-600 border-sky-500 text-white font-semibold"
-                              : "bg-slate-700 border-slate-600 text-slate-400 hover:border-slate-500"
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
+                        />
                       ))}
                     </div>
                   </div>
                 </div>
 
                 {/* Status badge */}
-                <div className="absolute top-2 right-2 text-xs">
+                <div className="absolute top-2 right-2">
                   {row.status === "saving" && (
-                    <span className="text-sky-400 animate-pulse">…</span>
+                    <span className="text-sky-400 text-sm animate-pulse">…</span>
                   )}
                   {row.status === "saved" && (
-                    <span className="text-emerald-400">✓</span>
+                    <span className="text-emerald-400 text-base leading-none">✓</span>
                   )}
                   {row.status === "error" && (
-                    <span className="text-red-400" title="Save failed">!</span>
+                    <span className="text-red-400 text-sm" title="Save failed">!</span>
                   )}
                 </div>
               </div>
@@ -298,7 +343,7 @@ export default function ForecastForm({ today, initialDays }: Props) {
 
       {/* Sticky View Markets button */}
       {anySaved && (
-        <div className="fixed bottom-6 right-6 z-50">
+        <div className="fixed bottom-0 right-0 left-0 z-50 flex justify-end px-6 py-4 backdrop-blur-sm bg-gray-900/80">
           <Link
             href="/markets"
             className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white font-semibold px-5 py-3 rounded-xl shadow-xl shadow-sky-500/20 transition-colors text-sm"
