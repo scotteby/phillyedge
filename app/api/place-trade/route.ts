@@ -67,6 +67,10 @@ export async function POST(req: NextRequest) {
 
   const sideLower = side.toLowerCase() as "yes" | "no";
 
+  // Kalshi orders API uses integer cents (1–99), not decimal dollars.
+  // yes_price / no_price must be a whole number e.g. 35 not 0.35.
+  const priceCents = Math.round(price * 100);
+
   // ── Build Kalshi order body ──────────────────────────────────────────────────
   const orderBody: Record<string, unknown> = {
     ticker,
@@ -75,9 +79,11 @@ export async function POST(req: NextRequest) {
     type:   "limit",
     count,
     ...(sideLower === "yes"
-      ? { yes_price_dollars: price }
-      : { no_price_dollars:  price }),
+      ? { yes_price: priceCents }
+      : { no_price:  priceCents }),
   };
+
+  console.log("[place-trade] order body:", JSON.stringify(orderBody));
 
   // ── Sign and submit to Kalshi ────────────────────────────────────────────────
   let orderId: string | null = null;
