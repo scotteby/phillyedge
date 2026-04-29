@@ -24,10 +24,8 @@ interface Props {
 }
 
 export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCount, today, timeGates, currentObs, nwsHighSoFar, nwsHighReachedAt, highObsStatus }: Props) {
-  function groupTimeStatus(g: BracketGroup): MarketTimeStatus {
-    if (g.obs_date !== today) return "active";
-    if (g.series === "KXHIGHPHIL") return timeGates.highStatus;
-    if (g.series === "KXLOWTPHIL") return timeGates.lowStatus;
+  function groupTimeStatus(_g: BracketGroup): MarketTimeStatus {
+    // Never lock an open market — trades are always allowed regardless of time of day.
     return "active";
   }
   const [filter, setFilter] = useState<Filter>("all");
