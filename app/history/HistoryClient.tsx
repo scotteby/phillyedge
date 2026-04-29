@@ -223,16 +223,20 @@ function buildGroups(trades: Trade[], today: string): TradeGroup[] {
   const map = new Map<string, Trade[]>();
 
   for (const t of trades) {
-    const series = t.market_id.split("-")[0].toUpperCase();
-    const key    = `${series}__${t.target_date}`;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(t);
+    // Group by Kalshi event key: strip the bracket suffix (last "-XXX" segment)
+    // e.g. "KXLOWTPHIL-26APR29-T51" → "KXLOWTPHIL-26APR29"
+    const parts    = t.market_id.split("-");
+    const eventKey = (parts.length > 1 ? parts.slice(0, -1).join("-") : t.market_id).toUpperCase();
+    if (!map.has(eventKey)) map.set(eventKey, []);
+    map.get(eventKey)!.push(t);
   }
 
   const groups: TradeGroup[] = [];
   for (const [key, gTrades] of map) {
-    const [series, targetDate] = key.split("__");
+    const series     = key.split("-")[0];
     const seriesName = SERIES_NAMES[series] ?? series;
+    // All trades in a Kalshi event share the same resolution date — use first trade's
+    const targetDate = gTrades[0].target_date;
     const dateLabel  = getDateLabel(targetDate, today, tomorrow);
     // Sort within group: Strong Buy → Buy → Neutral → Avoid
     const sorted = [...gTrades].sort((a, b) => {
