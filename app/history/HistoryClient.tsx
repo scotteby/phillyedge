@@ -343,7 +343,7 @@ export default function HistoryClient({ initialTrades }: Props) {
 
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <h1 className="text-2xl font-bold text-white">Trade History</h1>
+        <h1 className="text-2xl font-bold text-white">Trades</h1>
 
         <div className="flex items-center gap-3 flex-wrap">
           {/* View toggle */}
