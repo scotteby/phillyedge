@@ -15,21 +15,26 @@ import { createSign, constants } from "crypto";
 // ── PEM normalisation ─────────────────────────────────────────────────────────
 
 function normalisePem(raw: string): string {
-  // 1. Convert escaped newlines (e.g. stored as literal \n in some env editors)
   let pem = raw
+    // 1. Strip surrounding quote characters — dotenv sometimes leaves them
+    //    in the value when the key is stored as a single line with quotes.
+    .replace(/^["']+|["']+$/g, "")
+    // 2. Convert literal \n / \r sequences written by some env editors
     .replace(/\\n/g, "\n")
     .replace(/\\r/g, "")
+    // 3. Normalise Windows line endings
     .replace(/\r\n/g, "\n")
     .trim();
 
-  // 2. Extract header, body, footer and reformat body into 64-char lines.
-  //    This handles the case where line-breaks were stripped from the body.
-  const m = pem.match(
-    /^(-----BEGIN [^-]+-----)([\s\S]+?)(-----END [^-]+-----)$/
-  );
+  // 4. Extract header, raw body, footer — then canonically reformat the
+  //    body into 64-char base-64 lines.  This fixes:
+  //      • Stripped newlines (body is one long line)
+  //      • Spaces used instead of newlines (single-line env value)
+  //      • Any other whitespace corruption
+  const m = pem.match(/^(-----BEGIN [^-]+-----)([\s\S]+?)(-----END [^-]+-----)$/);
   if (m) {
     const header = m[1];
-    const body   = m[2].replace(/\s+/g, ""); // strip all whitespace from body
+    const body   = m[2].replace(/\s+/g, ""); // strip every whitespace char
     const footer = m[3];
     const lines  = (body.match(/.{1,64}/g) ?? []).join("\n");
     pem = `${header}\n${lines}\n${footer}`;
