@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { BracketGroup, BracketMarket } from "@/lib/brackets";
 import SignalBadge from "@/components/SignalBadge";
+import PositionBuilderModal from "./PositionBuilderModal";
 
 interface Props {
   group: BracketGroup;
@@ -10,6 +11,7 @@ interface Props {
 
 export default function BracketGroupCard({ group }: Props) {
   const [tradeTarget, setTradeTarget] = useState<BracketMarket | null>(null);
+  const [showPositionBuilder, setShowPositionBuilder] = useState(false);
 
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
@@ -29,6 +31,12 @@ export default function BracketGroupCard({ group }: Props) {
               )}
             </p>
           </div>
+          <button
+            onClick={() => setShowPositionBuilder(true)}
+            className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold transition-colors"
+          >
+            🧱 Build Position
+          </button>
         </div>
 
         {/* Best trade recommendation */}
@@ -69,13 +77,21 @@ export default function BracketGroupCard({ group }: Props) {
         ))}
       </div>
 
-      {/* Trade modal */}
+      {/* Single-bracket trade modal */}
       {tradeTarget && (
         <BracketTradeModal
           bracket={tradeTarget}
           groupTitle={group.title}
           onClose={() => setTradeTarget(null)}
           onConfirm={() => setTradeTarget(null)}
+        />
+      )}
+
+      {/* Multi-leg position builder modal */}
+      {showPositionBuilder && (
+        <PositionBuilderModal
+          group={group}
+          onClose={() => setShowPositionBuilder(false)}
         />
       )}
     </div>
