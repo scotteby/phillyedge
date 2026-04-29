@@ -18,8 +18,10 @@ interface KalshiMarket {
   last_price_dollars:   string;
   volume_fp:            number;
   status:               string;
-  occurrence_datetime:  string; // the actual weather date
   strike_type:          string; // "greater" | "less" | "between"
+  // occurrence_datetime is NOT present in the live API; date is parsed from event_ticker
+  occurrence_datetime?: string;
+  close_time?:          string; // fallback date source
 }
 
 function getYesPrice(m: KalshiMarket): number {
@@ -30,8 +32,37 @@ function getYesPrice(m: KalshiMarket): number {
   return last > 0 ? last : 0.5;
 }
 
+const MONTH_MAP: Record<string, string> = {
+  JAN: "01", FEB: "02", MAR: "03", APR: "04", MAY: "05", JUN: "06",
+  JUL: "07", AUG: "08", SEP: "09", OCT: "10", NOV: "11", DEC: "12",
+};
+
 function getEndDate(m: KalshiMarket): string {
-  return m.occurrence_datetime ? m.occurrence_datetime.split("T")[0] : "";
+  // 1. Prefer occurrence_datetime if present (older API versions)
+  if (m.occurrence_datetime) return m.occurrence_datetime.split("T")[0];
+
+  // 2. Parse date from event_ticker: e.g. "KXHIGHPHIL-26APR29" → 2026-04-29
+  //    Format: {SERIES}-{YYMONDD}
+  const parts = (m.event_ticker ?? "").split("-");
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const code  = parts[i];
+    const match = code.match(/^(\d{2})([A-Z]{3})(\d{2})$/);
+    if (match) {
+      const mm = MONTH_MAP[match[2]];
+      if (mm) return `20${match[1]}-${mm}-${match[3]}`;
+    }
+  }
+
+  // 3. Fallback: close_time is midnight of the day AFTER the weather day
+  if (m.close_time) {
+    const d = new Date(m.close_time);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().split("T")[0];
+  }
+
+  // 4. Last resort — today (will show up as stale but won't break the insert)
+  console.warn("[kalshi] Could not determine end_date for", m.ticker);
+  return new Date().toISOString().split("T")[0];
 }
 
 export interface FetchMarketsResult {
@@ -146,7 +177,8 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
       active:     true,
     }));
 
-    await supabase.from("market_cache").insert(rows);
+    const { error: insertErr } = await supabase.from("market_cache").insert(rows);
+    if (insertErr) console.error("[kalshi] Cache insert failed:", insertErr.message);
   } else {
     // Kalshi returned nothing — reactivate whatever was in the cache so the
     // page doesn't go blank. This handles the bust=true → Kalshi 0-result case.
