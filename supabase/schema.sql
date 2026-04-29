@@ -45,11 +45,18 @@ create table if not exists public.trades (
   kalshi_order_id  text          -- Kalshi order UUID returned after placement
 );
 
--- Migration: run this if the table already exists
--- alter table public.trades add column if not exists kalshi_order_id text;
+-- -------------------------------------------------------
+-- Migration: run these if the table already exists
+-- -------------------------------------------------------
+-- alter table public.trades add column if not exists kalshi_order_id  text;
+-- alter table public.trades add column if not exists order_status     text;
+-- alter table public.trades add column if not exists filled_count     int;
+-- alter table public.trades add column if not exists remaining_count  int;
+-- alter table public.trades add column if not exists last_checked_at  timestamptz;
 
-create index if not exists trades_target_date_idx on public.trades (target_date);
-create index if not exists trades_outcome_idx on public.trades (outcome);
+create index if not exists trades_target_date_idx  on public.trades (target_date);
+create index if not exists trades_outcome_idx       on public.trades (outcome);
+create index if not exists trades_order_status_idx  on public.trades (order_status);
 
 -- -------------------------------------------------------
 -- market_cache

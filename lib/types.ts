@@ -11,6 +11,14 @@ export interface Forecast {
   notes: string | null;
 }
 
+export type OrderStatus =
+  | "resting"
+  | "partially_filled"
+  | "filled"
+  | "canceled"
+  | "expired"
+  | null;
+
 export interface Trade {
   id: string;
   created_at: string;
@@ -27,6 +35,10 @@ export interface Trade {
   pnl: number | null;
   polymarket_url: string | null;
   kalshi_order_id: string | null;
+  order_status: OrderStatus;
+  filled_count: number | null;
+  remaining_count: number | null;
+  last_checked_at: string | null;
 }
 
 export interface MarketCache {

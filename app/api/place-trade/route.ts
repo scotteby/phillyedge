@@ -163,18 +163,20 @@ export async function POST(req: NextRequest) {
     const supabase = createServiceClient();
     const { error: dbErr } = await supabase.from("trades").insert([
       {
-        market_id:       ticker,
+        market_id:        ticker,
         market_question,
         target_date,
-        side:            side.toUpperCase(),
-        amount_usdc:     amount,
+        side:             side.toUpperCase(),
+        amount_usdc:      amount,
         market_pct,
         my_pct,
         edge,
         signal,
-        outcome:         "pending",
-        pnl:             null,
-        polymarket_url:  kalshiUrl(ticker),
+        outcome:          "pending",
+        pnl:              null,
+        polymarket_url:   kalshiUrl(ticker),
+        kalshi_order_id:  orderId,
+        order_status:     orderId ? "resting" : null,
       },
     ]);
     if (dbErr) console.error("[place-trade] Supabase insert failed:", dbErr.message);
