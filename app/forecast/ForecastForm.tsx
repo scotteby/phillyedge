@@ -20,9 +20,9 @@ type RowStatus = "saved" | "unsaved" | "saving" | "error";
 type Confidence = "very_confident" | "confident" | "uncertain";
 
 const CONFIDENCE_OPTIONS: { value: Confidence; label: string; std: string }[] = [
-  { value: "very_confident", label: "High",   std: "±1.5°" },
-  { value: "confident",      label: "Normal", std: "±3°"   },
-  { value: "uncertain",      label: "Low",    std: "±5°"   },
+  { value: "very_confident", label: "High",   std: "±1°"  },
+  { value: "confident",      label: "Normal", std: "±2°"  },
+  { value: "uncertain",      label: "Low",    std: "±4°"  },
 ];
 
 const PRECIP_TYPES: { value: PrecipType; label: string }[] = [

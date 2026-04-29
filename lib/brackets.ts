@@ -35,9 +35,9 @@ function bracketProb(range: BracketRange, mean: number, std: number): number {
 
 /** Std-dev in °F for each confidence level. */
 const CONFIDENCE_STD: Record<ForecastConfidence, number> = {
-  very_confident: 1.5,
-  confident:      3.0,
-  uncertain:      5.0,
+  very_confident: 1.0,
+  confident:      2.0,
+  uncertain:      4.0,
 };
 
 // ── Series config ─────────────────────────────────────────────────────────────
