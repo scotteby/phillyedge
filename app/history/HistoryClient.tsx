@@ -850,8 +850,11 @@ function BoostModal({
     return null;
   })();
 
-  const contracts = trade.remaining_count ??
-    (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
+  // DB stores 0 (not null) before polling updates remaining_count — must use > 0
+  const storedRemaining = trade.remaining_count;
+  const contracts = (storedRemaining != null && storedRemaining > 0)
+    ? storedRemaining
+    : (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
 
   const newCost     = chosenCents != null ? (chosenCents / 100) * contracts : null;
   const oldCost     = entryPrice * contracts;
