@@ -74,12 +74,14 @@ export interface FetchMarketsResult {
 
 export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
   const supabase = createServiceClient();
+  const today    = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
 
   // ── Cache freshness check ──────────────────────────────────────────────────
   const { data: cached } = await supabase
     .from("market_cache")
     .select("fetched_at")
     .eq("active", true)
+    .gte("end_date", today)
     .order("fetched_at", { ascending: false })
     .limit(1);
 
@@ -90,6 +92,7 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
         .from("market_cache")
         .select("*")
         .eq("active", true)
+        .gte("end_date", today)
         .order("volume", { ascending: false });
       return { data, fromCache: true, lastUpdated: cached[0].fetched_at, rawCount: 0 };
     }
@@ -193,6 +196,7 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     .from("market_cache")
     .select("*")
     .eq("active", true)
+    .gte("end_date", today)
     .order("volume", { ascending: false });
 
   return { data, fromCache: false, lastUpdated: fetchedAt, rawCount };
