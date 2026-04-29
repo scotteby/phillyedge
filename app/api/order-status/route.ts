@@ -19,7 +19,7 @@ function normaliseStatus(raw: string): OrderStatus {
     case "cancelled":         return "canceled";
     case "expired":           return "expired";
     case "fok_canceled":      return "canceled";
-    default:                  return "resting"; // treat unknown as resting
+    default:                  return "resting";
   }
 }
 
@@ -31,10 +31,10 @@ export async function GET(req: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Look up the trade to get kalshi_order_id
+  // Fetch trade — include fields needed for resolution calc
   const { data: trade, error: dbErr } = await supabase
     .from("trades")
-    .select("id, kalshi_order_id, order_status")
+    .select("id, kalshi_order_id, order_status, market_id, side, entry_yes_price, market_pct, outcome")
     .eq("id", tradeId)
     .single();
 
@@ -46,10 +46,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "No Kalshi order ID for this trade" }, { status: 422 });
   }
 
-  const orderId  = trade.kalshi_order_id as string;
-  const apiPath  = `/trade-api/v2/portfolio/orders/${orderId}`;
+  const orderId = trade.kalshi_order_id as string;
+  const apiPath = `/trade-api/v2/portfolio/orders/${orderId}`;
 
-  // Sign and fetch from Kalshi
+  // ── Fetch order status from Kalshi (authenticated) ───────────────────────
+
   let headers: Record<string, string>;
   try {
     headers = buildKalshiAuthHeaders("GET", apiPath);
@@ -78,7 +79,6 @@ export async function GET(req: NextRequest) {
     }
 
     const json = await res.json();
-    // Kalshi returns { order: { ... } }
     kalshiOrder = (json.order ?? json) as Record<string, unknown>;
   } catch (err) {
     return NextResponse.json(
@@ -93,16 +93,72 @@ export async function GET(req: NextRequest) {
   const remainingCount = Number(kalshiOrder.remaining_count ?? 0);
   const now            = new Date().toISOString();
 
-  // Persist to Supabase
+  // ── Persist order fields to Supabase ────────────────────────────────────
+
   await supabase
     .from("trades")
     .update({
-      order_status:     orderStatus,
-      filled_count:     filledCount,
-      remaining_count:  remainingCount,
-      last_checked_at:  now,
+      order_status:    orderStatus,
+      filled_count:    filledCount,
+      remaining_count: remainingCount,
+      last_checked_at: now,
     })
     .eq("id", tradeId);
+
+  // ── Check market resolution (public endpoint, no auth) ───────────────────
+  // Only bother if the outcome is still pending.
+
+  let outcome: string  = trade.outcome ?? "pending";
+  let pnl:     number | null = null;
+  let resolved = false;
+
+  if (outcome === "pending" && trade.market_id) {
+    try {
+      const mktRes = await fetch(
+        `${KALSHI_BASE}/markets/${encodeURIComponent(trade.market_id as string)}`,
+        { headers: { Accept: "application/json" }, cache: "no-store" }
+      );
+
+      if (mktRes.ok) {
+        const mktJson  = await mktRes.json();
+        const mkt      = (mktJson.market ?? mktJson) as Record<string, unknown>;
+        const mktStatus = String(mkt.status ?? "").toLowerCase();
+        const result    = String(mkt.result  ?? "").toLowerCase(); // "yes" | "no" | ""
+
+        if (mktStatus === "finalized" && (result === "yes" || result === "no")) {
+          const tradeSide = String(trade.side ?? "").toLowerCase(); // "yes" | "no"
+          const won       = result === tradeSide;
+
+          // Entry price of the purchased side (0–1 decimal)
+          const entryYes: number =
+            (trade.entry_yes_price as number | null) ??
+            (tradeSide === "yes"
+              ? (trade.market_pct as number) / 100
+              : 1 - (trade.market_pct as number) / 100);
+          const sidePrice = tradeSide === "yes" ? entryYes : 1 - entryYes;
+
+          // Net P&L:
+          //   Win:  filled_count × (1 − side_entry_price)  — profit per contract
+          //   Loss: −(filled_count × side_entry_price)     — capital lost
+          pnl     = won
+            ? parseFloat((filledCount * (1 - sidePrice)).toFixed(2))
+            : parseFloat((-(filledCount * sidePrice)).toFixed(2));
+          outcome = won ? "win" : "loss";
+          resolved = true;
+
+          await supabase
+            .from("trades")
+            .update({ outcome, pnl })
+            .eq("id", tradeId);
+
+          console.log(`[order-status] Market ${trade.market_id} finalized → ${outcome}, pnl=${pnl}`);
+        }
+      }
+    } catch (err) {
+      // Non-fatal — order status still returned below
+      console.error("[order-status] Market resolution check failed:", err);
+    }
+  }
 
   return NextResponse.json({
     trade_id:        tradeId,
@@ -111,5 +167,8 @@ export async function GET(req: NextRequest) {
     remaining_count: remainingCount,
     last_checked_at: now,
     raw_status:      rawStatus,
+    outcome,
+    pnl,
+    resolved,
   });
 }

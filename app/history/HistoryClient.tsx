@@ -132,8 +132,7 @@ function formatTimeAgo(date: Date): string {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function HistoryClient({ initialTrades }: Props) {
-  const [trades, setTrades]     = useState<Trade[]>(initialTrades);
-  const [updating, setUpdating] = useState<string | null>(null);
+  const [trades, setTrades]   = useState<Trade[]>(initialTrades);
   const [canceling, setCanceling] = useState<string | null>(null);
   const [showAll, setShowAll]   = useState(false);
   const { toasts, addToast, dismiss } = useToasts();
@@ -204,23 +203,39 @@ export default function HistoryClient({ initialTrades }: Props) {
       const res  = await fetch(`/api/order-status?trade_id=${tradeId}`);
       if (!res.ok) return;
       const json = await res.json() as {
-        order_status: OrderStatus;
-        filled_count: number;
+        order_status:    OrderStatus;
+        filled_count:    number;
         remaining_count: number;
         last_checked_at: string;
+        outcome:         Trade["outcome"];
+        pnl:             number | null;
+        resolved:        boolean;
       };
 
       setTrades((prev) => {
         const old     = prev.find((t) => t.id === tradeId);
-        const updated = prev.map((t) => t.id === tradeId ? { ...t, ...json } : t);
+        const updated = prev.map((t) =>
+          t.id === tradeId ? { ...t, ...json } : t
+        );
 
-        if (old && old.order_status !== json.order_status) {
-          if (json.order_status === "filled") {
+        if (old) {
+          if (old.order_status !== json.order_status) {
+            if (json.order_status === "filled") {
+              const t = updated.find((x) => x.id === tradeId);
+              addToast(`✅ Order filled — ${t?.market_question ?? tradeId}`, "fill");
+            } else if (json.order_status === "partially_filled") {
+              const t = updated.find((x) => x.id === tradeId);
+              addToast(`🟠 Partial fill — ${t?.market_question ?? tradeId} (${json.filled_count} filled)`, "fill");
+            }
+          }
+          if (json.resolved) {
             const t = updated.find((x) => x.id === tradeId);
-            addToast(`✅ Order filled — ${t?.market_question ?? tradeId}`, "fill");
-          } else if (json.order_status === "partially_filled") {
-            const t = updated.find((x) => x.id === tradeId);
-            addToast(`🟠 Partial fill — ${t?.market_question ?? tradeId} (${json.filled_count} filled)`, "fill");
+            const label = t?.market_question ?? tradeId;
+            if (json.outcome === "win") {
+              addToast(`🏆 Win! ${label} · +$${(json.pnl ?? 0).toFixed(2)}`, "fill");
+            } else if (json.outcome === "loss") {
+              addToast(`📉 Loss — ${label}`, "cancel");
+            }
           }
         }
         return updated;
@@ -236,36 +251,6 @@ export default function HistoryClient({ initialTrades }: Props) {
     const interval = setInterval(pollAll, 60_000);
     return () => clearInterval(interval);
   }, [pollOrder]);
-
-  // ── Outcome update ───────────────────────────────────────────────────────
-
-  async function updateOutcome(
-    tradeId: string,
-    outcome: Trade["outcome"],
-    amountUsdc: number,
-    marketPct: number
-  ) {
-    setUpdating(tradeId);
-    let pnl: number | null = null;
-    if (outcome === "win") {
-      pnl = marketPct > 0 ? parseFloat((amountUsdc * (100 / marketPct - 1)).toFixed(2)) : null;
-    } else if (outcome === "loss") {
-      pnl = -amountUsdc;
-    }
-    try {
-      const res  = await fetch("/api/trades", {
-        method:  "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ id: tradeId, outcome, pnl }),
-      });
-      const json = await res.json();
-      if (res.ok && json.data) {
-        setTrades((prev) => prev.map((t) => (t.id === tradeId ? json.data : t)));
-      }
-    } finally {
-      setUpdating(null);
-    }
-  }
 
   // ── Cancel order ─────────────────────────────────────────────────────────
 
@@ -442,11 +427,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                 trade={trade}
                 liveYesPrice={livePrices.get(trade.market_id)}
                 today={today}
-                updating={updating === trade.id}
                 canceling={canceling === trade.id}
-                onUpdateOutcome={(outcome) =>
-                  updateOutcome(trade.id, outcome, trade.amount_usdc, trade.market_pct)
-                }
                 onCancel={() => cancelOrder(trade.id)}
               />
             ))}
@@ -475,11 +456,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                     trade={trade}
                     liveYesPrice={livePrices.get(trade.market_id)}
                     today={today}
-                    updating={updating === trade.id}
                     canceling={canceling === trade.id}
-                    onUpdateOutcome={(outcome) =>
-                      updateOutcome(trade.id, outcome, trade.amount_usdc, trade.market_pct)
-                    }
                     onCancel={() => cancelOrder(trade.id)}
                   />
                 ))}
@@ -519,16 +496,30 @@ interface TradeRowProps {
   trade: Trade;
   liveYesPrice: number | undefined;
   today: string;
-  updating: boolean;
   canceling: boolean;
-  onUpdateOutcome: (outcome: Trade["outcome"]) => void;
   onCancel: () => void;
+}
+
+// ── Outcome badge ─────────────────────────────────────────────────────────────
+
+function OutcomeBadge({ outcome }: { outcome: Trade["outcome"] }) {
+  const map: Record<NonNullable<Trade["outcome"]>, { label: string; classes: string }> = {
+    pending: { label: "🟡 Pending", classes: "bg-yellow-500/15 text-yellow-300 border-yellow-500/30" },
+    win:     { label: "🟢 Win",     classes: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
+    loss:    { label: "🔴 Loss",    classes: "bg-red-500/15 text-red-300 border-red-500/30" },
+  };
+  const { label, classes } = map[outcome ?? "pending"];
+  return (
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${classes}`}>
+      {label}
+    </span>
+  );
 }
 
 // ── Mobile card ───────────────────────────────────────────────────────────────
 
 function TradeCard({
-  trade, liveYesPrice, today, updating, canceling, onUpdateOutcome, onCancel,
+  trade, liveYesPrice, today, canceling, onCancel,
 }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -613,21 +604,9 @@ function TradeCard({
         </div>
       </div>
 
-      {/* Outcome selector — outside the expand click zone */}
-      <div
-        className="px-4 pb-3 flex justify-end"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <select
-          value={trade.outcome}
-          disabled={updating}
-          onChange={(e) => onUpdateOutcome(e.target.value as Trade["outcome"])}
-          className="bg-slate-700 border border-slate-600 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50 min-h-[44px]"
-        >
-          <option value="pending">Pending</option>
-          <option value="win">Win</option>
-          <option value="loss">Loss</option>
-        </select>
+      {/* Outcome badge */}
+      <div className="px-4 pb-3">
+        <OutcomeBadge outcome={trade.outcome} />
       </div>
 
       {/* Expandable detail panel */}
@@ -681,7 +660,7 @@ function TradeCard({
 
 // ── Desktop table row ─────────────────────────────────────────────────────────
 
-function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOutcome, onCancel }: TradeRowProps) {
+function TradeRow({ trade, liveYesPrice, today, canceling, onCancel }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
   const edgeColor =
@@ -772,13 +751,7 @@ function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOut
 
         {/* Outcome */}
         <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
-          <select value={trade.outcome} disabled={updating}
-            onChange={(e) => onUpdateOutcome(e.target.value as Trade["outcome"])}
-            className="bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50">
-            <option value="pending">Pending</option>
-            <option value="win">Win</option>
-            <option value="loss">Loss</option>
-          </select>
+          <OutcomeBadge outcome={trade.outcome} />
         </td>
 
         {/* P&L + expand chevron */}
