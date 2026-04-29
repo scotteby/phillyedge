@@ -26,30 +26,30 @@ interface LegResult {
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
 
-function rawWeight(leg: Pick<PositionLeg, "side" | "isPrimary" | "bracket">): number {
-  if (leg.side === "YES") {
-    return leg.isPrimary ? 40 : 20;
-  }
-  return Math.abs(leg.bracket.edge) >= 25 ? 25 : 15;
-}
-
 /**
  * Build the default legs from signal data.
  *
- * YES legs: all brackets with edge >= 10 (Buy or Strong Buy).
- *   – The forecast bracket (relation === "forecast") is promoted to "primary" → 40% weight.
- *   – If no forecast bracket exists, the highest-edge YES gets primary.
- *   – All other YES brackets → 20% weight.
+ * Inclusion: any bracket whose trade_side is "YES" or "NO" — this covers all
+ * non-neutral signals including cascaded NO brackets (e.g. <64° showing NO
+ * due to directional cascade even with a small raw edge).
  *
- * NO legs: all brackets with edge <= -10 (NO or Strong NO).
- *   – Strong NO (|edge| >= 25) → 25% weight.
- *   – NO (|edge| >= 10) → 15% weight.
+ * Allocation (two-phase, then normalize to 100%):
  *
- * Raw weights are normalized to 100% using largest-remainder integer allocation.
+ *   YES group  — gets 55% of total budget when NO brackets also exist (100% if YES-only)
+ *     · Primary (forecast bracket or highest-edge YES) → 35 raw weight
+ *     · Each secondary YES                            → 20 raw weight
+ *     → Scale YES raw weights so they sum to the YES budget share
+ *
+ *   NO group   — gets 45% of total budget when YES brackets also exist (100% if NO-only)
+ *     · Each NO bracket → weight proportional to |edge| (min 1 to avoid zero)
+ *     → Scale NO raw weights so they sum to the NO budget share
+ *
+ *   Final pcts are integers that sum to exactly 100 via largest-remainder rounding.
  */
 function buildDefaultLegs(brackets: BracketMarket[]): PositionLeg[] {
-  const yesBrackets = brackets.filter((b) => b.edge >= 10 && b.confidence > 0);
-  const noBrackets  = brackets.filter((b) => b.edge <= -10 && b.confidence > 0);
+  // Use trade_side (signal-derived) not raw edge — includes cascaded NO brackets
+  const yesBrackets = brackets.filter((b) => b.trade_side === "YES" && b.confidence > 0);
+  const noBrackets  = brackets.filter((b) => b.trade_side === "NO"  && b.confidence > 0);
 
   if (yesBrackets.length === 0 && noBrackets.length === 0) return [];
 
@@ -58,24 +58,49 @@ function buildDefaultLegs(brackets: BracketMarket[]): PositionLeg[] {
   const highestYes  = [...yesBrackets].sort((a, b) => b.edge - a.edge)[0] ?? null;
   const primaryId   = (forecastYes ?? highestYes)?.market_id ?? null;
 
-  const draft: Array<Pick<PositionLeg, "side" | "isPrimary" | "bracket">> = [
-    ...yesBrackets.map((b) => ({
+  const hasBoth = yesBrackets.length > 0 && noBrackets.length > 0;
+  const yesBudget = hasBoth ? 55 : 100;
+  const noBudget  = hasBoth ? 45 : 100;
+
+  // YES: raw weights (primary=35, secondary=20), then scale to yesBudget
+  const yesRaw = yesBrackets.map((b) => (b.market_id === primaryId ? 35 : 20));
+  const yesRawTotal = yesRaw.reduce((s, v) => s + v, 0);
+  const yesScaled = yesBrackets.map((_, i) =>
+    yesRawTotal > 0 ? (yesRaw[i] / yesRawTotal) * yesBudget : 0
+  );
+
+  // NO: raw weights proportional to |edge| (min 1), then scale to noBudget
+  const noRaw = noBrackets.map((b) => Math.max(1, Math.abs(b.edge)));
+  const noRawTotal = noRaw.reduce((s, v) => s + v, 0);
+  const noScaled = noBrackets.map((_, i) =>
+    noRawTotal > 0 ? (noRaw[i] / noRawTotal) * noBudget : 0
+  );
+
+  // Combine into a flat list (YES first, then NO sorted by |edge| descending)
+  const sortedNo = noBrackets
+    .map((b, i) => ({ b, scaled: noScaled[i] }))
+    .sort((a, b) => Math.abs(b.b.edge) - Math.abs(a.b.edge)); // strongest NO first
+
+  type DraftEntry = { bracket: BracketMarket; side: "YES" | "NO"; isPrimary: boolean; scaledPct: number };
+
+  const draft: DraftEntry[] = [
+    ...yesBrackets.map((b, i) => ({
+      bracket:   b,
       side:      "YES" as const,
       isPrimary: b.market_id === primaryId,
-      bracket:   b,
+      scaledPct: yesScaled[i],
     })),
-    ...noBrackets.map((b) => ({
+    ...sortedNo.map(({ b, scaled }) => ({
+      bracket:   b,
       side:      "NO" as const,
       isPrimary: false,
-      bracket:   b,
+      scaledPct: scaled,
     })),
   ];
 
-  const totalRaw = draft.reduce((s, l) => s + rawWeight(l), 0);
-  if (totalRaw === 0) return [];
-
   // Largest-remainder integer allocation → pcts sum to exactly 100
-  const rawPcts  = draft.map((l) => (rawWeight(l) / totalRaw) * 100);
+  const total    = draft.reduce((s, l) => s + l.scaledPct, 0);
+  const rawPcts  = draft.map((l) => (total > 0 ? (l.scaledPct / total) * 100 : 100 / draft.length));
   const floored  = rawPcts.map(Math.floor);
   const remainder = 100 - floored.reduce((s, v) => s + v, 0);
   const fracOrder = rawPcts
