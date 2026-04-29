@@ -1,0 +1,299 @@
+"use client";
+
+import { useState } from "react";
+import type { BracketGroup, BracketMarket } from "@/lib/brackets";
+import SignalBadge from "@/components/SignalBadge";
+
+interface Props {
+  group: BracketGroup;
+}
+
+export default function BracketGroupCard({ group }: Props) {
+  const [tradeTarget, setTradeTarget] = useState<BracketMarket | null>(null);
+
+  return (
+    <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+      {/* Group header */}
+      <div className="px-5 pt-4 pb-3 border-b border-slate-700">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-white font-semibold text-base">{group.title}</h2>
+            <p className="text-slate-500 text-xs mt-0.5">
+              Closes {new Date(group.end_date + "T12:00:00").toLocaleDateString("en-US", {
+                weekday: "short", month: "short", day: "numeric",
+              })}
+              {group.forecast_value !== null && (
+                <span className="ml-2 text-slate-400">
+                  · Our forecast: <span className="text-white font-medium">{group.forecast_value}°F</span>
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {/* Best trade recommendation */}
+        {group.best && (
+          <div className="mt-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2.5">
+            <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wide mb-0.5">
+              Best Trade
+            </p>
+            <p className="text-sm text-white">
+              <span className="font-semibold">{group.best.range.label} YES @ {group.best.yes_pct}%</span>
+              {group.forecast_value !== null && (
+                <span className="text-slate-300">
+                  {" "}— our forecast of {group.forecast_value}°F puts this bracket at ~{group.best.confidence}% likely
+                </span>
+              )}
+              <span className={`ml-2 font-bold ${group.best.edge >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {group.best.edge > 0 ? "+" : ""}{group.best.edge}pt edge
+              </span>
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Bracket rows */}
+      <div>
+        {/* Column headers */}
+        <div className="grid grid-cols-[1fr_80px_80px_80px_80px_100px] px-5 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
+          <div>Bracket</div>
+          <div className="text-right">Kalshi %</div>
+          <div className="text-right">Our %</div>
+          <div className="text-right">Edge</div>
+          <div className="text-center">Signal</div>
+          <div className="text-right" />
+        </div>
+
+        {group.brackets.map((b) => (
+          <BracketRow key={b.market_id} bracket={b} onTrade={() => setTradeTarget(b)} />
+        ))}
+      </div>
+
+      {/* Trade modal */}
+      {tradeTarget && (
+        <BracketTradeModal
+          bracket={tradeTarget}
+          groupTitle={group.title}
+          onClose={() => setTradeTarget(null)}
+          onConfirm={() => setTradeTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Bracket row ───────────────────────────────────────────────────────────────
+
+function BracketRow({ bracket, onTrade }: { bracket: BracketMarket; onTrade: () => void }) {
+  const isForecast = bracket.relation === "forecast";
+  const isAdjacent = bracket.relation === "adjacent";
+
+  const rowBg = isForecast
+    ? "bg-emerald-500/8 hover:bg-emerald-500/12"
+    : isAdjacent
+    ? "bg-slate-700/20 hover:bg-slate-700/30"
+    : "hover:bg-slate-700/20";
+
+  const edgeColor =
+    bracket.edge >= 25 ? "text-emerald-400" :
+    bracket.edge >= 10 ? "text-sky-400" :
+    bracket.edge <= -10 ? "text-red-400" :
+    bracket.edge !== 0 ? "text-slate-300" :
+    "text-slate-600";
+
+  return (
+    <div className={`grid grid-cols-[1fr_80px_80px_80px_80px_100px] items-center px-5 py-2.5 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg}`}>
+      {/* Bracket label */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium text-white">{bracket.range.label}</span>
+        {isForecast && (
+          <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
+            YOUR FORECAST
+          </span>
+        )}
+        {isAdjacent && (
+          <span className="text-xs text-slate-500 italic">adjacent</span>
+        )}
+      </div>
+
+      {/* Kalshi % */}
+      <div className="text-right text-sm text-slate-200">{bracket.yes_pct}%</div>
+
+      {/* Our % */}
+      <div className="text-right text-sm">
+        {bracket.confidence > 0 ? (
+          <span className={isForecast ? "text-emerald-400 font-semibold" : "text-slate-400"}>
+            ~{bracket.confidence}%
+          </span>
+        ) : (
+          <span className="text-slate-600">—</span>
+        )}
+      </div>
+
+      {/* Edge */}
+      <div className={`text-right text-sm font-semibold ${edgeColor}`}>
+        {bracket.edge !== 0 ? `${bracket.edge > 0 ? "+" : ""}${bracket.edge}` : "—"}
+      </div>
+
+      {/* Signal */}
+      <div className="flex justify-center">
+        {bracket.confidence > 0 ? (
+          <SignalBadge signal={bracket.signal} />
+        ) : (
+          <span className="text-slate-600 text-xs">—</span>
+        )}
+      </div>
+
+      {/* Trade button */}
+      <div className="flex justify-end">
+        <button
+          onClick={onTrade}
+          className="text-xs bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+        >
+          Trade
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Bracket trade modal ───────────────────────────────────────────────────────
+
+function BracketTradeModal({
+  bracket,
+  groupTitle,
+  onClose,
+  onConfirm,
+}: {
+  bracket: BracketMarket;
+  groupTitle: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const [side, setSide] = useState<"YES" | "NO">("YES");
+  const [amount, setAmount] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const usdc = parseFloat(amount) || 0;
+  const price = side === "YES" ? bracket.yes_price : 1 - bracket.yes_price;
+  const shares = price > 0 ? usdc / price : 0;
+  const maxProfit = shares - usdc;
+
+  const seriesLower = bracket.market_id.split("-")[0].toLowerCase();
+  const tickerLower = bracket.market_id.toLowerCase();
+  const SERIES_SLUGS: Record<string, string> = {
+    kxhighphil:   "highest-temperature-in-philadelphia",
+    kxlowtphil:   "lowest-temperature-in-philadelphia",
+    kxprecipphil: "precipitation-in-philadelphia",
+  };
+  const kalshiUrl = `https://kalshi.com/markets/${seriesLower}/${SERIES_SLUGS[seriesLower] ?? seriesLower}/${tickerLower}`;
+
+  async function handleConfirm() {
+    if (!usdc || usdc <= 0) { setError("Enter a valid USDC amount."); return; }
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/trades", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          market_id:       bracket.market_id,
+          market_question: `${groupTitle} — ${bracket.range.label}`,
+          target_date:     bracket.end_date,
+          side,
+          amount_usdc:     usdc,
+          market_pct:      bracket.yes_pct,
+          my_pct:          bracket.confidence,
+          edge:            bracket.edge,
+          signal:          bracket.signal,
+          outcome:         "pending",
+          pnl:             null,
+          polymarket_url:  kalshiUrl,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to log trade");
+      window.open(kalshiUrl, "_blank", "noopener");
+      onConfirm();
+    } catch (err) {
+      setError(String(err));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="p-6 border-b border-slate-700">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-slate-400 text-xs mb-1">{groupTitle}</p>
+              <h2 className="text-white font-semibold text-base">{bracket.range.label}</h2>
+            </div>
+            <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors mt-0.5">✕</button>
+          </div>
+          {bracket.confidence > 0 && (
+            <div className="mt-2 text-xs text-slate-400">
+              Kalshi {bracket.yes_pct}% · Our estimate ~{bracket.confidence}% ·{" "}
+              <span className={bracket.edge >= 0 ? "text-emerald-400" : "text-red-400"}>
+                {bracket.edge > 0 ? "+" : ""}{bracket.edge}pt edge
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Side</label>
+            <div className="flex gap-2">
+              {(["YES", "NO"] as const).map((s) => (
+                <button key={s} onClick={() => setSide(s)}
+                  className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                    side === s
+                      ? s === "YES" ? "bg-emerald-500/20 border-emerald-500 text-emerald-400"
+                                    : "bg-red-500/20 border-red-500 text-red-400"
+                      : "bg-slate-700 border-slate-600 text-slate-400 hover:border-slate-500"
+                  }`}>{s}</button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Amount (USDC)</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+              <input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)}
+                placeholder="100"
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-7 pr-16 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">USDC</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-700/50 rounded-xl p-4 space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-slate-400">Price ({side})</span><span className="text-white">{(price * 100).toFixed(1)}¢</span></div>
+            <div className="flex justify-between"><span className="text-slate-400">Shares</span><span className="text-white">{shares > 0 ? shares.toFixed(2) : "—"}</span></div>
+            <div className="border-t border-slate-600 pt-2 flex justify-between font-semibold">
+              <span className="text-slate-300">Max Profit</span>
+              <span className="text-emerald-400">{maxProfit > 0 ? `+$${maxProfit.toFixed(2)}` : "—"}</span>
+            </div>
+          </div>
+
+          {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-400 text-sm">{error}</div>}
+        </div>
+
+        <div className="p-6 pt-0 flex gap-3">
+          <button onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-300 text-sm font-medium hover:bg-slate-700 transition-colors">
+            Cancel
+          </button>
+          <button onClick={handleConfirm} disabled={submitting}
+            className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:bg-slate-600 text-white text-sm font-semibold transition-colors">
+            {submitting ? "Logging..." : "Confirm & Open Kalshi →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

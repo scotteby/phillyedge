@@ -2,28 +2,24 @@
 
 import { useState } from "react";
 import type { MarketWithEdge } from "@/lib/types";
+import type { BracketGroup } from "@/lib/brackets";
 import SignalBadge from "@/components/SignalBadge";
 import TradeModal from "./TradeModal";
+import BracketGroupCard from "./BracketGroupCard";
 
 type Filter = "all" | "strong-buy" | "buy" | "avoid";
 
 interface Props {
+  groups: BracketGroup[];
   markets: MarketWithEdge[];
   lastUpdatedLabel: string | null;
   rawCount?: number;
 }
 
-export default function MarketsClient({ markets, lastUpdatedLabel, rawCount }: Props) {
+export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCount }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [selectedMarket, setSelectedMarket] = useState<MarketWithEdge | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-
-  const filtered =
-    filter === "all" ? markets : markets.filter((m) => m.signal === filter);
-
-  const sorted = [...filtered].sort(
-    (a, b) => Math.abs(b.edge) - Math.abs(a.edge)
-  );
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -31,11 +27,34 @@ export default function MarketsClient({ markets, lastUpdatedLabel, rawCount }: P
     window.location.reload();
   }
 
+  // Filter single markets
+  const filteredSingles =
+    filter === "all" ? markets : markets.filter((m) => m.signal === filter);
+  const sortedSingles = [...filteredSingles].sort(
+    (a, b) => Math.abs(b.edge) - Math.abs(a.edge)
+  );
+
+  // Filter bracket groups by best bracket signal
+  const filteredGroups =
+    filter === "all"
+      ? groups
+      : groups.filter((g) => g.best?.signal === filter);
+
+  const totalCount = filteredGroups.length + sortedSingles.length;
+
+  // Counts for filter badges (across both types)
+  function countSignal(sig: Filter) {
+    if (sig === "all") return groups.length + markets.length;
+    const gc = groups.filter((g) => g.best?.signal === sig).length;
+    const mc = markets.filter((m) => m.signal === sig).length;
+    return gc + mc;
+  }
+
   const filterButtons: { value: Filter; label: string }[] = [
-    { value: "all", label: "All" },
+    { value: "all",        label: "All" },
     { value: "strong-buy", label: "Strong Buy" },
-    { value: "buy", label: "Buy" },
-    { value: "avoid", label: "Avoid" },
+    { value: "buy",        label: "Buy" },
+    { value: "avoid",      label: "Avoid" },
   ];
 
   return (
@@ -73,16 +92,14 @@ export default function MarketsClient({ markets, lastUpdatedLabel, rawCount }: P
           >
             {label}
             {value !== "all" && (
-              <span className="ml-1.5 text-xs opacity-70">
-                ({markets.filter((m) => m.signal === value).length})
-              </span>
+              <span className="ml-1.5 text-xs opacity-70">({countSignal(value)})</span>
             )}
           </button>
         ))}
       </div>
 
       {/* Empty state */}
-      {sorted.length === 0 && (
+      {totalCount === 0 && (
         <div className="text-center py-20 text-slate-500">
           <p className="text-4xl mb-3">🌤</p>
           <p className="text-lg font-medium text-slate-300">No markets found</p>
@@ -90,34 +107,47 @@ export default function MarketsClient({ markets, lastUpdatedLabel, rawCount }: P
             <p className="text-sm mt-1">No {filter} signals right now — try the All tab.</p>
           ) : (
             <div className="text-sm mt-2 space-y-1">
-              <p>No Philadelphia weather markets matched in the Polymarket feed.</p>
+              <p>No Philadelphia weather markets found in the Kalshi feed.</p>
               {rawCount !== undefined && rawCount > 0 && (
-                <p className="text-xs text-slate-600">
-                  ({rawCount.toLocaleString()} total markets scanned)
-                </p>
+                <p className="text-xs text-slate-600">({rawCount.toLocaleString()} total markets scanned)</p>
               )}
               {rawCount === 0 && (
-                <p className="text-xs text-slate-600">
-                  Could not reach the Polymarket API — check your network or try refreshing.
-                </p>
+                <p className="text-xs text-slate-600">Could not reach the Kalshi API — try refreshing.</p>
               )}
             </div>
           )}
         </div>
       )}
 
-      {/* Market cards */}
-      <div className="space-y-4">
-        {sorted.map((market) => (
-          <MarketCard
-            key={market.id}
-            market={market}
-            onTrade={() => setSelectedMarket(market)}
-          />
-        ))}
-      </div>
+      {/* Bracket groups */}
+      {filteredGroups.length > 0 && (
+        <div className="space-y-4 mb-6">
+          {filteredGroups.map((g) => (
+            <BracketGroupCard key={g.event_key} group={g} />
+          ))}
+        </div>
+      )}
 
-      {/* Trade modal */}
+      {/* Single binary markets */}
+      {sortedSingles.length > 0 && (
+        <>
+          {filteredGroups.length > 0 && (
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">
+              Other Markets
+            </h2>
+          )}
+          <div className="space-y-4">
+            {sortedSingles.map((market) => (
+              <MarketCard
+                key={market.id}
+                market={market}
+                onTrade={() => setSelectedMarket(market)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
       {selectedMarket && (
         <TradeModal
           market={selectedMarket}
@@ -129,61 +159,37 @@ export default function MarketsClient({ markets, lastUpdatedLabel, rawCount }: P
   );
 }
 
-function MarketCard({
-  market,
-  onTrade,
-}: {
-  market: MarketWithEdge;
-  onTrade: () => void;
-}) {
-  const edgeColor =
-    market.edge >= 25
-      ? "text-emerald-400"
-      : market.edge >= 10
-      ? "text-sky-400"
-      : market.edge <= -10
-      ? "text-red-400"
-      : "text-slate-400";
+// ── Single market card (unchanged) ───────────────────────────────────────────
 
-  const volumeK =
-    market.volume >= 1000
-      ? `$${(market.volume / 1000).toFixed(1)}K`
-      : `$${market.volume}`;
+function MarketCard({ market, onTrade }: { market: MarketWithEdge; onTrade: () => void }) {
+  const edgeColor =
+    market.edge >= 25 ? "text-emerald-400" :
+    market.edge >= 10 ? "text-sky-400" :
+    market.edge <= -10 ? "text-red-400" : "text-slate-400";
+
+  const vol = market.volume >= 1000 ? `$${(market.volume / 1000).toFixed(1)}K` : `$${market.volume}`;
 
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
       <div className="flex items-start gap-4">
-        {/* Main content */}
         <div className="flex-1 min-w-0">
           <p className="text-white font-medium leading-snug">{market.question}</p>
           <p className="text-slate-500 text-xs mt-1">
-            Closes {new Date(market.end_date).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
+            Closes {new Date(market.end_date + "T12:00:00").toLocaleDateString("en-US", {
+              month: "short", day: "numeric", year: "numeric",
             })}
           </p>
-
-          {/* Stats row */}
           <div className="flex flex-wrap gap-4 mt-3">
-            <Stat label="Market" value={`${market.market_pct}%`} />
+            <Stat label="Market"       value={`${market.market_pct}%`} />
             <Stat label="Our Forecast" value={`${market.my_pct}%`} />
-            <Stat
-              label="Edge"
-              value={`${market.edge > 0 ? "+" : ""}${market.edge} pts`}
-              valueClass={edgeColor}
-            />
-            <Stat label="Volume" value={volumeK} />
+            <Stat label="Edge"         value={`${market.edge > 0 ? "+" : ""}${market.edge} pts`} valueClass={edgeColor} />
+            <Stat label="Volume"       value={vol} />
           </div>
         </div>
-
-        {/* Right column */}
         <div className="flex flex-col items-end gap-3 shrink-0">
           <SignalBadge signal={market.signal} />
-          <button
-            onClick={onTrade}
-            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-sm font-semibold rounded-lg transition-colors"
-          >
+          <button onClick={onTrade}
+            className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-sm font-semibold rounded-lg transition-colors">
             Trade
           </button>
         </div>
@@ -192,15 +198,7 @@ function MarketCard({
   );
 }
 
-function Stat({
-  label,
-  value,
-  valueClass = "text-white",
-}: {
-  label: string;
-  value: string;
-  valueClass?: string;
-}) {
+function Stat({ label, value, valueClass = "text-white" }: { label: string; value: string; valueClass?: string }) {
   return (
     <div>
       <p className="text-xs text-slate-500">{label}</p>
