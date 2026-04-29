@@ -56,24 +56,34 @@ function getEntryYesPrice(trade: Trade): number {
  *   MTM          = current_value − amount_paid
  *                = amount × (live_price / entry_price − 1)
  *
- * For cancelled orders with a partial fill, uses only the capital that
- * was actually deployed (filled_count × entry_price) as the basis.
+ * For resting or cancelled orders with a partial fill, uses only the
+ * capital actually deployed (filled_count × entry_price) as the basis.
  */
 function calcMarkToMarket(trade: Trade, liveYesPrice: number): number {
   const entryYes   = getEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const livePrice  = trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice;
   if (entryPrice <= 0) return 0;
-  // Cancelled with partial fill: only count what actually executed
-  const amount = (trade.order_status === "canceled" && (trade.filled_count ?? 0) > 0)
-    ? trade.filled_count! * entryPrice
-    : trade.amount_usdc;
+  // Resting or cancelled with partial fill: only count what actually executed
+  const isPartialOrder =
+    (trade.order_status === "resting" || trade.order_status === "canceled") &&
+    (trade.filled_count ?? 0) > 0;
+  const amount = isPartialOrder ? trade.filled_count! * entryPrice : trade.amount_usdc;
   return amount * (livePrice / entryPrice - 1);
 }
 
 /** True when a cancelled order filled 0 contracts — nothing was spent. */
 function isVoidCancelled(trade: Trade): boolean {
   return trade.order_status === "canceled" && (trade.filled_count ?? 0) === 0;
+}
+
+/**
+ * True when the order holds no contracts yet — no position to mark to market.
+ * Covers: resting with 0 fills, cancelled with 0 fills.
+ */
+function hasNoPosition(trade: Trade): boolean {
+  const filled = trade.filled_count ?? 0;
+  return filled === 0 && (trade.order_status === "resting" || trade.order_status === "canceled");
 }
 
 
@@ -302,8 +312,10 @@ export default function HistoryClient({ initialTrades }: Props) {
   const winRate  = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
   const settledPnl = settled.reduce((s, t) => s + (t.pnl ?? 0), 0);
 
-  // Projected P&L: MTM for pending trades with live prices
+  // Projected P&L: MTM for pending trades with live prices.
+  // Skip trades with no position yet (resting/cancelled with 0 fills).
   const projectedPnl = pending.reduce((sum, t) => {
+    if (hasNoPosition(t)) return sum;
     const live = livePrices.get(t.market_id);
     return sum + (live != null ? calcMarkToMarket(t, live) : 0);
   }, 0);
@@ -530,8 +542,8 @@ function TradeCard({
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
 
-  const isCancelledNoFill = isVoidCancelled(trade);
-  const mtm      = isPending && !isCancelledNoFill && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const noPosition = hasNoPosition(trade);
+  const mtm      = isPending && !noPosition && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
   const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
   const showCancel = trade.kalshi_order_id &&
@@ -588,7 +600,7 @@ function TradeCard({
               <span className={`font-medium ${pnlColor}`}>
                 {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
               </span>
-            ) : isCancelledNoFill ? (
+            ) : noPosition ? (
               <span className="text-slate-400 font-medium">$0.00</span>
             ) : mtm != null ? (
               <span className={`font-medium ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
@@ -690,8 +702,8 @@ function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOut
   const priceDelta     = livePrice != null ? livePrice - entryPrice : null;
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
-  const isCancelledNoFill = isVoidCancelled(trade);
-  const mtm            = isPending && !isCancelledNoFill && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const noPosition = hasNoPosition(trade);
+  const mtm            = isPending && !noPosition && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
   const contractCount  = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
 
   return (
@@ -776,7 +788,7 @@ function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOut
               <span className={`font-semibold ${pnlColor}`}>
                 {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
               </span>
-            ) : isCancelledNoFill ? (
+            ) : noPosition ? (
               <span className="text-slate-400 font-semibold">$0.00</span>
             ) : mtm != null ? (
               <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
