@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   // Look up the trade
   const { data: trade, error: dbErr } = await supabase
     .from("trades")
-    .select("id, market_id, side, filled_count, entry_yes_price, market_pct, kalshi_order_id, outcome, order_status")
+    .select("id, market_id, side, filled_count, amount_usdc, entry_yes_price, market_pct, kalshi_order_id, outcome, order_status")
     .eq("id", trade_id)
     .single();
 
@@ -38,13 +38,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Trade is already settled" }, { status: 422 });
   }
 
-  const filledCount = (trade.filled_count as number | null) ?? 0;
+  const side   = (trade.side as string).toLowerCase() as "yes" | "no";
+  const entryYesStored = trade.entry_yes_price as number | null;
+  const entryYesCalc   =
+    entryYesStored ??
+    (side === "yes"
+      ? (trade.market_pct as number) / 100
+      : 1 - (trade.market_pct as number) / 100);
+  const entryCostPerContract = side === "yes" ? entryYesCalc : 1 - entryYesCalc;
+
+  // filled_count may be null if order-status polling hasn't persisted it yet.
+  // Fetch the original order from Kalshi to get the real fill count.
+  let filledCount = (trade.filled_count as number | null) ?? 0;
+
+  if (filledCount < 1 && trade.kalshi_order_id) {
+    try {
+      const origOrderPath = `/trade-api/v2/portfolio/orders/${trade.kalshi_order_id}`;
+      const origHeaders   = buildKalshiAuthHeaders("GET", origOrderPath);
+      const origRes       = await fetch(`${KALSHI_BASE}/portfolio/orders/${trade.kalshi_order_id}`, {
+        method: "GET", headers: origHeaders, cache: "no-store",
+      });
+      if (origRes.ok) {
+        const origJson  = await origRes.json();
+        const origOrder = (origJson.order ?? origJson) as Record<string, unknown>;
+        const fetched   = Number(origOrder.quantity_matched ?? origOrder.filled_count ?? 0);
+        if (fetched > 0) filledCount = fetched;
+        console.log(`[sell-position] original order fill count from Kalshi: ${fetched}`);
+      }
+    } catch { /* fall through to estimate */ }
+  }
+
+  // Final fallback: estimate from amount_usdc / entry price
+  if (filledCount < 1 && entryCostPerContract > 0) {
+    filledCount = Math.floor((trade.amount_usdc as number) / entryCostPerContract);
+    console.log(`[sell-position] estimated fill count from amount: ${filledCount}`);
+  }
+
   if (filledCount < 1) {
     return NextResponse.json({ error: "No filled contracts to sell" }, { status: 422 });
   }
 
   const ticker = trade.market_id as string;
-  const side   = (trade.side as string).toLowerCase() as "yes" | "no";
 
   // Build market sell order — market type fills at best available price
   const orderBody = {
@@ -134,16 +168,8 @@ export async function POST(req: NextRequest) {
     avgFillYesPrice = n > 1 ? n / 100 : n;
   }
 
-  // Calculate P&L
-  // entry_yes_price is always stored as the YES side price (0–1 decimal)
-  const entryYes: number =
-    (trade.entry_yes_price as number | null) ??
-    (side === "yes"
-      ? (trade.market_pct as number) / 100
-      : 1 - (trade.market_pct as number) / 100);
-
-  const entryCostPerContract   = side === "yes" ? entryYes       : 1 - entryYes;
-  const proceedsPerContract    = avgFillYesPrice != null
+  // Calculate P&L (reuse entryYesCalc / entryCostPerContract computed above)
+  const proceedsPerContract = avgFillYesPrice != null
     ? (side === "yes" ? avgFillYesPrice : 1 - avgFillYesPrice)
     : null;
 

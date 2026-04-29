@@ -94,11 +94,13 @@ function isLivePriceEligible(trade: Trade, today: string): boolean {
 
 /** Can the user manually sell this position right now? */
 function isSellable(trade: Trade): boolean {
-  return (
-    trade.outcome === "pending" &&
-    (trade.filled_count ?? 0) > 0 &&
-    trade.kalshi_order_id != null
-  );
+  // filled_count may be null if order-status polling hasn't run yet;
+  // fall back to order_status as the signal that contracts exist
+  const hasFills =
+    (trade.filled_count ?? 0) > 0 ||
+    trade.order_status === "filled" ||
+    trade.order_status === "partially_filled";
+  return trade.outcome === "pending" && hasFills && trade.kalshi_order_id != null;
 }
 
 // ── Order status helpers ──────────────────────────────────────────────────────
