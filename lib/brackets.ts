@@ -175,9 +175,9 @@ function isAdjacent(value: number, r: BracketRange, withinDeg = 2): boolean {
 function toSignal(edge: number): Signal {
   if (edge >= 25)  return "strong-buy";
   if (edge >= 10)  return "buy";
-  if (edge > -10)  return "neutral";
-  if (edge > -25)  return "sell";
-  return "strong-sell";
+  if (edge > -5)   return "neutral";   // narrowed: was > -10
+  if (edge > -20)  return "sell";      // NO; was > -25
+  return "strong-sell";                // Strong NO; was ≤ -25, now ≤ -20
 }
 
 // ── Observation date extraction ───────────────────────────────────────────────

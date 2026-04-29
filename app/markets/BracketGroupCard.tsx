@@ -92,7 +92,7 @@ export default function BracketGroupCard({ group, timeStatus = "active", current
           <TimeGateBanner status="warning" isHigh={isHigh} isLow={isLow}
             currentObsF={currentObsF} currentObsAt={currentObsAt} compact />
         ) : group.best ? (
-          <BestTradeBanner best={group.best} forecastValue={group.forecast_value} compact />
+          <BestTradeBanner best={group.best} brackets={group.brackets} forecastValue={group.forecast_value} compact />
         ) : null}
       </div>
 
@@ -137,7 +137,7 @@ export default function BracketGroupCard({ group, timeStatus = "active", current
           <TimeGateBanner status="warning" isHigh={isHigh} isLow={isLow}
             currentObsF={currentObsF} currentObsAt={currentObsAt} />
         ) : group.best ? (
-          <BestTradeBanner best={group.best} forecastValue={group.forecast_value} />
+          <BestTradeBanner best={group.best} brackets={group.brackets} forecastValue={group.forecast_value} />
         ) : null}
       </div>
 
@@ -232,31 +232,86 @@ function TimeGateBanner({
 
 // ── Best trade banner ─────────────────────────────────────────────────────────
 
+/** Format a list of 1–N strings as "a", "a and b", or "a, b, and c". */
+function joinLabels(items: string[]): string {
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
 function BestTradeBanner({
   best,
+  brackets,
   forecastValue,
   compact = false,
 }: {
-  best: BracketMarket;
+  best:          BracketMarket;
+  brackets:      BracketMarket[];
   forecastValue: number | null;
-  compact?: boolean;
+  compact?:      boolean;
 }) {
   const isNo       = best.trade_side === "NO";
   const absEdge    = Math.abs(best.edge);
   const noPricePct = Math.round((1 - best.yes_price) * 100);
 
-  const outerClass = compact
-    ? "mt-2 rounded-lg px-3 py-2"
-    : "mt-3 rounded-lg px-4 py-2.5";
+  const outerClass = compact ? "mt-2 rounded-lg px-3 py-2" : "mt-3 rounded-lg px-4 py-2.5";
+  const textCls    = compact ? "text-xs" : "text-sm";
 
   if (isNo) {
+    // Collect every actionable NO bracket (sell + strong-sell, with a forecast)
+    const noGroup = brackets
+      .filter((b) => b.trade_side === "NO" && b.confidence > 0)
+      .sort((a, b) => (a.range.min ?? -999) - (b.range.min ?? -999));
+
+    const isMulti         = noGroup.length > 1;
+    const combinedAbsEdge = noGroup.reduce((s, b) => s + Math.abs(b.edge), 0);
+
+    if (isMulti) {
+      const labelStr  = joinLabels(noGroup.map((b) => b.range.label));
+      const pctStr    = joinLabels(noGroup.map((b) => `${b.yes_pct}%`));
+
+      return (
+        <div className={`${outerClass} bg-orange-500/10 border border-orange-500/30`}>
+          {!compact && (
+            <p className="text-xs text-orange-400 font-semibold uppercase tracking-wide mb-0.5">
+              Best NO Trades ({noGroup.length})
+            </p>
+          )}
+          <p className={`${textCls} text-white`}>
+            {compact && (
+              <span className="text-orange-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">
+                Best NO
+              </span>
+            )}
+            <span className="font-semibold">{labelStr}</span>
+            <span className="text-slate-300">
+              {" "}— market overpricing at {pctStr}
+            </span>
+            <span className="ml-1.5 font-bold text-orange-400">
+              +{combinedAbsEdge}pt combined
+            </span>
+          </p>
+          {!compact && (
+            <p className="text-xs text-orange-400/60 mt-0.5">
+              {noGroup.map((b) => `${b.range.label}: ${Math.abs(b.edge)}pt edge`).join(" · ")}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // Single NO bracket (original behavior)
     return (
       <div className={`${outerClass} bg-orange-500/10 border border-orange-500/30`}>
         {!compact && (
           <p className="text-xs text-orange-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
         )}
-        <p className={compact ? "text-xs text-white" : "text-sm text-white"}>
-          {compact && <span className="text-orange-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">Best Trade</span>}
+        <p className={`${textCls} text-white`}>
+          {compact && (
+            <span className="text-orange-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">
+              Best Trade
+            </span>
+          )}
           <span className="font-semibold">{best.range.label} NO @ {noPricePct}¢</span>
           {forecastValue !== null && (
             <span className="text-slate-300">
@@ -271,13 +326,18 @@ function BestTradeBanner({
     );
   }
 
+  // YES best trade
   return (
     <div className={`${outerClass} bg-emerald-500/10 border border-emerald-500/30`}>
       {!compact && (
         <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
       )}
-      <p className={compact ? "text-xs text-white" : "text-sm text-white"}>
-        {compact && <span className="text-emerald-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">Best Trade</span>}
+      <p className={`${textCls} text-white`}>
+        {compact && (
+          <span className="text-emerald-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">
+            Best Trade
+          </span>
+        )}
         <span className="font-semibold">{best.range.label} YES @ {best.yes_pct}%</span>
         {forecastValue !== null && (
           <span className="text-slate-300">
