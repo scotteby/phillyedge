@@ -1,4 +1,44 @@
-import type { Forecast, MarketCache, Signal } from "./types";
+import type { Forecast, ForecastConfidence, MarketCache, Signal } from "./types";
+
+// ── Normal distribution ────────────────────────────────────────────────────────
+
+/** Abramowitz & Stegun erf approximation — max error 1.5×10⁻⁷. */
+function erf(x: number): number {
+  const sign = x < 0 ? -1 : 1;
+  const ax   = Math.abs(x);
+  const t    = 1 / (1 + 0.3275911 * ax);
+  const poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+  return sign * (1 - poly * Math.exp(-ax * ax));
+}
+
+/** P(X ≤ x) for X ~ N(mean, std). */
+function normalCDF(x: number, mean: number, std: number): number {
+  return 0.5 * (1 + erf((x - mean) / (std * Math.SQRT2)));
+}
+
+/**
+ * Probability mass of N(mean,std) in the bracket, matching Kalshi's resolution:
+ *   "<M"    → P(X < M)         = normalCDF(M)
+ *   "[m,M]" → P(m ≤ X ≤ M)    ≈ normalCDF(M) − normalCDF(m)
+ *   ">m"    → P(X ≥ m+1)       = 1 − normalCDF(m+1)
+ * Returns a 0–100 integer.
+ */
+function bracketProb(range: BracketRange, mean: number, std: number): number {
+  const { min, max } = range;
+  let p: number;
+  if      (min === null && max === null) p = 1;
+  else if (min === null)  p = normalCDF(max!, mean, std);
+  else if (max === null)  p = 1 - normalCDF(min + 1, mean, std);
+  else                    p = normalCDF(max, mean, std) - normalCDF(min, mean, std);
+  return Math.max(1, Math.round(p * 100)); // floor at 1% so edge is always defined
+}
+
+/** Std-dev in °F for each confidence level. */
+const CONFIDENCE_STD: Record<ForecastConfidence, number> = {
+  very_confident: 1.5,
+  confident:      3.0,
+  uncertain:      5.0,
+};
 
 // ── Series config ─────────────────────────────────────────────────────────────
 
@@ -103,12 +143,6 @@ function inRange(value: number, r: BracketRange): boolean {
   return aboveMin && belowMax;
 }
 
-function distToBoundary(value: number, r: BracketRange): number {
-  let d = Infinity;
-  if (r.min !== null) d = Math.min(d, Math.abs(value - r.min));
-  if (r.max !== null) d = Math.min(d, Math.abs(value - r.max));
-  return d;
-}
 
 function isAdjacent(value: number, r: BracketRange, withinDeg = 2): boolean {
   if (inRange(value, r)) return false;
@@ -219,6 +253,8 @@ export function groupBracketMarkets(
       seriesObs != null ? `observed=${seriesObs}°F` : "",
     );
 
+    const std = CONFIDENCE_STD[forecast?.forecast_confidence ?? "confident"] ?? 3.0;
+
     const brackets: BracketMarket[] = eventMarkets.map((m) => {
       const range   = parseBracketRange(m.question);
       const yes_pct = Math.round(m.yes_price * 100);
@@ -228,27 +264,20 @@ export function groupBracketMarkets(
 
       if (seriesObs !== null) {
         // ── Observed outcome mode ────────────────────────────────────────────
-        // NWS has already recorded the temp — treat as near-certain outcome.
         if (inRange(seriesObs, range)) {
           relation   = "confirmed";
-          confidence = 92; // high confidence — awaiting final NWS report
-        } else {
-          relation   = "neutral";
-          confidence = 5; // almost certainly NO — good for NO trades
-        }
-      } else if (fVal !== undefined && fVal !== null) {
-        // ── Forecast model ───────────────────────────────────────────────────
-        if (inRange(fVal, range)) {
-          const dist = distToBoundary(fVal, range);
-          relation   = "forecast";
-          confidence = dist <= 2 ? 40 : 60;
-        } else if (isAdjacent(fVal, range)) {
-          relation   = "adjacent";
-          confidence = 25;
+          confidence = 92;
         } else {
           relation   = "neutral";
           confidence = 5;
         }
+      } else if (fVal !== undefined && fVal !== null) {
+        // ── Normal distribution model ────────────────────────────────────────
+        // Probability mass of N(fVal, std) within this bracket's bounds.
+        confidence = bracketProb(range, fVal, std);
+        if      (inRange(fVal, range))    relation = "forecast";
+        else if (isAdjacent(fVal, range)) relation = "adjacent";
+        else                              relation = "neutral";
       }
 
       const edge = confidence > 0 ? confidence - yes_pct : 0;

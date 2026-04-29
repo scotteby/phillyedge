@@ -24,10 +24,11 @@ export default async function ForecastPage() {
   const initialDays = Array.from({ length: 7 }, (_, i) => {
     const row = existing.find((f) => f.day_index === i);
     return {
-      high_temp: row?.high_temp ?? null,
-      low_temp: row?.low_temp ?? null,
-      precip_chance: row?.precip_chance ?? null,
-      precip_type: row?.precip_type ?? null,
+      high_temp:           row?.high_temp           ?? null,
+      low_temp:            row?.low_temp            ?? null,
+      precip_chance:       row?.precip_chance       ?? null,
+      precip_type:         row?.precip_type         ?? null,
+      forecast_confidence: row?.forecast_confidence ?? null,
     };
   });
 

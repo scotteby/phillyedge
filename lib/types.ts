@@ -1,3 +1,5 @@
+export type ForecastConfidence = "very_confident" | "confident" | "uncertain";
+
 export interface Forecast {
   id: string;
   created_at: string;
@@ -9,6 +11,7 @@ export interface Forecast {
   precip_chance: number;
   precip_type: "None" | "Rain" | "Snow" | "Mix";
   notes: string | null;
+  forecast_confidence: ForecastConfidence | null;
 }
 
 export type OrderStatus =

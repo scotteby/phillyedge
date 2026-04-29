@@ -17,12 +17,20 @@ function toISODate(d: Date): string {
 
 type PrecipType = "None" | "Rain" | "Snow" | "Mix";
 type RowStatus = "saved" | "unsaved" | "saving" | "error";
+type Confidence = "very_confident" | "confident" | "uncertain";
+
+const CONFIDENCE_OPTIONS: { value: Confidence; label: string; std: string }[] = [
+  { value: "very_confident", label: "🎯 High",      std: "±1.5°" },
+  { value: "confident",      label: "📊 Normal",    std: "±3°"   },
+  { value: "uncertain",      label: "🌫️ Low",      std: "±5°"   },
+];
 
 interface DayRow {
   high_temp: string;
   low_temp: string;
   precip_chance: string;
   precip_type: PrecipType;
+  forecast_confidence: Confidence;
   status: RowStatus;
 }
 
@@ -58,7 +66,7 @@ function dayLabel(date: Date, index: number): { top: string; bottom: string } {
 
 interface Props {
   today: string;
-  initialDays: { high_temp: number | null; low_temp: number | null; precip_chance: number | null; precip_type?: string | null }[];
+  initialDays: { high_temp: number | null; low_temp: number | null; precip_chance: number | null; precip_type?: string | null; forecast_confidence?: string | null }[];
 }
 
 export default function ForecastForm({ today, initialDays }: Props) {
@@ -69,11 +77,12 @@ export default function ForecastForm({ today, initialDays }: Props) {
       const d = initialDays[i];
       const hasData = d?.high_temp != null || d?.low_temp != null || d?.precip_chance != null;
       return {
-        high_temp: d?.high_temp != null ? String(d.high_temp) : "",
-        low_temp: d?.low_temp != null ? String(d.low_temp) : "",
-        precip_chance: d?.precip_chance != null ? String(d.precip_chance) : "",
-        precip_type: (d?.precip_type as PrecipType) ?? "None",
-        status: hasData ? "saved" : "unsaved",
+        high_temp:           d?.high_temp    != null ? String(d.high_temp)    : "",
+        low_temp:            d?.low_temp     != null ? String(d.low_temp)     : "",
+        precip_chance:       d?.precip_chance != null ? String(d.precip_chance) : "",
+        precip_type:         (d?.precip_type as PrecipType) ?? "None",
+        forecast_confidence: (d?.forecast_confidence as Confidence) ?? "confident",
+        status:              hasData ? "saved" : "unsaved",
       };
     })
   );
@@ -110,13 +119,14 @@ export default function ForecastForm({ today, initialDays }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          forecast_date: today,
-          day_index: i,
-          target_date: toISODate(addDays(todayDate, i)),
-          high_temp: row.high_temp !== "" ? Number(row.high_temp) : null,
-          low_temp: row.low_temp !== "" ? Number(row.low_temp) : null,
-          precip_chance: row.precip_chance !== "" ? Number(row.precip_chance) : null,
-          precip_type: row.precip_type,
+          forecast_date:       today,
+          day_index:           i,
+          target_date:         toISODate(addDays(todayDate, i)),
+          high_temp:           row.high_temp    !== "" ? Number(row.high_temp)    : null,
+          low_temp:            row.low_temp     !== "" ? Number(row.low_temp)     : null,
+          precip_chance:       row.precip_chance !== "" ? Number(row.precip_chance) : null,
+          precip_type:         row.precip_type,
+          forecast_confidence: row.forecast_confidence,
         }),
       });
 
@@ -243,6 +253,28 @@ export default function ForecastForm({ today, initialDays }: Props) {
                       <option value="Snow">Snow</option>
                       <option value="Mix">Mix</option>
                     </select>
+                  </div>
+
+                  {/* Confidence selector */}
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Confidence</label>
+                    <div className="flex gap-1">
+                      {CONFIDENCE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => updateField(i, "forecast_confidence", opt.value)}
+                          title={`${opt.label} — std dev ${opt.std}`}
+                          className={`flex-1 text-[10px] py-1 rounded border transition-colors leading-tight ${
+                            row.forecast_confidence === opt.value
+                              ? "bg-sky-600 border-sky-500 text-white font-semibold"
+                              : "bg-slate-700 border-slate-600 text-slate-400 hover:border-slate-500"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 

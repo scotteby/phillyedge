@@ -16,8 +16,9 @@ create table if not exists public.forecasts (
   high_temp      int not null,
   low_temp       int not null,
   precip_chance  int not null check (precip_chance between 0 and 100),
-  precip_type    text not null check (precip_type in ('None', 'Rain', 'Snow', 'Mix')),
-  notes          text
+  precip_type          text not null check (precip_type in ('None', 'Rain', 'Snow', 'Mix')),
+  notes                text,
+  forecast_confidence  text not null default 'confident' check (forecast_confidence in ('very_confident', 'confident', 'uncertain'))
 );
 
 -- Index for fast lookup by target date
@@ -48,6 +49,7 @@ create table if not exists public.trades (
 -- -------------------------------------------------------
 -- Migration: run these if the table already exists
 -- -------------------------------------------------------
+-- alter table public.forecasts add column if not exists forecast_confidence text not null default 'confident' check (forecast_confidence in ('very_confident', 'confident', 'uncertain'));
 -- alter table public.trades add column if not exists kalshi_order_id  text;
 -- alter table public.trades add column if not exists order_status     text;
 -- alter table public.trades add column if not exists filled_count     int;

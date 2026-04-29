@@ -5,7 +5,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { forecast_date, day_index, target_date, high_temp, low_temp, precip_chance, precip_type, notes } = body;
+    const { forecast_date, day_index, target_date, high_temp, low_temp, precip_chance, precip_type, notes, forecast_confidence } = body;
 
     const supabase = createServiceClient();
 
@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
       precip_chance: precip_chance ?? 0,
       precip_type: precip_type ?? "None",
       notes: notes ?? null,
+      forecast_confidence: forecast_confidence ?? "confident",
     });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
