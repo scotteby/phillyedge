@@ -218,6 +218,8 @@ export default function ForecastForm({ today, initialDays }: Props) {
                 </div>
 
                 {/* Confidence — segmented toggle */}
+                <div>
+                <label className="block text-xs text-slate-500 mb-1">Confidence</label>
                 <div className="flex rounded-lg p-1" style={{ background: "rgba(255,255,255,0.06)" }}>
                   {CONFIDENCE_OPTIONS.map((opt) => {
                     const selected = row.forecast_confidence === opt.value;
@@ -237,6 +239,7 @@ export default function ForecastForm({ today, initialDays }: Props) {
                       </button>
                     );
                   })}
+                </div>
                 </div>
 
                 {/* Status badge */}
