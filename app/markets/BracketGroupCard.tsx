@@ -9,14 +9,60 @@ interface Props {
   group: BracketGroup;
 }
 
+// Short series label for mobile header line 1
+const SERIES_LABELS: Record<string, string> = {
+  KXHIGHPHIL: "High Temperature",
+  KXLOWTPHIL: "Low Temperature",
+};
+
 export default function BracketGroupCard({ group }: Props) {
   const [tradeTarget, setTradeTarget] = useState<BracketMarket | null>(null);
   const [showPositionBuilder, setShowPositionBuilder] = useState(false);
 
+  // Extract the date/relative suffix from the computed title: "… · Today, Apr 29" → "Today, Apr 29"
+  const titleParts  = group.title.split(" · ");
+  const dateSuffix  = titleParts.length > 1 ? titleParts.slice(1).join(" · ") : "";
+  const seriesLabel = SERIES_LABELS[group.series] ?? titleParts[0];
+
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-      {/* Group header */}
-      <div className="px-5 pt-4 pb-3 border-b border-slate-700">
+      {/* ── Mobile header ─────────────────────────────────────────────────── */}
+      <div className="md:hidden px-4 pt-3 pb-2.5 border-b border-slate-700">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-white font-semibold text-sm leading-snug">
+              {seriesLabel} · Philadelphia
+            </h2>
+            <p className="text-slate-400 text-xs mt-0.5">
+              {dateSuffix}
+              {group.forecast_value !== null && (
+                <> · Our forecast: <span className="text-white font-medium">{group.forecast_value}°F</span></>
+              )}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowPositionBuilder(true)}
+            className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold transition-colors whitespace-nowrap"
+          >
+            🧱 Build
+          </button>
+        </div>
+
+        {group.best && (
+          <div className="mt-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+            <p className="text-xs text-white">
+              <span className="text-emerald-400 font-semibold uppercase tracking-wide text-[10px] mr-1.5">Best Trade</span>
+              <span className="font-semibold">{group.best.range.label} YES @ {group.best.yes_pct}%</span>
+              <span className={`ml-1.5 font-bold ${group.best.edge >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {group.best.edge > 0 ? "+" : ""}{group.best.edge}pt edge
+              </span>
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* ── Desktop header ─────────────────────────────────────────────────── */}
+      <div className="hidden md:block px-5 pt-4 pb-3 border-b border-slate-700">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-white font-semibold text-base">{group.title}</h2>
@@ -39,12 +85,9 @@ export default function BracketGroupCard({ group }: Props) {
           </button>
         </div>
 
-        {/* Best trade recommendation */}
         {group.best && (
           <div className="mt-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2.5">
-            <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wide mb-0.5">
-              Best Trade
-            </p>
+            <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wide mb-0.5">Best Trade</p>
             <p className="text-sm text-white">
               <span className="font-semibold">{group.best.range.label} YES @ {group.best.yes_pct}%</span>
               {group.forecast_value !== null && (
@@ -174,60 +217,46 @@ function BracketRow({ bracket, onTrade }: { bracket: BracketMarket; onTrade: () 
       </div>
 
       {/* ── Mobile card ────────────────────────────────────────────────── */}
-      <div className={`md:hidden px-4 py-3 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg}`}>
-        {/* Row 1: label + tags + signal */}
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-medium text-white">{bracket.range.label}</span>
-            {isForecast && (
-              <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold shrink-0">
-                FORECAST
-              </span>
-            )}
-            {isAdjacent && (
-              <span className="text-xs text-slate-500 italic shrink-0">adjacent</span>
-            )}
-          </div>
+      <div className={`md:hidden px-4 py-2 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg}`}>
+        {/* Row 1: label · tag · signal · trade btn */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-white flex-1 min-w-0">{bracket.range.label}</span>
+          {isForecast && (
+            <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
+              FCST
+            </span>
+          )}
+          {isAdjacent && (
+            <span className="text-[10px] text-slate-500 italic shrink-0">adj</span>
+          )}
           <div className="shrink-0">
             {bracket.confidence > 0
               ? <SignalBadge signal={bracket.signal} />
               : <span className="text-slate-600 text-xs">—</span>}
           </div>
-        </div>
-
-        {/* Row 2: stats + trade button */}
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-4 text-xs">
-            <div className="flex flex-col">
-              <span className="text-slate-500 uppercase tracking-wide text-[10px]">Kalshi</span>
-              <span className="text-slate-200 font-medium">{bracket.yes_pct}%</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-slate-500 uppercase tracking-wide text-[10px]">Ours</span>
-              {bracket.confidence > 0 ? (
-                <span className={isForecast ? "text-emerald-400 font-semibold" : "text-slate-400"}>
-                  ~{bracket.confidence}%
-                </span>
-              ) : (
-                <span className="text-slate-600 italic">—</span>
-              )}
-            </div>
-            <div className="flex flex-col">
-              <span className="text-slate-500 uppercase tracking-wide text-[10px]">Edge</span>
-              <span className={`font-semibold ${edgeColor}`}>
-                {bracket.confidence > 0
-                  ? `${bracket.edge > 0 ? "+" : ""}${bracket.edge}`
-                  : "—"}
-              </span>
-            </div>
-          </div>
-
           <button
             onClick={onTrade}
-            className="shrink-0 bg-sky-600 hover:bg-sky-500 active:bg-sky-400 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors min-h-[44px]"
+            className={`shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border ${
+              bracket.signal === "avoid"
+                ? "border-slate-600 text-slate-500 hover:bg-slate-700/50"
+                : "border-sky-600 text-sky-400 hover:bg-sky-600/20 active:bg-sky-600/30"
+            }`}
           >
             Trade
           </button>
+        </div>
+
+        {/* Row 2: inline stats */}
+        <div className="text-xs mt-0.5">
+          {bracket.confidence > 0 ? (
+            <span className="text-slate-500">
+              Kalshi <span className="text-slate-400">{bracket.yes_pct}%</span>
+              {" · "}Ours <span className={isForecast ? "text-emerald-400 font-medium" : "text-slate-400"}>~{bracket.confidence}%</span>
+              {" · "}Edge <span className={`font-medium ${edgeColor}`}>{bracket.edge > 0 ? "+" : ""}{bracket.edge}</span>
+            </span>
+          ) : (
+            <span className="text-slate-600">Kalshi {bracket.yes_pct}% · no forecast</span>
+          )}
         </div>
       </div>
     </>
