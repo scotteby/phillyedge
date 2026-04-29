@@ -178,8 +178,8 @@ export default function ForecastForm({ today, initialDays }: Props) {
       </div>
 
       {/* 7-day grid */}
-      <div className="overflow-x-auto">
-        <div className="grid grid-cols-7 gap-3 min-w-[700px]">
+      <div className="overflow-x-auto pb-2">
+        <div className="flex gap-3" style={{ minWidth: "896px" }}>
           {rows.map((row, i) => {
             const date = addDays(todayDate, i);
             const { top, bottom } = dayLabel(date, i);
@@ -190,6 +190,7 @@ export default function ForecastForm({ today, initialDays }: Props) {
                 key={i}
                 tabIndex={-1}
                 onBlur={(e) => handleCardBlur(i, e)}
+                style={{ width: "calc((896px - 6 * 12px) / 7)", flexShrink: 0 }}
                 className={`relative bg-slate-800 border rounded-xl p-3 flex flex-col gap-3 focus-within:border-sky-600 transition-colors ${
                   row.status === "error"
                     ? "border-red-500/60"
