@@ -107,14 +107,31 @@ export async function POST(req: NextRequest) {
     const kalshiJson = await kalshiRes.json();
 
     if (!kalshiRes.ok) {
-      const msg = kalshiJson?.message ?? kalshiJson?.error ?? `Kalshi returned HTTP ${kalshiRes.status}`;
+      // Log full Kalshi response server-side for debugging
+      console.error(`[place-trade] Kalshi ${kalshiRes.status}:`, JSON.stringify(kalshiJson));
+
+      const kalshiMsg = kalshiJson?.message ?? kalshiJson?.error ?? `HTTP ${kalshiRes.status}`;
+
+      // Build a user-facing error with a hint for common status codes
+      let hint = "";
+      if (kalshiRes.status === 401) {
+        hint = DEMO_MODE
+          ? " — demo API requires separate demo credentials (api.elections.kalshi.com and demo-api.kalshi.co use different accounts)"
+          : " — check that KALSHI_API_KEY_ID matches the private key in your Kalshi account settings";
+      } else if (kalshiRes.status === 403) {
+        hint = " — your API key may not have trading permissions";
+      } else if (kalshiRes.status === 422) {
+        hint = " — order was rejected (check price, count, or market status)";
+      }
+
       return NextResponse.json(
         {
-          error:            msg,
-          kalshi_response:  kalshiJson,
-          kalshi_url:       kalshiUrl(ticker),
+          error:      `Kalshi rejected the order: ${kalshiMsg}${hint}`,
+          kalshi_url: kalshiUrl(ticker),
         },
-        { status: kalshiRes.status >= 500 ? 502 : kalshiRes.status }
+        // Always return 502 — never forward Kalshi's 4xx to the browser,
+        // which would cause a console error and swallow the JSON body.
+        { status: 502 }
       );
     }
 
