@@ -187,9 +187,10 @@ const SERIES_NAMES: Record<string, string> = {
 };
 
 function getTomorrow(today: string): string {
-  const d = new Date(today + "T12:00:00");
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().split("T")[0];
+  const [y, m, day] = today.split("-").map(Number);
+  // Construct in local time (no "Z") so DST / UTC offset can't shift the date
+  const d = new Date(y, m - 1, day + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function getDateLabel(targetDate: string, today: string, tomorrow: string): string {
@@ -307,7 +308,10 @@ export default function HistoryClient({ initialTrades }: Props) {
   useEffect(() => { tradesRef.current     = trades;     }, [trades]);
   useEffect(() => { livePricesRef.current = livePrices; }, [livePrices]);
 
-  const today = new Date().toISOString().split("T")[0];
+  // Use local calendar date — toISOString() returns UTC which can be a different
+  // calendar date than the user's local date (e.g. UTC-4 early morning).
+  const d0    = new Date();
+  const today = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, "0")}-${String(d0.getDate()).padStart(2, "0")}`;
 
   // ── Live price polling ───────────────────────────────────────────────────
 
