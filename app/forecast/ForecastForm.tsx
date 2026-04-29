@@ -19,10 +19,10 @@ type PrecipType = "None" | "Rain" | "Snow" | "Mix";
 type RowStatus  = "saved" | "unsaved" | "saving" | "error";
 type Confidence = "very_confident" | "confident" | "uncertain";
 
-const CONFIDENCE_OPTIONS: { value: Confidence; label: string; std: string }[] = [
-  { value: "very_confident", label: "High",   std: "±1°" },
-  { value: "confident",      label: "Normal", std: "±2°" },
-  { value: "uncertain",      label: "Low",    std: "±4°" },
+const CONFIDENCE_OPTIONS: { value: Confidence; label: string; icon: string; std: string }[] = [
+  { value: "very_confident", label: "High",   icon: "🎯", std: "±1°" },
+  { value: "confident",      label: "Normal", icon: "●",  std: "±2°" },
+  { value: "uncertain",      label: "Low",    icon: "〰", std: "±4°" },
 ];
 
 interface DayRow {
@@ -215,26 +215,32 @@ export default function ForecastForm({ today, initialDays }: Props) {
                   />
                 </div>
 
-                {/* Confidence — compact segmented control */}
-                <div>
-                  <label className="block text-xs text-slate-500 mb-1">Confidence</label>
-                  <div className="flex rounded-md overflow-hidden border border-slate-600 divide-x divide-slate-600">
-                    {CONFIDENCE_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        title={`Std dev ${opt.std}`}
-                        onClick={() => updateField(i, "forecast_confidence", opt.value)}
-                        className={`flex-1 text-xs py-1 transition-colors ${
-                          row.forecast_confidence === opt.value
-                            ? "bg-sky-600 text-white font-semibold"
-                            : "text-slate-400 hover:text-slate-200 hover:bg-slate-700"
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
+                {/* Confidence — circular icon buttons */}
+                <div className="flex justify-around items-start pt-1">
+                  {CONFIDENCE_OPTIONS.map((opt) => {
+                    const selected = row.forecast_confidence === opt.value;
+                    return (
+                      <div key={opt.value} className="flex flex-col items-center gap-1.5">
+                        <button
+                          type="button"
+                          title={`Std dev ${opt.std}`}
+                          onClick={() => updateField(i, "forecast_confidence", opt.value)}
+                          className={`w-9 h-9 rounded-full flex items-center justify-center text-base transition-all active:scale-110 ${
+                            selected
+                              ? "bg-sky-500 border-2 border-sky-400 shadow-md shadow-sky-500/30"
+                              : "bg-slate-700 border border-slate-600 hover:border-slate-400"
+                          }`}
+                        >
+                          <span className={selected ? "text-white" : "text-slate-300"}>
+                            {opt.icon}
+                          </span>
+                        </button>
+                        <span className={`text-[10px] leading-none ${selected ? "text-sky-400" : "text-slate-500"}`}>
+                          {opt.label}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* Status badge */}
