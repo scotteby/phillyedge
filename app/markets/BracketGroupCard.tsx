@@ -142,22 +142,22 @@ function BracketRow({ bracket, onTrade }: { bracket: BracketMarket; onTrade: () 
             ~{bracket.confidence}%
           </span>
         ) : (
-          <span className="text-slate-600">—</span>
+          <span className="text-slate-600 text-xs italic">no fcst</span>
         )}
       </div>
 
       {/* Edge */}
       <div className={`text-right text-sm font-semibold ${edgeColor}`}>
-        {bracket.edge !== 0 ? `${bracket.edge > 0 ? "+" : ""}${bracket.edge}` : "—"}
+        {bracket.confidence > 0
+          ? `${bracket.edge > 0 ? "+" : ""}${bracket.edge}`
+          : <span className="text-slate-600 text-xs italic">—</span>}
       </div>
 
       {/* Signal */}
       <div className="flex justify-center">
-        {bracket.confidence > 0 ? (
-          <SignalBadge signal={bracket.signal} />
-        ) : (
-          <span className="text-slate-600 text-xs">—</span>
-        )}
+        {bracket.confidence > 0
+          ? <SignalBadge signal={bracket.signal} />
+          : <span className="text-slate-600 text-xs">—</span>}
       </div>
 
       {/* Trade button */}

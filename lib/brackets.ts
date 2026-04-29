@@ -14,50 +14,63 @@ export function isBracketSeries(marketId: string): boolean {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface BracketRange {
-  min: number | null; // inclusive lower bound, null = -∞
-  max: number | null; // exclusive upper bound, null = +∞
-  label: string;
+  min:   number | null; // inclusive lower bound, null = -∞
+  max:   number | null; // exclusive upper bound, null = +∞
+  label: string;        // display label extracted from Kalshi title
 }
 
 export type BracketRelation = "forecast" | "adjacent" | "neutral";
 
 export interface BracketMarket {
-  market_id: string;
-  question: string;
-  end_date: string;
-  yes_price: number;
-  yes_pct: number;
-  volume: number;
-  range: BracketRange;
-  relation: BracketRelation;
+  market_id:  string;
+  question:   string;
+  end_date:   string;
+  yes_price:  number;
+  yes_pct:    number;
+  volume:     number;
+  range:      BracketRange;
+  relation:   BracketRelation;
   confidence: number; // our estimated probability 0–100
-  edge: number;
-  signal: Signal;
+  edge:       number;
+  signal:     Signal;
 }
 
 export interface BracketGroup {
-  series: string;
-  event_key: string;
-  title: string;
-  end_date: string;
-  brackets: BracketMarket[];     // sorted low → high
-  best: BracketMarket | null;    // highest-edge bracket
-  forecast_value: number | null; // our forecast temp for this series
+  series:         string;
+  event_key:      string;
+  title:          string;
+  end_date:       string;
+  brackets:       BracketMarket[];     // sorted low → high
+  best:           BracketMarket | null; // highest-edge bracket with a view
+  forecast_value: number | null;        // our forecast temp for this series
+}
+
+// ── Label extraction ──────────────────────────────────────────────────────────
+// Kalshi title format: "Will the high temp in Philadelphia be 66-67° on Apr 29, 2026?"
+// We extract just the range clause: "66-67°"
+
+function extractRangeLabel(question: string): string {
+  // Match the range description between "be " and " on <date>"
+  const m = question.match(/\bbe\s+(.+?)\s+on\s+\w{3}\s+\d+/i);
+  if (m) return m[1].trim();
+  // Fallback: return the full question (already stripped of ** markdown)
+  return question;
 }
 
 // ── Range parsing ─────────────────────────────────────────────────────────────
+// Parses numeric bounds from the Kalshi question for in-range / adjacent logic.
+// The display label comes from extractRangeLabel(), not this function.
 
-export function parseBracketRange(title: string): BracketRange {
-  const t = title.toLowerCase();
+export function parseBracketRange(question: string): BracketRange {
+  const label = extractRangeLabel(question);
+  const t     = question.toLowerCase();
 
-  // "between 68°f and 70°f" | "68 to 70" | "68°–70°"
+  // "between 68°f and 70°f" | "68 to 70" | "68°–70°" | "66-67°"
   const between =
     t.match(/between\s+(\d+)[°\s].*?and\s+(\d+)/i) ||
     t.match(/(\d+)°?\s*(?:to|–|-)\s*(\d+)°?/);
   if (between) {
-    const min = parseInt(between[1]);
-    const max = parseInt(between[2]);
-    return { min, max, label: `${min}° to ${max}°` };
+    return { min: parseInt(between[1]), max: parseInt(between[2]), label };
   }
 
   // "at or above 72" | "above 72" | ">72" | "≥72"
@@ -65,8 +78,7 @@ export function parseBracketRange(title: string): BracketRange {
     t.match(/(?:at\s+or\s+)?above\s+(\d+)/i) ||
     t.match(/[>≥]=?\s*(\d+)/);
   if (above) {
-    const min = parseInt(above[1]);
-    return { min, max: null, label: `≥${min}°` };
+    return { min: parseInt(above[1]), max: null, label };
   }
 
   // "at or below 64" | "below 64" | "<64" | "≤64"
@@ -74,26 +86,13 @@ export function parseBracketRange(title: string): BracketRange {
     t.match(/(?:at\s+or\s+)?below\s+(\d+)/i) ||
     t.match(/[<≤]=?\s*(\d+)/);
   if (below) {
-    const max = parseInt(below[1]);
-    return { min: null, max, label: `≤${max}°` };
+    return { min: null, max: parseInt(below[1]), label };
   }
 
-  // Fallback: pull number from ticker suffix e.g. "T71" → treat as ≥71
-  const suffix = title.match(/[_-][TB](\d+)(?:[_-]?[TB](\d+))?/i);
-  if (suffix) {
-    if (suffix[2]) {
-      const min = parseInt(suffix[1]);
-      const max = parseInt(suffix[2]);
-      return { min, max, label: `${min}° to ${max}°` };
-    }
-    const n = parseInt(suffix[1]);
-    return { min: n, max: null, label: `≥${n}°` };
-  }
-
-  return { min: null, max: null, label: title };
+  return { min: null, max: null, label };
 }
 
-// ── Bracket logic ─────────────────────────────────────────────────────────────
+// ── Bracket range logic ───────────────────────────────────────────────────────
 
 function inRange(value: number, r: BracketRange): boolean {
   const aboveMin = r.min === null || value >= r.min;
@@ -125,17 +124,17 @@ function toSignal(edge: number): Signal {
 // ── Main grouping function ────────────────────────────────────────────────────
 
 export function groupBracketMarkets(
-  markets: MarketCache[],
+  markets:   MarketCache[],
   forecasts: Forecast[]
 ): { groups: BracketGroup[]; singles: MarketCache[] } {
   const bracketMarkets = markets.filter((m) => isBracketSeries(m.market_id));
-  const singles       = markets.filter((m) => !isBracketSeries(m.market_id));
+  const singles        = markets.filter((m) => !isBracketSeries(m.market_id));
 
   // Group by event key: first two hyphen segments → "KXHIGHPHIL-26APR29"
   const eventMap = new Map<string, MarketCache[]>();
   for (const m of bracketMarkets) {
     const parts = m.market_id.toUpperCase().split("-");
-    const key = parts.length >= 2 ? `${parts[0]}-${parts[1]}` : parts[0];
+    const key   = parts.length >= 2 ? `${parts[0]}-${parts[1]}` : parts[0];
     if (!eventMap.has(key)) eventMap.set(key, []);
     eventMap.get(key)!.push(m);
   }
@@ -149,23 +148,34 @@ export function groupBracketMarkets(
 
     // Closest forecast for this date
     const forecast = forecasts.find((f) => f.target_date === endDate);
-    const fVal = forecast ? (forecast[cfg?.forecastKey ?? "high_temp"] as number | undefined) : undefined;
+    const fVal = forecast
+      ? (forecast[cfg?.forecastKey ?? "high_temp"] as number | undefined)
+      : undefined;
 
     const brackets: BracketMarket[] = eventMarkets.map((m) => {
       const range   = parseBracketRange(m.question);
       const yes_pct = Math.round(m.yes_price * 100);
 
-      let relation: BracketRelation = "neutral";
-      let confidence = 0;
+      // ── Confidence model ───────────────────────────────────────────────────
+      // Every bracket gets OUR % so every row shows edge data.
+      // When forecast is unavailable, confidence = 0 (no view).
+      let relation:   BracketRelation = "neutral";
+      let confidence  = 0;
 
       if (fVal !== undefined && fVal !== null) {
         if (inRange(fVal, range)) {
+          // Forecast lands in this bracket
           const dist = distToBoundary(fVal, range);
           relation   = "forecast";
-          confidence = dist <= 2 ? 40 : 60;
+          confidence = dist <= 2 ? 40 : 60; // lower confidence near boundary
         } else if (isAdjacent(fVal, range)) {
+          // Forecast is within 2° of this bracket's boundary
           relation   = "adjacent";
-          confidence = 20;
+          confidence = 25;
+        } else {
+          // Forecast is clearly outside this bracket
+          relation   = "neutral";
+          confidence = 5; // very unlikely — useful for NO trades
         }
       }
 
@@ -182,31 +192,34 @@ export function groupBracketMarkets(
         relation,
         confidence,
         edge,
-        signal: toSignal(edge),
+        signal:    toSignal(edge),
       };
     });
 
-    // Sort brackets ascending by lower bound
+    // Sort brackets ascending by lower bound (null min = −∞ goes first)
     brackets.sort((a, b) => (a.range.min ?? -999) - (b.range.min ?? -999));
 
     // Best trade = highest positive edge among brackets we have a view on
     const best = [...brackets]
-      .filter((b) => b.confidence > 0)
+      .filter((b) => b.confidence > 0 && b.edge > 0)
       .sort((a, b) => b.edge - a.edge)[0] ?? null;
 
     groups.push({
       series,
-      event_key: eventKey,
-      title: cfg?.title ?? `${series} Markets`,
-      end_date: endDate,
+      event_key:      eventKey,
+      title:          cfg?.title ?? `${series} Markets`,
+      end_date:       endDate,
       brackets,
       best,
       forecast_value: fVal ?? null,
     });
   }
 
-  // High temp before low temp
-  groups.sort((a, b) => a.series.localeCompare(b.series));
+  // High temp before low temp, then by date
+  groups.sort((a, b) => {
+    const seriesCmp = a.series.localeCompare(b.series);
+    return seriesCmp !== 0 ? seriesCmp : a.end_date.localeCompare(b.end_date);
+  });
 
   return { groups, singles };
 }

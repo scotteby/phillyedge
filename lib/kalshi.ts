@@ -7,42 +7,41 @@ const CACHE_TTL_MINUTES = 30;
 const PHILLY_SERIES = ["KXHIGHPHIL", "KXLOWTPHIL", "KXPRECIPPHIL"];
 
 interface KalshiMarket {
-  ticker: string;
-  event_ticker: string;
-  title: string;
-  yes_bid_dollars: string;
-  yes_ask_dollars: string;
-  last_price_dollars: string;
-  volume_fp: number;
-  status: string;
-  occurrence_datetime: string; // the actual weather date
-  strike_type: string;         // "greater" | "less" | "between"
+  ticker:               string;
+  event_ticker:         string;
+  title:                string;
+  yes_bid_dollars:      string;
+  yes_ask_dollars:      string;
+  last_price_dollars:   string;
+  volume_fp:            number;
+  status:               string;
+  occurrence_datetime:  string; // the actual weather date
+  strike_type:          string; // "greater" | "less" | "between"
 }
 
 function getYesPrice(m: KalshiMarket): number {
-  const bid = parseFloat(m.yes_bid_dollars ?? "0");
-  const ask = parseFloat(m.yes_ask_dollars ?? "0");
+  const bid  = parseFloat(m.yes_bid_dollars  ?? "0");
+  const ask  = parseFloat(m.yes_ask_dollars  ?? "0");
   if (bid > 0 && ask > 0) return (bid + ask) / 2;
   const last = parseFloat(m.last_price_dollars ?? "0");
   return last > 0 ? last : 0.5;
 }
 
 function getEndDate(m: KalshiMarket): string {
-  // occurrence_datetime is the date the weather event actually happens
   return m.occurrence_datetime ? m.occurrence_datetime.split("T")[0] : "";
 }
 
 export interface FetchMarketsResult {
-  data: Record<string, unknown>[] | null;
-  fromCache: boolean;
-  lastUpdated: string | null;
-  rawCount: number;
+  data:         Record<string, unknown>[] | null;
+  fromCache:    boolean;
+  lastUpdated:  string | null;
+  rawCount:     number;
 }
 
 export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
   const supabase = createServiceClient();
 
-  // Check cache freshness
+  // ── Cache freshness check ──────────────────────────────────────────────────
   const { data: cached } = await supabase
     .from("market_cache")
     .select("fetched_at")
@@ -61,9 +60,10 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     }
   }
 
-  // Fetch all Philadelphia series in parallel
-  let allMarkets: KalshiMarket[] = [];
-  let rawCount = 0;
+  // ── Fetch all Philadelphia series in parallel ──────────────────────────────
+  const seen        = new Set<string>();
+  let allMarkets:   KalshiMarket[] = [];
+  let rawCount      = 0;
 
   try {
     const results = await Promise.all(
@@ -78,13 +78,23 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     for (const json of results) {
       const markets: KalshiMarket[] = json.markets ?? [];
       rawCount += markets.length;
-      // Skip "between" bracket markets — only trade directional markets
-      allMarkets = allMarkets.concat(
-        markets.filter((m) => m.strike_type === "greater" || m.strike_type === "less")
-      );
+
+      // Include ALL strike types (greater / less / between) — we need every
+      // bracket row. Deduplicate by ticker in case of overlapping responses.
+      for (const m of markets) {
+        if (!seen.has(m.ticker)) {
+          seen.add(m.ticker);
+          allMarkets.push(m);
+        }
+      }
     }
 
-    // Fallback: if series returned nothing, scan and filter more carefully
+    console.log(
+      "[kalshi] Fetched tickers:",
+      allMarkets.map((m) => m.ticker).join(", ") || "(none)"
+    );
+
+    // ── Fallback: scan open markets if series returned nothing ───────────────
     if (allMarkets.length === 0) {
       console.log("[kalshi] Series fetch returned 0 markets — trying fallback scan");
       const fallbackRes = await fetch(
@@ -92,17 +102,21 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
         { headers: { Accept: "application/json" }, cache: "no-store" }
       );
       if (fallbackRes.ok) {
-        const fb = await fallbackRes.json();
+        const fb  = await fallbackRes.json();
         const all: KalshiMarket[] = fb.markets ?? [];
         rawCount += all.length;
-        console.log("[kalshi] Fallback sample:", all.slice(0, 5).map((m) => m.ticker));
-        allMarkets = all.filter((m) => {
+
+        for (const m of all) {
           const t = m.ticker.toLowerCase();
-          return (t.startsWith("kxhigh") || t.startsWith("kxlowt") || t.startsWith("kxprecip")) &&
-            t.includes("phil") &&
-            (m.strike_type === "greater" || m.strike_type === "less");
-        });
-        console.log("[kalshi] Fallback matched:", allMarkets.map((m) => m.ticker));
+          const isPhillyWeather =
+            (t.startsWith("kxhigh") || t.startsWith("kxlowt") || t.startsWith("kxprecip")) &&
+            t.includes("phil");
+          if (isPhillyWeather && !seen.has(m.ticker)) {
+            seen.add(m.ticker);
+            allMarkets.push(m);
+          }
+        }
+        console.log("[kalshi] Fallback tickers:", allMarkets.map((m) => m.ticker).join(", ") || "(none)");
       }
     }
   } catch (err) {
@@ -112,17 +126,20 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
   const fetchedAt = new Date().toISOString();
 
   if (allMarkets.length > 0) {
-    // Wipe old cache rows and insert fresh ones
-    await supabase.from("market_cache").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    // Wipe stale cache and insert fresh rows
+    await supabase
+      .from("market_cache")
+      .delete()
+      .neq("id", "00000000-0000-0000-0000-000000000000");
 
     const rows = allMarkets.map((m) => ({
       fetched_at: fetchedAt,
-      market_id: m.ticker,
-      question: m.title.replace(/\*\*/g, ""), // strip Kalshi markdown bold
-      end_date: getEndDate(m),
-      yes_price: getYesPrice(m),
-      volume: parseFloat(String(m.volume_fp)) || 0,
-      active: true,
+      market_id:  m.ticker,
+      question:   m.title.replace(/\*\*/g, ""), // strip Kalshi markdown bold
+      end_date:   getEndDate(m),
+      yes_price:  getYesPrice(m),
+      volume:     parseFloat(String(m.volume_fp)) || 0,
+      active:     true,
     }));
 
     await supabase.from("market_cache").insert(rows);
