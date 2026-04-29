@@ -25,11 +25,22 @@ interface KalshiMarket {
 }
 
 function getYesPrice(m: KalshiMarket): number {
-  const bid  = parseFloat(m.yes_bid_dollars  ?? "0");
-  const ask  = parseFloat(m.yes_ask_dollars  ?? "0");
-  if (bid > 0 && ask > 0) return (bid + ask) / 2;
+  // 1. Last traded price — this is what Kalshi displays as the "chance"
   const last = parseFloat(m.last_price_dollars ?? "0");
-  return last > 0 ? last : 0.5;
+  if (last > 0) return last;
+
+  // 2. Midpoint of a genuine two-sided market (ask must be < $1 — a $1 ask
+  //    just means nobody is selling, not an actual offer)
+  const bid = parseFloat(m.yes_bid_dollars ?? "0");
+  const ask = parseFloat(m.yes_ask_dollars ?? "0");
+  if (bid > 0 && ask > 0 && ask < 1) return (bid + ask) / 2;
+
+  // 3. Best available one-sided quote
+  if (bid > 0) return bid;
+  if (ask > 0 && ask < 1) return ask;
+
+  // 4. No market data yet
+  return 0;
 }
 
 const MONTH_MAP: Record<string, string> = {
