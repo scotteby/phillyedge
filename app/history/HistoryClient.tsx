@@ -56,17 +56,24 @@ function getEntryYesPrice(trade: Trade): number {
  *   MTM          = current_value − amount_paid
  *                = amount × (live_price / entry_price − 1)
  *
- * Example: YES at 50¢, now 1¢, $5 invested
- *   contracts = 5 / 0.50 = 10
- *   current   = 10 × 0.01 = $0.10
- *   MTM       = $0.10 − $5.00 = −$4.90  ✓
+ * For cancelled orders with a partial fill, uses only the capital that
+ * was actually deployed (filled_count × entry_price) as the basis.
  */
 function calcMarkToMarket(trade: Trade, liveYesPrice: number): number {
-  const entryYes  = getEntryYesPrice(trade);
+  const entryYes   = getEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const livePrice  = trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice;
   if (entryPrice <= 0) return 0;
-  return trade.amount_usdc * (livePrice / entryPrice - 1);
+  // Cancelled with partial fill: only count what actually executed
+  const amount = (trade.order_status === "canceled" && (trade.filled_count ?? 0) > 0)
+    ? trade.filled_count! * entryPrice
+    : trade.amount_usdc;
+  return amount * (livePrice / entryPrice - 1);
+}
+
+/** True when a cancelled order filled 0 contracts — nothing was spent. */
+function isVoidCancelled(trade: Trade): boolean {
+  return trade.order_status === "canceled" && (trade.filled_count ?? 0) === 0;
 }
 
 
@@ -118,6 +125,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [trades, setTrades]     = useState<Trade[]>(initialTrades);
   const [updating, setUpdating] = useState<string | null>(null);
   const [canceling, setCanceling] = useState<string | null>(null);
+  const [showAll, setShowAll]   = useState(false);
   const { toasts, addToast, dismiss } = useToasts();
 
   // Live price state
@@ -276,18 +284,25 @@ export default function HistoryClient({ initialTrades }: Props) {
     }
   }
 
-  // ── Summary stats ─────────────────────────────────────────────────────────
+  // ── Filtered trade sets ───────────────────────────────────────────────────
 
-  const total    = trades.length;
-  const settled  = trades.filter((t) => t.outcome !== "pending");
-  const pending  = trades.filter((t) => t.outcome === "pending");
-  const wins     = trades.filter((t) => t.outcome === "win").length;
+  // Void-cancelled trades (order placed but 0 contracts filled) are excluded
+  // from stats — they never deployed capital, so they didn't happen.
+  const effectiveTrades = trades.filter((t) => !isVoidCancelled(t));
+
+  // What's shown in the list depends on the toggle
+  const visibleTrades = showAll ? trades : effectiveTrades;
+
+  // ── Summary stats (always off effectiveTrades) ────────────────────────────
+
+  const total    = effectiveTrades.length;
+  const settled  = effectiveTrades.filter((t) => t.outcome !== "pending");
+  const pending  = effectiveTrades.filter((t) => t.outcome === "pending");
+  const wins     = effectiveTrades.filter((t) => t.outcome === "win").length;
   const winRate  = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
   const settledPnl = settled.reduce((s, t) => s + (t.pnl ?? 0), 0);
-  const avgEdge    = total > 0 ? Math.round(trades.reduce((s, t) => s + t.edge, 0) / total) : 0;
 
-  // Projected P&L summary: mark-to-market for priced trades, 0 for unpriced
-  // (MTM is the real current position value; unpriced contribute unknown MTM = excluded)
+  // Projected P&L: MTM for pending trades with live prices
   const projectedPnl = pending.reduce((sum, t) => {
     const live = livePrices.get(t.market_id);
     return sum + (live != null ? calcMarkToMarket(t, live) : 0);
@@ -318,28 +333,46 @@ export default function HistoryClient({ initialTrades }: Props) {
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="text-2xl font-bold text-white">Trade History</h1>
 
-        {/* Live price indicator */}
-        {pending.length > 0 && (
-          <div className="flex items-center gap-2 text-xs">
-            {pricesFetching ? (
-              <span className="flex items-center gap-1.5 text-sky-400">
-                <span className="animate-pulse">●</span> Fetching prices…
-              </span>
-            ) : lastPriceFetch ? (
-              <span className="flex items-center gap-1.5 text-slate-500">
-                <span className="text-emerald-500">●</span>
-                Live · updated {formatTimeAgo(lastPriceFetch)}
-                {liveCount > 0 && ` · ${liveCount} price${liveCount !== 1 ? "s" : ""}`}
-              </span>
-            ) : null}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* View toggle */}
+          <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs">
             <button
-              onClick={fetchLivePrices}
-              disabled={pricesFetching}
-              className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-40 transition-colors">
-              ↻
+              onClick={() => setShowAll(false)}
+              className={`px-3 py-1.5 transition-colors ${!showAll ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
+            >
+              Active &amp; Settled
+            </button>
+            <button
+              onClick={() => setShowAll(true)}
+              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${showAll ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
+            >
+              All trades
             </button>
           </div>
-        )}
+
+          {/* Live price indicator */}
+          {pending.length > 0 && (
+            <div className="flex items-center gap-2 text-xs">
+              {pricesFetching ? (
+                <span className="flex items-center gap-1.5 text-sky-400">
+                  <span className="animate-pulse">●</span> Fetching prices…
+                </span>
+              ) : lastPriceFetch ? (
+                <span className="flex items-center gap-1.5 text-slate-500">
+                  <span className="text-emerald-500">●</span>
+                  Live · updated {formatTimeAgo(lastPriceFetch)}
+                  {liveCount > 0 && ` · ${liveCount} price${liveCount !== 1 ? "s" : ""}`}
+                </span>
+              ) : null}
+              <button
+                onClick={fetchLivePrices}
+                disabled={pricesFetching}
+                className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-40 transition-colors">
+                ↻
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -375,17 +408,23 @@ export default function HistoryClient({ initialTrades }: Props) {
       </div>
 
       {/* Trades — empty state */}
-      {trades.length === 0 ? (
+      {visibleTrades.length === 0 ? (
         <div className="text-center py-20 text-slate-500">
           <p className="text-4xl mb-3">📊</p>
-          <p className="text-lg font-medium">No trades logged yet</p>
-          <p className="text-sm mt-1">Head to Markets to find edges and log your first trade.</p>
+          <p className="text-lg font-medium">
+            {trades.length === 0 ? "No trades logged yet" : "No active or settled trades"}
+          </p>
+          <p className="text-sm mt-1">
+            {trades.length === 0
+              ? "Head to Markets to find edges and log your first trade."
+              : <button onClick={() => setShowAll(true)} className="text-sky-400 hover:text-sky-300 underline">Show all trades</button>}
+          </p>
         </div>
       ) : (
         <>
           {/* ── Mobile card list (< md) ─────────────────────────────────── */}
           <div className="md:hidden space-y-3">
-            {trades.map((trade) => (
+            {visibleTrades.map((trade) => (
               <TradeCard
                 key={trade.id}
                 trade={trade}
@@ -418,7 +457,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
-                {trades.map((trade) => (
+                {visibleTrades.map((trade) => (
                   <TradeRow
                     key={trade.id}
                     trade={trade}
@@ -491,7 +530,8 @@ function TradeCard({
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
 
-  const mtm      = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const isCancelledNoFill = isVoidCancelled(trade);
+  const mtm      = isPending && !isCancelledNoFill && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
   const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
   const showCancel = trade.kalshi_order_id &&
@@ -548,6 +588,8 @@ function TradeCard({
               <span className={`font-medium ${pnlColor}`}>
                 {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
               </span>
+            ) : isCancelledNoFill ? (
+              <span className="text-slate-400 font-medium">$0.00</span>
             ) : mtm != null ? (
               <span className={`font-medium ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                 ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
@@ -648,7 +690,8 @@ function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOut
   const priceDelta     = livePrice != null ? livePrice - entryPrice : null;
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
-  const mtm            = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const isCancelledNoFill = isVoidCancelled(trade);
+  const mtm            = isPending && !isCancelledNoFill && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
   const contractCount  = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
 
   return (
@@ -733,6 +776,8 @@ function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOut
               <span className={`font-semibold ${pnlColor}`}>
                 {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
               </span>
+            ) : isCancelledNoFill ? (
+              <span className="text-slate-400 font-semibold">$0.00</span>
             ) : mtm != null ? (
               <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                 ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
