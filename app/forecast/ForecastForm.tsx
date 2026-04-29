@@ -22,9 +22,9 @@ type Confidence = "very_confident" | "confident" | "uncertain";
 // Note: order is Low→Medium→High so the visual left-to-right matches
 // the conceptual "narrow ← → wide" uncertainty spectrum.
 const CONFIDENCE_OPTIONS: { value: Confidence; label: string; std: string }[] = [
-  { value: "uncertain",      label: "Low",    std: "±4°"   },
-  { value: "confident",      label: "Medium", std: "±2°"   },
-  { value: "very_confident", label: "High",   std: "±1.5°" },
+  { value: "uncertain",      label: "L", std: "±4°"   },
+  { value: "confident",      label: "M", std: "±2°"   },
+  { value: "very_confident", label: "H", std: "±1.5°" },
 ];
 
 interface DayRow {
