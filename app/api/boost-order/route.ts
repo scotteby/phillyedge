@@ -85,9 +85,30 @@ export async function POST(req: NextRequest) {
       ? (trade.market_pct as number) / 100
       : 1 - (trade.market_pct as number) / 100);
   const entryCostPerContract = side === "yes" ? entryYes : 1 - entryYes;
-  const count =
-    (trade.remaining_count as number | null) ??
-    (entryCostPerContract > 0 ? Math.floor((trade.amount_usdc as number) / entryCostPerContract) : 1);
+
+  // Use > 0 check, not ??, because DB stores integer 0 before polling updates it
+  const storedRemaining = trade.remaining_count as number | null;
+  let count = storedRemaining != null && storedRemaining > 0
+    ? storedRemaining
+    : (entryCostPerContract > 0 ? Math.floor((trade.amount_usdc as number) / entryCostPerContract) : 0);
+
+  // Last resort: fetch the live order from Kalshi to get contract count
+  if (count < 1) {
+    try {
+      const orderPath = `/trade-api/v2/portfolio/orders/${orderId}`;
+      const orderHeaders = buildKalshiAuthHeaders("GET", orderPath);
+      const orderRes  = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, { headers: orderHeaders });
+      if (orderRes.ok) {
+        const orderJson = await orderRes.json();
+        const o         = (orderJson.order ?? orderJson) as Record<string, unknown>;
+        const remaining = Number(o.remaining_count ?? 0);
+        const original  = Number(o.count ?? o.original_count ?? 0);
+        count = remaining > 0 ? remaining : original;
+      }
+    } catch {
+      // swallow — we'll hit the guard below
+    }
+  }
 
   if (count < 1) {
     return NextResponse.json({ error: "Cannot determine contract count" }, { status: 422 });
