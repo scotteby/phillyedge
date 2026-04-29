@@ -19,10 +19,12 @@ type PrecipType = "None" | "Rain" | "Snow" | "Mix";
 type RowStatus  = "saved" | "unsaved" | "saving" | "error";
 type Confidence = "very_confident" | "confident" | "uncertain";
 
-const CONFIDENCE_OPTIONS: { value: Confidence; label: string; icon: string; std: string }[] = [
-  { value: "very_confident", label: "High",   icon: "🎯", std: "±1°" },
-  { value: "confident",      label: "Normal", icon: "●",  std: "±2°" },
-  { value: "uncertain",      label: "Low",    icon: "〰", std: "±4°" },
+// Note: order is Low→Medium→High so the visual left-to-right matches
+// the conceptual "narrow ← → wide" uncertainty spectrum.
+const CONFIDENCE_OPTIONS: { value: Confidence; label: string; std: string }[] = [
+  { value: "uncertain",      label: "Low",    std: "±4°"   },
+  { value: "confident",      label: "Medium", std: "±2°"   },
+  { value: "very_confident", label: "High",   std: "±1.5°" },
 ];
 
 interface DayRow {
@@ -87,7 +89,7 @@ export default function ForecastForm({ today, initialDays }: Props) {
         low_temp:            d?.low_temp      != null ? String(d.low_temp)      : "",
         precip_chance:       d?.precip_chance != null ? String(d.precip_chance) : "",
         precip_type:         (d?.precip_type as PrecipType) ?? "None",
-        forecast_confidence: (d?.forecast_confidence as Confidence) ?? "confident",
+        forecast_confidence: (d?.forecast_confidence as Confidence) ?? "very_confident",
         status:              hasData ? "saved" : "unsaved",
       };
     })
@@ -215,30 +217,24 @@ export default function ForecastForm({ today, initialDays }: Props) {
                   />
                 </div>
 
-                {/* Confidence — circular icon buttons */}
-                <div className="flex justify-around items-start pt-1">
+                {/* Confidence — segmented toggle */}
+                <div className="flex rounded-lg p-1" style={{ background: "rgba(255,255,255,0.06)" }}>
                   {CONFIDENCE_OPTIONS.map((opt) => {
                     const selected = row.forecast_confidence === opt.value;
                     return (
-                      <div key={opt.value} className="flex flex-col items-center gap-1.5">
-                        <button
-                          type="button"
-                          title={`Std dev ${opt.std}`}
-                          onClick={() => updateField(i, "forecast_confidence", opt.value)}
-                          className={`w-9 h-9 rounded-full flex items-center justify-center text-base transition-all active:scale-110 ${
-                            selected
-                              ? "bg-sky-500 border-2 border-sky-400 shadow-md shadow-sky-500/30"
-                              : "bg-slate-700 border border-slate-600 hover:border-slate-400"
-                          }`}
-                        >
-                          <span className={selected ? "text-white" : "text-slate-300"}>
-                            {opt.icon}
-                          </span>
-                        </button>
-                        <span className={`text-[10px] leading-none ${selected ? "text-sky-400" : "text-slate-500"}`}>
-                          {opt.label}
-                        </span>
-                      </div>
+                      <button
+                        key={opt.value}
+                        type="button"
+                        title={`Std dev ${opt.std}`}
+                        onClick={() => updateField(i, "forecast_confidence", opt.value)}
+                        className={`flex-1 rounded-md py-1 text-xs font-medium text-center transition-colors ${
+                          selected
+                            ? "bg-white/20 text-white"
+                            : "text-gray-500 hover:text-gray-400"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
                     );
                   })}
                 </div>

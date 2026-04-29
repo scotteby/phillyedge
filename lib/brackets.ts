@@ -39,10 +39,15 @@ function bracketProb(range: BracketRange, mean: number, std: number): number {
   return Math.max(1, Math.round(p * 100));
 }
 
-/** Std-dev in °F for each confidence level. */
+/**
+ * Std-dev in °F mapped to UI labels:
+ *   very_confident → "High"   ±1.5°  (expert, tight)
+ *   confident      → "Medium" ±2°    (default)
+ *   uncertain      → "Low"    ±4°    (wide, unsure)
+ */
 const CONFIDENCE_STD: Record<ForecastConfidence, number> = {
-  very_confident: 1.0,
-  confident:      1.5,
+  very_confident: 1.5,
+  confident:      2.0,
   uncertain:      4.0,
 };
 
