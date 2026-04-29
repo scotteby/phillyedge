@@ -80,13 +80,16 @@ export async function POST(req: NextRequest) {
 
   const ticker = trade.market_id as string;
 
-  // Build market sell order — market type fills at best available price
+  // Build market sell order — market type fills at best available price.
+  // Kalshi requires exactly one price field even for market orders; setting 1¢
+  // means "accept any price ≥ 1¢" which behaves as a true market sell.
   const orderBody = {
     ticker,
     action: "sell",
     side,
     type:   "market",
     count:  filledCount,
+    ...(side === "yes" ? { yes_price: 1 } : { no_price: 1 }),
   };
 
   console.log("[sell-position] order body:", JSON.stringify(orderBody));
