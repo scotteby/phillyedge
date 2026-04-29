@@ -160,7 +160,44 @@ export default function PositionBuilderModal({ group, onClose }: Props) {
   }
 
   function toggleLeg(id: string) {
-    setLegs((prev) => prev.map((l) => (l.id === id ? { ...l, enabled: !l.enabled } : l)));
+    setLegs((prev) => {
+      // Flip the leg
+      const flipped = prev.map((l) => (l.id === id ? { ...l, enabled: !l.enabled } : l));
+
+      // Normalise all enabled legs to sum to exactly 100%
+      const enabled = flipped.filter((l) => l.enabled);
+      if (enabled.length === 0) return flipped;
+
+      const total = enabled.reduce((s, l) => s + l.pct, 0);
+      if (total === 100) return flipped;
+      if (total === 0) {
+        // Every enabled leg had pct=0 — distribute evenly
+        const share = Math.floor(100 / enabled.length);
+        const extra = 100 - share * enabled.length;
+        let idx = 0;
+        return flipped.map((l) =>
+          l.enabled ? { ...l, pct: share + (idx++ < extra ? 1 : 0) } : l
+        );
+      }
+
+      // Scale proportionally
+      const scaled = flipped.map((l) =>
+        l.enabled ? { ...l, pct: Math.round((l.pct / total) * 100) } : l
+      );
+
+      // Fix any rounding drift by adjusting the largest enabled leg
+      const scaledEnabled  = scaled.filter((l) => l.enabled);
+      const scaledTotal    = scaledEnabled.reduce((s, l) => s + l.pct, 0);
+      const drift          = 100 - scaledTotal;
+      if (drift !== 0) {
+        const biggest = scaledEnabled.reduce((a, b) => (b.pct > a.pct ? b : a));
+        return scaled.map((l) =>
+          l.id === biggest.id ? { ...l, pct: l.pct + drift } : l
+        );
+      }
+
+      return scaled;
+    });
   }
 
   async function handleConfirm() {
