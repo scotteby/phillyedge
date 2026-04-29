@@ -182,7 +182,21 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
   }
 
   function removeLeg(id: string) {
-    setLegs((prev) => prev.filter((l) => l.id !== id));
+    setLegs((prev) => {
+      const remaining = prev.filter((l) => l.id !== id);
+      if (remaining.length === 0) return remaining;
+      // Renormalize pcts so they still sum to 100 after removal
+      const total = remaining.reduce((s, l) => s + l.pct, 0);
+      if (total <= 0) return remaining;
+      const rawPcts = remaining.map((l) => (l.pct / total) * 100);
+      const floored = rawPcts.map(Math.floor);
+      const rem = 100 - floored.reduce((s, v) => s + v, 0);
+      const fracOrder = rawPcts
+        .map((v, i) => ({ i, frac: v - floored[i] }))
+        .sort((a, b) => b.frac - a.frac);
+      for (let j = 0; j < rem; j++) floored[fracOrder[j].i]++;
+      return remaining.map((l, i) => ({ ...l, pct: floored[i] }));
+    });
   }
 
   function addCustomLeg(bracket: BracketMarket, side: "YES" | "NO") {
@@ -556,8 +570,7 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
               valueClass={totalEV >= 0 ? "text-emerald-400 font-semibold" : "text-red-400 font-semibold"}
             />
             <div className="border-t border-slate-600/60 pt-2 space-y-1.5">
-              <SummaryRow label="🏆 Best case"  value={`+$${bestCase.toFixed(2)}`}  valueClass="text-emerald-400" />
-              <SummaryRow label="💀 Worst case" value={`-$${totalDeployed.toFixed(2)}`} valueClass="text-red-400" />
+              <SummaryRow label="🏆 Best case" value={`+$${bestCase.toFixed(2)}`} valueClass="text-emerald-400" />
               <SummaryRow label="Legs" value={String(legs.length)} />
             </div>
           </div>
