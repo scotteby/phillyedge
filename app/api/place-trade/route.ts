@@ -161,26 +161,25 @@ export async function POST(req: NextRequest) {
   // ── Log to Supabase ──────────────────────────────────────────────────────────
   try {
     const supabase = createServiceClient();
-    await supabase.from("trades").insert([
+    const { error: dbErr } = await supabase.from("trades").insert([
       {
-        market_id:        ticker,
+        market_id:       ticker,
         market_question,
         target_date,
-        side:             side.toUpperCase(),
-        amount_usdc:      amount,
+        side:            side.toUpperCase(),
+        amount_usdc:     amount,
         market_pct,
         my_pct,
         edge,
         signal,
-        outcome:          "pending",
-        pnl:              null,
-        polymarket_url:   kalshiUrl(ticker),
-        kalshi_order_id:  orderId,
+        outcome:         "pending",
+        pnl:             null,
+        polymarket_url:  kalshiUrl(ticker),
       },
     ]);
+    if (dbErr) console.error("[place-trade] Supabase insert failed:", dbErr.message);
   } catch (err) {
-    // Logging failure is non-fatal — order already placed, just warn
-    console.error("Failed to log trade to Supabase:", err);
+    console.error("[place-trade] Supabase insert threw:", err);
   }
 
   return NextResponse.json({

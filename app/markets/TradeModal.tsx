@@ -74,7 +74,8 @@ export default function TradeModal({ market, onClose, onConfirm }: Props) {
 
       setResult({ order_id: json.order_id, count: json.count, price: json.price_dollars, demo: !!json.demo });
       setStatus("success");
-      onConfirm();
+      // Don't call onConfirm() here — that would unmount the modal immediately,
+      // swallowing the success screen. The user dismisses it with "Done".
     } catch (err) {
       setError(String(err));
       setStatus("error");
