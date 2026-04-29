@@ -562,24 +562,18 @@ function TradeCard({
               {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
             </span>
           ) : mtm != null ? (
-            <div className="flex flex-col items-end gap-0.5">
-              <div className="flex items-baseline gap-1">
-                <span className="text-xs text-slate-500">~</span>
-                <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                  {mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
-                </span>
-              </div>
-              <span className="text-xs text-slate-600">if sold now</span>
+            <div className="flex items-baseline gap-1">
+              <span className="text-xs text-slate-500">~</span>
+              <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
+              </span>
             </div>
           ) : forecastEv != null ? (
-            <div className="flex flex-col items-end gap-0.5">
-              <div className="flex items-baseline gap-1">
-                <span className="text-xs text-slate-500">~</span>
-                <span className={`font-semibold ${forecastEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                  {forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
-                </span>
-              </div>
-              <span className="text-xs text-slate-600">Forecast EV</span>
+            <div className="flex items-baseline gap-1">
+              <span className="text-xs text-slate-500">~</span>
+              <span className={`font-semibold ${forecastEv >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {forecastEv >= 0 ? "+" : ""}${forecastEv.toFixed(2)}
+              </span>
             </div>
           ) : (
             <span className="text-slate-600 text-sm">—</span>
