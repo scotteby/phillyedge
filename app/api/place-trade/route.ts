@@ -177,6 +177,7 @@ export async function POST(req: NextRequest) {
         polymarket_url:   kalshiUrl(ticker),
         kalshi_order_id:  orderId,
         order_status:     orderId ? "resting" : null,
+        entry_yes_price:  sideLower === "yes" ? price : 1 - price,
       },
     ]);
     if (dbErr) console.error("[place-trade] Supabase insert failed:", dbErr.message);

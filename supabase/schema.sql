@@ -53,6 +53,7 @@ create table if not exists public.trades (
 -- alter table public.trades add column if not exists filled_count     int;
 -- alter table public.trades add column if not exists remaining_count  int;
 -- alter table public.trades add column if not exists last_checked_at  timestamptz;
+-- alter table public.trades add column if not exists entry_yes_price  numeric(6,4);
 
 create index if not exists trades_target_date_idx  on public.trades (target_date);
 create index if not exists trades_outcome_idx       on public.trades (outcome);

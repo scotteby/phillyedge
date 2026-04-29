@@ -39,6 +39,7 @@ export interface Trade {
   filled_count: number | null;
   remaining_count: number | null;
   last_checked_at: string | null;
+  entry_yes_price: number | null;   // YES price at placement (0–1 decimal)
 }
 
 export interface MarketCache {
