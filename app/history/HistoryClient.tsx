@@ -413,7 +413,6 @@ export default function HistoryClient({ initialTrades }: Props) {
                   <th className="pb-3 pr-4">Signal</th>
                   <th className="pb-3 pr-4">Edge</th>
                   <th className="pb-3 pr-4">Order</th>
-                  <th className="pb-3 pr-4">Live Price</th>
                   <th className="pb-3 pr-4">Outcome</th>
                   <th className="pb-3">P&L</th>
                 </tr>
@@ -480,105 +479,91 @@ interface TradeRowProps {
 function TradeCard({
   trade, liveYesPrice, today, updating, canceling, onUpdateOutcome, onCancel,
 }: TradeRowProps) {
-  const isPending   = trade.outcome === "pending";
-  const hasFuture   = trade.target_date >= today;
-  const eligible    = isPending && hasFuture;
+  const [expanded, setExpanded] = useState(false);
 
-  const entryYes    = getEntryYesPrice(trade);
-  const entryPrice  = trade.side === "YES" ? entryYes : 1 - entryYes;
-  const livePrice   = liveYesPrice != null
+  const isPending  = trade.outcome === "pending";
+  const entryYes   = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const livePrice  = liveYesPrice != null
     ? (trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice)
     : null;
-  const priceDelta  = livePrice != null ? livePrice - entryPrice : null;
+  const priceDelta     = livePrice != null ? livePrice - entryPrice : null;
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
 
-  const mtm        = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
-  const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const mtm      = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
-  const showCancel  = trade.kalshi_order_id &&
+  const showCancel = trade.kalshi_order_id &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
 
+  const contractCount = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
+
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
-      {/* Row 1: date + market name */}
-      <div className="flex items-start gap-3">
-        <span className="shrink-0 text-xs text-slate-500 pt-0.5 whitespace-nowrap">
-          {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-        </span>
-        <a
-          href={trade.polymarket_url ?? "#"}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-slate-200 hover:text-sky-400 transition-colors text-sm leading-snug"
-        >
-          {trade.market_question}
-        </a>
-      </div>
-
-      {/* Row 2: side + amount + order status | P&L (pinned right) */}
-      <div className="flex items-center justify-between gap-3">
-        {/* Left: badges — wraps on very small screens, but P&L stays on this row */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
-          <span className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
-            {trade.side}
+    <div
+      className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden cursor-pointer select-none"
+      onClick={() => setExpanded((v) => !v)}
+    >
+      <div className="p-4 space-y-3">
+        {/* Row 1: date + market name + chevron */}
+        <div className="flex items-start gap-2">
+          <span className="shrink-0 text-xs text-slate-500 pt-0.5 whitespace-nowrap">
+            {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
           </span>
-          <span className="text-slate-300">${trade.amount_usdc.toFixed(2)}</span>
-          <SignalBadge signal={trade.signal} />
-          {trade.order_status && <OrderStatusBadge status={trade.order_status} />}
-          {showCancel && (
-            <button
-              onClick={onCancel}
-              disabled={canceling}
-              className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors py-1 px-1"
-            >
-              {canceling ? "Canceling…" : "Cancel"}
-            </button>
-          )}
+          <a
+            href={trade.polymarket_url ?? "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 text-slate-200 hover:text-sky-400 transition-colors text-sm leading-snug"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {trade.market_question}
+          </a>
+          <span className={`shrink-0 text-slate-500 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>
+            ›
+          </span>
         </div>
 
-        {/* Right: P&L — shrink-0 keeps it pinned to the right edge */}
-        <div className="shrink-0 text-right">
-          {trade.pnl != null ? (
-            <span className={`font-medium ${pnlColor}`}>
-              {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+        {/* Row 2: badges | P&L */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
+            <span className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+              {trade.side}
             </span>
-          ) : mtm != null ? (
-            <span className={`font-medium ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-              ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
-            </span>
-          ) : (
-            <span className="text-slate-600 text-sm">—</span>
-          )}
-        </div>
-      </div>
-
-      {/* Row 3: live price (if eligible) + outcome selector */}
-      <div className="flex items-center justify-between gap-3 pt-1 border-t border-slate-700/50">
-        {/* Live price */}
-        <div className="text-xs">
-          {eligible ? (
-            livePrice != null ? (
-              <span className={
-                movedFavorably ? "text-emerald-400" :
-                movedAgainst   ? "text-red-400" :
-                "text-slate-400"
-              }>
-                {movedFavorably ? "↑ " : movedAgainst ? "↓ " : ""}
-                {(livePrice * 100).toFixed(1)}¢
-                <span className="text-slate-500 ml-1">
-                  (entry {(entryPrice * 100).toFixed(1)}¢)
-                </span>
+            <span className="text-slate-300">${trade.amount_usdc.toFixed(2)}</span>
+            <SignalBadge signal={trade.signal} />
+            {trade.order_status && <OrderStatusBadge status={trade.order_status} />}
+            {showCancel && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                disabled={canceling}
+                className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors py-1 px-1"
+              >
+                {canceling ? "Canceling…" : "Cancel"}
+              </button>
+            )}
+          </div>
+          <div className="shrink-0 text-right">
+            {trade.pnl != null ? (
+              <span className={`font-medium ${pnlColor}`}>
+                {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+              </span>
+            ) : mtm != null ? (
+              <span className={`font-medium ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
               </span>
             ) : (
-              <span className="text-slate-500 animate-pulse">fetching…</span>
-            )
-          ) : (
-            <span className="text-slate-600">—</span>
-          )}
+              <span className="text-slate-600 text-sm">—</span>
+            )}
+          </div>
         </div>
+      </div>
 
-        {/* Outcome selector */}
+      {/* Outcome selector — outside the expand click zone */}
+      <div
+        className="px-4 pb-3 flex justify-end"
+        onClick={(e) => e.stopPropagation()}
+      >
         <select
           value={trade.outcome}
           disabled={updating}
@@ -590,6 +575,52 @@ function TradeCard({
           <option value="loss">Loss</option>
         </select>
       </div>
+
+      {/* Expandable detail panel */}
+      {expanded && (
+        <div className="border-t border-slate-700/50 px-4 py-3 bg-slate-900/40 space-y-3">
+          <div className="grid grid-cols-3 gap-3 text-xs">
+            <div>
+              <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Entry</p>
+              <p className="text-slate-200 font-medium">{(entryPrice * 100).toFixed(1)}¢</p>
+            </div>
+            <div>
+              <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Live</p>
+              {livePrice != null ? (
+                <p className={`font-medium ${movedFavorably ? "text-emerald-400" : movedAgainst ? "text-red-400" : "text-slate-200"}`}>
+                  {(livePrice * 100).toFixed(1)}¢
+                </p>
+              ) : (
+                <p className="text-slate-600">—</p>
+              )}
+            </div>
+            <div>
+              <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Move</p>
+              {priceDelta != null && Math.abs(priceDelta) > 0.001 ? (
+                <p className={`font-medium ${movedFavorably ? "text-emerald-400" : movedAgainst ? "text-red-400" : "text-slate-400"}`}>
+                  {priceDelta > 0 ? "+" : ""}{(priceDelta * 100).toFixed(1)}pp
+                </p>
+              ) : (
+                <p className="text-slate-600">—</p>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Contracts</p>
+              <p className="text-slate-200 font-medium">
+                {trade.filled_count != null
+                  ? `${trade.filled_count} filled${trade.remaining_count ? ` / ${trade.remaining_count} left` : ""}`
+                  : contractCount != null ? `~${contractCount}` : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Ticker</p>
+              <p className="text-slate-400 font-mono text-[11px] break-all">{trade.market_id}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -597,157 +628,170 @@ function TradeCard({
 // ── Desktop table row ─────────────────────────────────────────────────────────
 
 function TradeRow({ trade, liveYesPrice, today, updating, canceling, onUpdateOutcome, onCancel }: TradeRowProps) {
+  const [expanded, setExpanded] = useState(false);
+
   const edgeColor =
     trade.edge >= 25 ? "text-emerald-400" :
     trade.edge >= 10 ? "text-sky-400" :
     trade.edge <= -10 ? "text-red-400" : "text-slate-400";
 
-  const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
-
+  const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
   const showCancel = trade.kalshi_order_id &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
 
-  const isPending = trade.outcome === "pending";
-  const hasFuture = trade.target_date >= today;
-  const eligible  = isPending && hasFuture;
-
-  // Entry prices (relevant to position side)
-  const entryYes  = getEntryYesPrice(trade);
-  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes; // price of the side bought
-
-  // Live price (also in terms of the position side)
+  const isPending  = trade.outcome === "pending";
+  const entryYes   = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const livePrice  = liveYesPrice != null
     ? (trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice)
     : null;
-
-  // Price delta: positive = moved in favor of the position
-  const priceDelta = livePrice != null ? livePrice - entryPrice : null;
+  const priceDelta     = livePrice != null ? livePrice - entryPrice : null;
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
-
-  // P&L numbers for pending trades
-  const mtm = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const mtm            = isPending && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const contractCount  = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
 
   return (
-    <tr className="hover:bg-slate-800/50 transition-colors">
-      {/* Date */}
-      <td className="py-3 pr-4 text-slate-400 whitespace-nowrap">
-        {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-      </td>
+    <>
+      <tr
+        className="hover:bg-slate-800/50 transition-colors cursor-pointer"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {/* Date */}
+        <td className="py-3 pr-4 text-slate-400 whitespace-nowrap">
+          {new Date(trade.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+        </td>
 
-      {/* Market */}
-      <td className="py-3 pr-4 max-w-[200px]">
-        <a href={trade.polymarket_url ?? "#"} target="_blank" rel="noopener noreferrer"
-          className="text-slate-200 hover:text-sky-400 transition-colors line-clamp-2 leading-snug">
-          {trade.market_question}
-        </a>
-      </td>
+        {/* Market */}
+        <td className="py-3 pr-4 max-w-[200px]">
+          <a href={trade.polymarket_url ?? "#"} target="_blank" rel="noopener noreferrer"
+            className="text-slate-200 hover:text-sky-400 transition-colors line-clamp-2 leading-snug"
+            onClick={(e) => e.stopPropagation()}>
+            {trade.market_question}
+          </a>
+        </td>
 
-      {/* Side */}
-      <td className="py-3 pr-4">
-        <span className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
-          {trade.side}
-        </span>
-      </td>
+        {/* Side */}
+        <td className="py-3 pr-4">
+          <span className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+            {trade.side}
+          </span>
+        </td>
 
-      {/* Amount */}
-      <td className="py-3 pr-4 text-slate-200 whitespace-nowrap">
-        ${trade.amount_usdc.toFixed(2)}
-      </td>
+        {/* Amount */}
+        <td className="py-3 pr-4 text-slate-200 whitespace-nowrap">
+          ${trade.amount_usdc.toFixed(2)}
+        </td>
 
-      {/* Signal */}
-      <td className="py-3 pr-4"><SignalBadge signal={trade.signal} /></td>
+        {/* Signal */}
+        <td className="py-3 pr-4"><SignalBadge signal={trade.signal} /></td>
 
-      {/* Edge */}
-      <td className={`py-3 pr-4 font-semibold ${edgeColor} whitespace-nowrap`}>
-        {trade.edge > 0 ? "+" : ""}{trade.edge}
-      </td>
+        {/* Edge */}
+        <td className={`py-3 pr-4 font-semibold ${edgeColor} whitespace-nowrap`}>
+          {trade.edge > 0 ? "+" : ""}{trade.edge}
+        </td>
 
-      {/* Order status */}
-      <td className="py-3 pr-4">
-        <div className="flex flex-col gap-1.5 items-start">
-          {trade.kalshi_order_id ? (
-            <>
-              <OrderStatusBadge status={trade.order_status} />
-              {trade.order_status === "partially_filled" && trade.filled_count != null && (
-                <span className="text-xs text-slate-500">
-                  {trade.filled_count} filled / {trade.remaining_count} left
-                </span>
-              )}
-              {showCancel && (
-                <button onClick={onCancel} disabled={canceling}
-                  className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors">
-                  {canceling ? "Canceling…" : "Cancel"}
-                </button>
-              )}
-            </>
-          ) : (
-            <span className="text-xs text-slate-600">—</span>
-          )}
-        </div>
-      </td>
-
-      {/* Live Price */}
-      <td className="py-3 pr-4 whitespace-nowrap">
-        {eligible ? (
-          <div className="flex flex-col gap-0.5">
-            {livePrice != null ? (
+        {/* Order status */}
+        <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+          <div className="flex flex-col gap-1.5 items-start">
+            {trade.kalshi_order_id ? (
               <>
-                {/* Current price */}
-                <span className={`font-semibold text-sm ${
-                  movedFavorably ? "text-emerald-400" :
-                  movedAgainst   ? "text-red-400" :
-                  "text-white"
-                }`}>
-                  {movedFavorably ? "↑ " : movedAgainst ? "↓ " : ""}
-                  {(livePrice * 100).toFixed(1)}¢
-                </span>
-                {/* Entry price + delta */}
-                <span className="text-xs text-slate-500">
-                  entry {(entryPrice * 100).toFixed(1)}¢
-                  {priceDelta != null && Math.abs(priceDelta) > 0.005 && (
-                    <span className={movedFavorably ? " text-emerald-500" : " text-red-500"}>
-                      {" "}{priceDelta > 0 ? "+" : ""}{(priceDelta * 100).toFixed(1)}pp
-                    </span>
-                  )}
-                </span>
+                <OrderStatusBadge status={trade.order_status} />
+                {trade.order_status === "partially_filled" && trade.filled_count != null && (
+                  <span className="text-xs text-slate-500">
+                    {trade.filled_count} filled / {trade.remaining_count} left
+                  </span>
+                )}
+                {showCancel && (
+                  <button onClick={onCancel} disabled={canceling}
+                    className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors">
+                    {canceling ? "Canceling…" : "Cancel"}
+                  </button>
+                )}
               </>
             ) : (
-              <span className="text-xs text-slate-500 animate-pulse">fetching…</span>
+              <span className="text-xs text-slate-600">—</span>
             )}
           </div>
-        ) : (
-          <span className="text-slate-600 text-xs">—</span>
-        )}
-      </td>
+        </td>
 
-      {/* Outcome */}
-      <td className="py-3 pr-4">
-        <select value={trade.outcome} disabled={updating}
-          onChange={(e) => onUpdateOutcome(e.target.value as Trade["outcome"])}
-          className="bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50">
-          <option value="pending">Pending</option>
-          <option value="win">Win</option>
-          <option value="loss">Loss</option>
-        </select>
-      </td>
+        {/* Outcome */}
+        <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+          <select value={trade.outcome} disabled={updating}
+            onChange={(e) => onUpdateOutcome(e.target.value as Trade["outcome"])}
+            className="bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50">
+            <option value="pending">Pending</option>
+            <option value="win">Win</option>
+            <option value="loss">Loss</option>
+          </select>
+        </td>
 
-      {/* P&L */}
-      <td className="py-3 whitespace-nowrap">
-        {trade.pnl != null ? (
-          // Settled — actual realised P&L
-          <span className={`font-semibold ${pnlColor}`}>
-            {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
-          </span>
-        ) : mtm != null ? (
-          // Pending with live price — mark-to-market
-          <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-            ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
-          </span>
-        ) : (
-          <span className="text-slate-600">—</span>
-        )}
-      </td>
-    </tr>
+        {/* P&L + expand chevron */}
+        <td className="py-3 whitespace-nowrap">
+          <div className="flex items-center gap-2">
+            {trade.pnl != null ? (
+              <span className={`font-semibold ${pnlColor}`}>
+                {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+              </span>
+            ) : mtm != null ? (
+              <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-slate-600">—</span>
+            )}
+            <span className={`text-slate-600 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>
+              ›
+            </span>
+          </div>
+        </td>
+      </tr>
+
+      {/* Expandable detail row */}
+      {expanded && (
+        <tr>
+          <td colSpan={8} className="pb-3 pt-0">
+            <div className="mx-0 bg-slate-900/40 border border-slate-700/40 rounded-lg px-4 py-3 flex gap-8 text-xs">
+              <div>
+                <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Entry</p>
+                <p className="text-slate-200 font-medium">{(entryPrice * 100).toFixed(1)}¢</p>
+              </div>
+              <div>
+                <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Live</p>
+                {livePrice != null ? (
+                  <p className={`font-medium ${movedFavorably ? "text-emerald-400" : movedAgainst ? "text-red-400" : "text-slate-200"}`}>
+                    {(livePrice * 100).toFixed(1)}¢
+                  </p>
+                ) : (
+                  <p className="text-slate-600">—</p>
+                )}
+              </div>
+              <div>
+                <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Move</p>
+                {priceDelta != null && Math.abs(priceDelta) > 0.001 ? (
+                  <p className={`font-medium ${movedFavorably ? "text-emerald-400" : movedAgainst ? "text-red-400" : "text-slate-400"}`}>
+                    {priceDelta > 0 ? "+" : ""}{(priceDelta * 100).toFixed(1)}pp
+                  </p>
+                ) : (
+                  <p className="text-slate-600">—</p>
+                )}
+              </div>
+              <div>
+                <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Contracts</p>
+                <p className="text-slate-200 font-medium">
+                  {trade.filled_count != null
+                    ? `${trade.filled_count} filled${trade.remaining_count ? ` / ${trade.remaining_count} left` : ""}`
+                    : contractCount != null ? `~${contractCount}` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500 uppercase tracking-wide text-[10px] mb-1">Ticker</p>
+                <p className="text-slate-400 font-mono">{trade.market_id}</p>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
