@@ -20,11 +20,17 @@ export default function TradeModal({ market, onClose, onConfirm }: Props) {
   const price = side === "YES" ? market.yes_price : 1 - market.yes_price;
   const shares = price > 0 ? usdc / price : 0;
   const maxProfit = shares - usdc;
-  // Kalshi URL: /markets/{series_lower}/{market_ticker_lower}
-  // e.g. /markets/kxhighphil/kxhighphil-26apr28
+  // Kalshi URL format: /markets/{series}/{slug}/{ticker}
+  // e.g. /markets/kxhighphil/highest-temperature-in-philadelphia/kxhighphil-26apr28
+  const SERIES_SLUGS: Record<string, string> = {
+    kxhighphil:   "highest-temperature-in-philadelphia",
+    kxlowtphil:   "lowest-temperature-in-philadelphia",
+    kxprecipphil: "precipitation-in-philadelphia",
+  };
   const seriesLower = market.market_id.split("-")[0].toLowerCase();
   const tickerLower = market.market_id.toLowerCase();
-  const kalshiUrl = `https://kalshi.com/markets/${seriesLower}/${tickerLower}`;
+  const slug = SERIES_SLUGS[seriesLower] ?? seriesLower;
+  const kalshiUrl = `https://kalshi.com/markets/${seriesLower}/${slug}/${tickerLower}`;
 
   async function handleConfirm() {
     if (!usdc || usdc <= 0) {
