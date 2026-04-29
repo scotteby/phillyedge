@@ -2,8 +2,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { fetchAndCacheMarkets } from "@/lib/kalshi";
 import { calculateEdge, deduplicateByEvent } from "@/lib/edge";
 import { groupBracketMarkets } from "@/lib/brackets";
-import { fetchNWSObservation, fetchCurrentObservation, observationTimeGates, todayMarketTimeGates } from "@/lib/nws";
-import type { MarketTimeGates, CurrentObservation } from "@/lib/nws";
+import { fetchNWSObservation, fetchCurrentObservation, observationTimeGates, todayMarketTimeGates, getDailyHighStatus } from "@/lib/nws";
+import type { MarketTimeGates, CurrentObservation, DailyHighStatus } from "@/lib/nws";
 import type { Forecast, MarketCache } from "@/lib/types";
 import MarketsClient from "./MarketsClient";
 import Link from "next/link";
@@ -53,12 +53,15 @@ export default async function MarketsPage() {
     );
   }
 
-  // Fetch markets + NWS observations in parallel
+  // Fetch markets + NWS observations in parallel.
+  // NWSObservation is always fetched (not gated) so we can show the running
+  // daily high/low at any time of day.  The gates only control whether we treat
+  // the observed value as *confirmed* (setting group.observed_value).
   const gates     = observationTimeGates();
   const timeGates = todayMarketTimeGates();
   const [{ data: marketsData, lastUpdated, rawCount }, nwsObs, currentObs] = await Promise.all([
     fetchAndCacheMarkets(),
-    (gates.useLow || gates.useHigh) ? fetchNWSObservation() : Promise.resolve(null),
+    fetchNWSObservation(),
     fetchCurrentObservation(),
   ]);
   const allMarkets = (marketsData as MarketCache[] | null) ?? [];
@@ -84,6 +87,8 @@ export default async function MarketsPage() {
       })
     : null;
 
+  const highObsStatus: DailyHighStatus = getDailyHighStatus(nwsObs);
+
   return (
     <MarketsClient
       groups={groups}
@@ -93,6 +98,9 @@ export default async function MarketsPage() {
       today={today}
       timeGates={timeGates}
       currentObs={currentObs}
+      nwsHighSoFar={nwsObs?.observedHigh ?? null}
+      nwsHighReachedAt={nwsObs?.highReachedAt ?? null}
+      highObsStatus={highObsStatus}
     />
   );
 }

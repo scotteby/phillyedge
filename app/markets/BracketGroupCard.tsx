@@ -2,15 +2,18 @@
 
 import { useState } from "react";
 import type { BracketGroup, BracketMarket, BracketRange } from "@/lib/brackets";
-import type { MarketTimeStatus } from "@/lib/nws";
+import type { MarketTimeStatus, DailyHighStatus } from "@/lib/nws";
 import SignalBadge from "@/components/SignalBadge";
 import PositionBuilderModal from "./PositionBuilderModal";
 
 interface Props {
-  group:         BracketGroup;
-  timeStatus?:   MarketTimeStatus;
-  currentObsF?:  number | null;  // live observed temp (high-temp markets only)
-  currentObsAt?: string | null;  // ISO timestamp of that observation
+  group:           BracketGroup;
+  timeStatus?:     MarketTimeStatus;
+  currentObsF?:    number | null;   // instantaneous temp right now (KXHIGHPHIL only)
+  currentObsAt?:   string | null;   // ISO timestamp of that reading
+  highSoFarF?:     number | null;   // running daily max since midnight (KXHIGHPHIL only)
+  highReachedAt?:  string | null;   // when the daily max was first established
+  highObsStatus?:  DailyHighStatus; // monitoring / leading / likely-final
 }
 
 function tempInRange(temp: number, r: BracketRange): boolean {
@@ -32,7 +35,11 @@ const SERIES_LABELS: Record<string, string> = {
   KXLOWTPHIL: "Low Temperature",
 };
 
-export default function BracketGroupCard({ group, timeStatus = "active", currentObsF = null, currentObsAt = null }: Props) {
+export default function BracketGroupCard({
+  group, timeStatus = "active",
+  currentObsF = null, currentObsAt = null,
+  highSoFarF = null, highReachedAt = null, highObsStatus = "monitoring",
+}: Props) {
   const [tradeTarget, setTradeTarget] = useState<BracketMarket | null>(null);
   const [showPositionBuilder, setShowPositionBuilder] = useState(false);
 
@@ -41,15 +48,25 @@ export default function BracketGroupCard({ group, timeStatus = "active", current
   const dateSuffix  = titleParts.length > 1 ? titleParts.slice(1).join(" · ") : "";
   const seriesLabel = SERIES_LABELS[group.series] ?? titleParts[0];
 
-  const isHigh     = group.series === "KXHIGHPHIL";
-  const isLow      = group.series === "KXLOWTPHIL";
-  const isLocked   = timeStatus === "locked";
-  const isWarning  = timeStatus === "warning";
+  const isHigh    = group.series === "KXHIGHPHIL";
+  const isLow     = group.series === "KXLOWTPHIL";
+  const isLocked  = timeStatus === "locked";
+  const isWarning = timeStatus === "warning";
 
-  // Which bracket contains the current live observed temp (LIKELY WINNER detection)
-  const likelyWinnerId = isLocked && currentObsF !== null && group.observed_value === null
-    ? (group.brackets.find((b) => tempInRange(currentObsF, b.range))?.market_id ?? null)
-    : null;
+  // "Likely Winner" — only for high-temp, only after 5 PM when the high is stable
+  // Uses highSoFarF (running max) NOT currentObsF (instantaneous reading)
+  const likelyWinnerId =
+    isHigh && highObsStatus === "likely-final" &&
+    highSoFarF !== null && group.observed_value === null
+      ? (group.brackets.find((b) => tempInRange(highSoFarF, b.range))?.market_id ?? null)
+      : null;
+
+  // "Leading" — 2–5 PM window: high is in this bracket but may still rise
+  const leadingId =
+    isHigh && highObsStatus === "leading" &&
+    highSoFarF !== null && group.observed_value === null && likelyWinnerId === null
+      ? (group.brackets.find((b) => tempInRange(highSoFarF, b.range))?.market_id ?? null)
+      : null;
 
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
@@ -87,10 +104,12 @@ export default function BracketGroupCard({ group, timeStatus = "active", current
           </div>
         ) : isLocked ? (
           <TimeGateBanner status="locked" isHigh={isHigh} isLow={isLow}
-            currentObsF={currentObsF} currentObsAt={currentObsAt} compact />
+            currentObsF={currentObsF} currentObsAt={currentObsAt}
+            highSoFarF={highSoFarF} highReachedAt={highReachedAt} highObsStatus={highObsStatus} compact />
         ) : isWarning ? (
           <TimeGateBanner status="warning" isHigh={isHigh} isLow={isLow}
-            currentObsF={currentObsF} currentObsAt={currentObsAt} compact />
+            currentObsF={currentObsF} currentObsAt={currentObsAt}
+            highSoFarF={highSoFarF} highReachedAt={highReachedAt} highObsStatus={highObsStatus} compact />
         ) : group.best ? (
           <BestTradeBanner best={group.best} brackets={group.brackets} forecastValue={group.forecast_value} compact />
         ) : null}
@@ -132,10 +151,12 @@ export default function BracketGroupCard({ group, timeStatus = "active", current
           </div>
         ) : isLocked ? (
           <TimeGateBanner status="locked" isHigh={isHigh} isLow={isLow}
-            currentObsF={currentObsF} currentObsAt={currentObsAt} />
+            currentObsF={currentObsF} currentObsAt={currentObsAt}
+            highSoFarF={highSoFarF} highReachedAt={highReachedAt} highObsStatus={highObsStatus} />
         ) : isWarning ? (
           <TimeGateBanner status="warning" isHigh={isHigh} isLow={isLow}
-            currentObsF={currentObsF} currentObsAt={currentObsAt} />
+            currentObsF={currentObsF} currentObsAt={currentObsAt}
+            highSoFarF={highSoFarF} highReachedAt={highReachedAt} highObsStatus={highObsStatus} />
         ) : group.best ? (
           <BestTradeBanner best={group.best} brackets={group.brackets} forecastValue={group.forecast_value} />
         ) : null}
@@ -161,6 +182,7 @@ export default function BracketGroupCard({ group, timeStatus = "active", current
             observed={group.observed_value}
             timeStatus={timeStatus}
             isLikelyWinner={likelyWinnerId === b.market_id}
+            isLeading={leadingId === b.market_id}
           />
         ))}
       </div>
@@ -190,24 +212,88 @@ export default function BracketGroupCard({ group, timeStatus = "active", current
 // ── Time gate banner ─────────────────────────────────────────────────────────
 
 function TimeGateBanner({
-  status, isHigh, isLow, currentObsF, currentObsAt, compact = false,
+  status, isHigh, isLow,
+  currentObsF, currentObsAt,
+  highSoFarF = null, highReachedAt = null, highObsStatus = "monitoring",
+  compact = false,
 }: {
-  status:       "warning" | "locked";
-  isHigh:       boolean;
-  isLow:        boolean;
-  currentObsF:  number | null;
-  currentObsAt: string | null;
-  compact?:     boolean;
+  status:          "warning" | "locked";
+  isHigh:          boolean;
+  isLow:           boolean;
+  currentObsF:     number | null;
+  currentObsAt:    string | null;
+  highSoFarF?:     number | null;
+  highReachedAt?:  string | null;
+  highObsStatus?:  DailyHighStatus;
+  compact?:        boolean;
 }) {
-  const outerClass = compact ? "mt-2 rounded-lg px-3 py-2" : "mt-3 rounded-lg px-4 py-2.5";
+  const outerClass  = compact ? "mt-2 rounded-lg px-3 py-2" : "mt-3 rounded-lg px-4 py-2.5";
+  const textMd      = compact ? "text-xs"    : "text-sm";
+  const textSm      = compact ? "text-[10px]" : "text-xs";
 
+  // ── High-temp specific messaging ────────────────────────────────────────────
+  if (isHigh) {
+    let headline: string;
+    let detail:   string | null = null;
+
+    const currentLine = currentObsF !== null
+      ? `🌡️ Current: ${currentObsF}°F${currentObsAt ? ` at ${fmtObsTime(currentObsAt)}` : ""}`
+      : null;
+
+    const highLine = highSoFarF !== null
+      ? `High so far today: ${highSoFarF}°F${highReachedAt ? ` (peaked at ${fmtObsTime(highReachedAt)})` : ""}`
+      : null;
+
+    if (highObsStatus === "likely-final" && highSoFarF !== null) {
+      // 5 PM+ and stable for 2h — high is likely set
+      headline = `✅ Today's high is likely recorded: ${highSoFarF}°F${highReachedAt ? ` · peaked at ${fmtObsTime(highReachedAt)}` : ""}`;
+      detail   = currentLine;
+    } else if (highObsStatus === "leading") {
+      // 2–5 PM — near peak but may still rise
+      headline = status === "locked"
+        ? "🔒 Market locked · Monitoring today's high — may still rise"
+        : "⚠️ Approaching peak hours — today's high may still rise";
+      const parts = [currentLine, highLine].filter(Boolean);
+      detail = parts.length ? parts.join(" · ") : null;
+    } else {
+      // monitoring — before 2 PM
+      headline = status === "locked"
+        ? "🔒 Market locked · Today's high typically peaks 2–4 PM ET"
+        : "⚠️ Trading window narrowing · Today's high typically peaks 2–4 PM ET";
+      const parts = [currentLine, highLine].filter(Boolean);
+      detail = parts.length ? parts.join(" · ") : null;
+    }
+
+    const bgCls = highObsStatus === "likely-final"
+      ? "bg-emerald-500/10 border-emerald-500/30"
+      : status === "locked"
+      ? "bg-slate-700/40 border-slate-600/60"
+      : "bg-yellow-500/10 border-yellow-500/30";
+
+    const headlineCls = highObsStatus === "likely-final"
+      ? "text-emerald-300 font-semibold"
+      : status === "locked"
+      ? "text-slate-300 font-medium"
+      : "text-yellow-300 font-medium";
+
+    const detailCls = highObsStatus === "likely-final"
+      ? "text-emerald-400/70"
+      : status === "locked"
+      ? "text-slate-400"
+      : "text-yellow-400/70";
+
+    return (
+      <div className={`${outerClass} border ${bgCls}`}>
+        <p className={`${textMd} ${headlineCls}`}>{headline}</p>
+        {detail && <p className={`${textSm} ${detailCls} mt-0.5`}>{detail}</p>}
+      </div>
+    );
+  }
+
+  // ── Low-temp (and other) — original behavior ────────────────────────────────
   const message = status === "locked"
-    ? isHigh
-      ? "🔒 Market closing — today's high is likely already recorded. Check observed temp before trading."
-      : "🔒 Today's overnight low is likely already recorded. Verify before trading."
-    : isHigh
-      ? "⚠️ Late morning — today's high may already be near its peak. Signals may not reflect current conditions."
-      : "⚠️ Today's low was likely recorded overnight. Verify observed low before trading this market.";
+    ? "🔒 Today's overnight low is likely already recorded. Verify before trading."
+    : "⚠️ Today's low was likely recorded overnight. Verify observed low before trading this market.";
 
   const obsLine = currentObsF !== null
     ? `🌡️ Current observed temp: ${currentObsF}°F${currentObsAt ? ` at ${fmtObsTime(currentObsAt)}` : ""}`
@@ -216,16 +302,16 @@ function TimeGateBanner({
   if (status === "locked") {
     return (
       <div className={`${outerClass} bg-slate-700/40 border border-slate-600/60`}>
-        <p className={compact ? "text-xs text-slate-300 font-medium" : "text-sm text-slate-300 font-medium"}>{message}</p>
-        {obsLine && <p className={`${compact ? "text-[10px]" : "text-xs"} text-slate-400 mt-0.5`}>{obsLine}</p>}
+        <p className={`${textMd} text-slate-300 font-medium`}>{message}</p>
+        {obsLine && <p className={`${textSm} text-slate-400 mt-0.5`}>{obsLine}</p>}
       </div>
     );
   }
 
   return (
     <div className={`${outerClass} bg-yellow-500/10 border border-yellow-500/30`}>
-      <p className={compact ? "text-xs text-yellow-300 font-medium" : "text-sm text-yellow-300 font-medium"}>{message}</p>
-      {obsLine && <p className={`${compact ? "text-[10px]" : "text-xs"} text-yellow-400/70 mt-0.5`}>{obsLine}</p>}
+      <p className={`${textMd} text-yellow-300 font-medium`}>{message}</p>
+      {obsLine && <p className={`${textSm} text-yellow-400/70 mt-0.5`}>{obsLine}</p>}
     </div>
   );
 }
@@ -373,13 +459,15 @@ function BestTradeBanner({
 // ── Bracket row ───────────────────────────────────────────────────────────────
 
 function BracketRow({
-  bracket, onTrade, observed, timeStatus = "active", isLikelyWinner = false,
+  bracket, onTrade, observed, timeStatus = "active",
+  isLikelyWinner = false, isLeading = false,
 }: {
   bracket:         BracketMarket;
   onTrade:         () => void;
   observed:        number | null;
   timeStatus?:     MarketTimeStatus;
   isLikelyWinner?: boolean;
+  isLeading?:      boolean;
 }) {
   const isForecast  = bracket.relation === "forecast";
   const isAdjacent  = bracket.relation === "adjacent";
@@ -389,6 +477,8 @@ function BracketRow({
 
   const rowBg = isLikelyWinner
     ? "bg-yellow-500/10 hover:bg-yellow-500/15"
+    : isLeading
+    ? "bg-sky-500/10 hover:bg-sky-500/15"
     : isConfirmed
     ? "bg-amber-500/10 hover:bg-amber-500/15"
     : isForecast
@@ -455,12 +545,17 @@ function BracketRow({
               LIKELY WINNER
             </span>
           )}
+          {isLeading && (
+            <span className="text-xs bg-sky-500/20 text-sky-300 border border-sky-500/40 px-1.5 py-0.5 rounded font-semibold">
+              📊 LEADING
+            </span>
+          )}
           {isConfirmed && (
             <span className="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-semibold">
               CONFIRMED
             </span>
           )}
-          {isForecast && !isConfirmed && !isLikelyWinner && (
+          {isForecast && !isConfirmed && !isLikelyWinner && !isLeading && (
             <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
               YOUR FORECAST
             </span>
@@ -516,12 +611,17 @@ function BracketRow({
               ⭐ LIKELY
             </span>
           )}
+          {isLeading && (
+            <span className="text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/40 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
+              📊 LEADING
+            </span>
+          )}
           {isConfirmed && (
             <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
               ✓ CONFIRMED
             </span>
           )}
-          {isForecast && !isConfirmed && !isLikelyWinner && (
+          {isForecast && !isConfirmed && !isLikelyWinner && !isLeading && (
             <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
               FCST
             </span>

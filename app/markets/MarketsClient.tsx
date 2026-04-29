@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { MarketWithEdge } from "@/lib/types";
 import type { BracketGroup } from "@/lib/brackets";
-import type { MarketTimeGates, MarketTimeStatus, CurrentObservation } from "@/lib/nws";
+import type { MarketTimeGates, MarketTimeStatus, CurrentObservation, DailyHighStatus } from "@/lib/nws";
 import SignalBadge from "@/components/SignalBadge";
 import TradeModal from "./TradeModal";
 import BracketGroupCard from "./BracketGroupCard";
@@ -18,9 +18,12 @@ interface Props {
   today:            string;
   timeGates:        MarketTimeGates;
   currentObs:       CurrentObservation | null;
+  nwsHighSoFar:     number | null;       // running daily max since midnight (KXHIGHPHIL)
+  nwsHighReachedAt: string | null;       // when that max was first established
+  highObsStatus:    DailyHighStatus;     // monitoring / leading / likely-final
 }
 
-export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCount, today, timeGates, currentObs }: Props) {
+export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCount, today, timeGates, currentObs, nwsHighSoFar, nwsHighReachedAt, highObsStatus }: Props) {
   function groupTimeStatus(g: BracketGroup): MarketTimeStatus {
     if (g.obs_date !== today) return "active";
     if (g.series === "KXHIGHPHIL") return timeGates.highStatus;
@@ -139,6 +142,9 @@ export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCo
               timeStatus={groupTimeStatus(g)}
               currentObsF={g.series === "KXHIGHPHIL" && g.obs_date === today ? (currentObs?.tempF ?? null) : null}
               currentObsAt={g.series === "KXHIGHPHIL" && g.obs_date === today ? (currentObs?.observedAt ?? null) : null}
+              highSoFarF={g.series === "KXHIGHPHIL" && g.obs_date === today ? nwsHighSoFar : null}
+              highReachedAt={g.series === "KXHIGHPHIL" && g.obs_date === today ? nwsHighReachedAt : null}
+              highObsStatus={g.series === "KXHIGHPHIL" && g.obs_date === today ? highObsStatus : "monitoring"}
             />
           ))}
         </div>
