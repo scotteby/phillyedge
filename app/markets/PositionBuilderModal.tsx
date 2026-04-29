@@ -92,13 +92,17 @@ function buildLegs(brackets: BracketMarket[], targetIdx: number): PositionLeg[] 
   }
 
   // 3. NO bets on brackets 2+ away
+  // Distribute the remaining 50% of budget across far legs so defaults sum to 100%.
+  // Use integer arithmetic: base allocation + 1 extra point to first N legs to absorb remainder.
   const farBrackets = brackets.filter((_, i) => Math.abs(i - targetIdx) >= 2);
-  const farPctEach  = farBrackets.length > 0 ? Math.round(20 / farBrackets.length) : 0;
+  const farTotal    = 50; // primary takes 50%, far legs share the other 50%
+  const baseEach    = farBrackets.length > 0 ? Math.floor(farTotal / farBrackets.length) : 0;
+  const extraCount  = farBrackets.length > 0 ? farTotal - baseEach * farBrackets.length : 0;
 
-  for (const b of farBrackets) {
-    const noPrice      = 1 - b.yes_price;
-    // Our confidence that b does NOT resolve YES = inverse of b's Kalshi price (market's own view)
-    const confidence   = Math.round((1 - b.yes_price) * 100);
+  for (let fi = 0; fi < farBrackets.length; fi++) {
+    const b          = farBrackets[fi];
+    const noPrice    = 1 - b.yes_price;
+    const confidence = Math.round((1 - b.yes_price) * 100);
     legs.push({
       id:         `${b.market_id}-NO`,
       bracket:    b,
@@ -107,7 +111,7 @@ function buildLegs(brackets: BracketMarket[], targetIdx: number): PositionLeg[] 
       label:      `NO ${b.range.label}`,
       confidence,
       price:      noPrice,
-      pct:        farPctEach,
+      pct:        baseEach + (fi < extraCount ? 1 : 0),
       enabled:    true,
     });
   }
@@ -407,6 +411,13 @@ export default function PositionBuilderModal({ group, onClose }: Props) {
             </h3>
             <div className="bg-slate-700/40 border border-slate-600 rounded-xl p-4 space-y-2 text-sm">
               <Row label="Total deployed"   value={`$${totalDeployed.toFixed(2)}`} />
+              {totalBudget - totalDeployed > 0.005 && (
+                <Row
+                  label="Undeployed"
+                  value={`$${(totalBudget - totalDeployed).toFixed(2)}`}
+                  valueClass="text-slate-500"
+                />
+              )}
               <Row label="Combined EV"
                 value={`${totalEV >= 0 ? "+" : ""}$${totalEV.toFixed(2)}`}
                 valueClass={totalEV >= 0 ? "text-emerald-400 font-bold" : "text-red-400 font-bold"}
