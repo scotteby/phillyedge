@@ -73,6 +73,27 @@ function calcMarkToMarket(trade: Trade, liveYesPrice: number): number {
   return amount * (livePrice / entryPrice - 1);
 }
 
+/**
+ * Potential profit if the trade resolves in your favour.
+ *   profit = contracts × (1 − entry_price_per_contract)
+ *
+ * For resting/unfilled orders this is the profit you'd earn if the order
+ * fills completely AND the market resolves correctly.
+ * Returns null for settled trades — they already have a realised P&L.
+ */
+function calcPotentialProfit(trade: Trade): number | null {
+  if (trade.outcome !== "pending") return null;
+  const entryYes   = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  if (entryPrice <= 0 || entryPrice >= 1) return null;
+  const storedFilled = trade.filled_count ?? 0;
+  const contracts    = storedFilled > 0
+    ? storedFilled
+    : Math.floor(trade.amount_usdc / entryPrice);
+  if (contracts <= 0) return null;
+  return parseFloat((contracts * (1 - entryPrice)).toFixed(2));
+}
+
 /** True when a cancelled/boosted order filled 0 contracts — nothing was spent. */
 function isVoidCancelled(trade: Trade): boolean {
   // Sold trades are always real — never hide them regardless of order_status
@@ -1057,9 +1078,10 @@ function TradeCard({
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
 
-  const noPosition = hasNoPosition(trade);
-  const mtm      = isPending && !noPosition && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
-  const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const noPosition      = hasNoPosition(trade);
+  const mtm             = isPending && !noPosition && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const potentialProfit = calcPotentialProfit(trade);
+  const pnlColor        = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
   const showCancel = trade.kalshi_order_id &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
@@ -1147,6 +1169,11 @@ function TradeCard({
             ) : (
               <span className="text-slate-600 text-sm">—</span>
             )}
+            {potentialProfit != null && (
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                🎯 +${potentialProfit.toFixed(2)} if correct
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -1230,9 +1257,10 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
   const priceDelta     = livePrice != null ? livePrice - entryPrice : null;
   const movedFavorably = priceDelta != null && priceDelta > 0.005;
   const movedAgainst   = priceDelta != null && priceDelta < -0.005;
-  const noPosition = hasNoPosition(trade);
-  const mtm            = isPending && !noPosition && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
-  const contractCount  = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
+  const noPosition      = hasNoPosition(trade);
+  const mtm             = isPending && !noPosition && liveYesPrice != null ? calcMarkToMarket(trade, liveYesPrice) : null;
+  const potentialProfit = calcPotentialProfit(trade);
+  const contractCount   = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
 
   return (
     <>
@@ -1323,19 +1351,26 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
         {/* P&L + expand chevron */}
         <td className="py-3 whitespace-nowrap">
           <div className="flex items-center gap-2">
-            {trade.pnl != null ? (
-              <span className={`font-semibold ${pnlColor}`}>
-                {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
-              </span>
-            ) : noPosition ? (
-              <span className="text-slate-400 font-semibold">$0.00</span>
-            ) : mtm != null ? (
-              <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
-              </span>
-            ) : (
-              <span className="text-slate-600">—</span>
-            )}
+            <div className="flex flex-col">
+              {trade.pnl != null ? (
+                <span className={`font-semibold ${pnlColor}`}>
+                  {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+                </span>
+              ) : noPosition ? (
+                <span className="text-slate-400 font-semibold">$0.00</span>
+              ) : mtm != null ? (
+                <span className={`font-semibold ${mtm >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  ~{mtm >= 0 ? "+" : ""}${mtm.toFixed(2)}
+                </span>
+              ) : (
+                <span className="text-slate-600">—</span>
+              )}
+              {potentialProfit != null && (
+                <span className="text-xs text-slate-500 mt-0.5">
+                  🎯 +${potentialProfit.toFixed(2)} if correct
+                </span>
+              )}
+            </div>
             <span className={`text-slate-600 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>
               ›
             </span>
