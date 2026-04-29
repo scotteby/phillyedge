@@ -133,7 +133,7 @@ export default function PositionBuilderModal({ group, onClose }: Props) {
   const [submitted,    setSubmitted]    = useState(false);
   const [error,        setError]        = useState<string | null>(null);
   const [legResults,   setLegResults]   = useState<
-    Array<{ id: string; order_id: string | null; ok: boolean; error?: string }>
+    Array<{ id: string; order_id: string | null; ok: boolean; demo?: boolean; error?: string }>
   >([]);
 
   const totalBudget   = parseFloat(budget) || 0;
@@ -190,7 +190,7 @@ export default function PositionBuilderModal({ group, onClose }: Props) {
           });
           const json = await res.json();
           if (!res.ok) return { id: leg.id, ok: false as const, order_id: null, error: json.error ?? "Failed" };
-          return { id: leg.id, ok: true  as const, order_id: json.order_id ?? null };
+          return { id: leg.id, ok: true as const, order_id: json.order_id ?? null, demo: !!json.demo };
         } catch (err) {
           return { id: leg.id, ok: false as const, order_id: null, error: String(err) };
         }
@@ -206,10 +206,17 @@ export default function PositionBuilderModal({ group, onClose }: Props) {
     const okCount   = legResults.filter((r) => r.ok).length;
     const failCount = legResults.filter((r) => !r.ok).length;
     const allOk     = failCount === 0;
+    const isDemo    = legResults.some((r) => r.demo);
 
     return (
       <ModalShell onClose={onClose}>
         <div className="p-6 space-y-4">
+          {isDemo && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-amber-400 text-sm font-semibold text-center">
+              ⚠️ DEMO MODE — no real money spent
+            </div>
+          )}
+
           <div className="text-center space-y-2">
             <p className="text-4xl">{allOk ? "✅" : failCount === legResults.length ? "❌" : "⚠️"}</p>
             <p className="text-white font-bold text-lg">

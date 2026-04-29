@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
 import { createServiceClient } from "@/lib/supabase/server";
 
-const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
+const DEMO_MODE  = process.env.KALSHI_DEMO_MODE === "true";
+const KALSHI_BASE = DEMO_MODE
+  ? "https://demo-api.kalshi.co/trade-api/v2"
+  : "https://api.elections.kalshi.com/trade-api/v2";
 const ORDER_PATH  = "/trade-api/v2/portfolio/orders";
 
 const SERIES_SLUGS: Record<string, string> = {
@@ -149,7 +152,8 @@ export async function POST(req: NextRequest) {
     ticker,
     side:          side.toUpperCase(),
     count,
-    price_dollars: price,
+    price_dollars:  price,
     amount_dollars: amount,
+    demo:           DEMO_MODE,
   });
 }

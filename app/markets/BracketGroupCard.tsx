@@ -208,6 +208,7 @@ function BracketTradeModal({
     order_id: string | null;
     count:    number;
     price:    number;
+    demo:     boolean;
   } | null>(null);
 
   const kalshiUrl  = buildKalshiUrl(bracket.market_id);
@@ -246,7 +247,7 @@ function BracketTradeModal({
         return;
       }
 
-      setResult({ order_id: json.order_id, count: json.count, price: json.price_dollars });
+      setResult({ order_id: json.order_id, count: json.count, price: json.price_dollars, demo: !!json.demo });
       setStatus("success");
       onConfirm();
     } catch (err) {
@@ -262,7 +263,14 @@ function BracketTradeModal({
         <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl p-8 text-center space-y-4">
           <p className="text-5xl">✅</p>
           <div>
-            <p className="text-white font-bold text-lg">Order Placed!</p>
+            <div className="flex items-center justify-center gap-2">
+              <p className="text-white font-bold text-lg">Order Placed!</p>
+              {result.demo && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  DEMO
+                </span>
+              )}
+            </div>
             <p className="text-slate-400 text-sm mt-1">
               {result.count} contract{result.count !== 1 ? "s" : ""} ·{" "}
               {(result.price * 100).toFixed(0)}¢ each · ${usdc.toFixed(2)} deployed
