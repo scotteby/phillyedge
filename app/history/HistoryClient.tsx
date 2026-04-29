@@ -696,10 +696,13 @@ function SellModal({
     ? (trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice)
     : null;
 
-  // filled_count may be null if order-status polling hasn't persisted it yet;
-  // estimate from amount_usdc / entry_price as the API does
-  const contracts  = trade.filled_count ??
-    (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
+  // filled_count may be null OR 0 if order-status polling hasn't stored the
+  // real value yet (Kalshi fills set it, but polling may lag).
+  // Estimate from amount_usdc / entry_price whenever the stored value is falsy.
+  const storedFilled = trade.filled_count ?? 0;
+  const contracts = storedFilled > 0
+    ? storedFilled
+    : (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
   const costBasis  = contracts * entryPrice;
   const estProceeds = livePrice != null ? contracts * livePrice : null;
   const estPnl      = estProceeds != null ? estProceeds - costBasis : null;
