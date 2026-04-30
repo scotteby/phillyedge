@@ -18,9 +18,13 @@ interface Props {
 }
 
 function tempInRange(temp: number, r: BracketRange): boolean {
-  const aboveMin = r.min === null || temp >= r.min;
-  const belowMax = r.max === null || (r.min !== null ? temp <= r.max : temp < r.max);
-  return aboveMin && belowMax;
+  // Mirror the inRange logic in lib/brackets.ts:
+  // bottom-open (<X): exclusive upper bound  — temp < max
+  // top-open (>X):    exclusive lower bound  — temp > min (boundary belongs to bracket below)
+  // closed (X-Y):     inclusive on both ends — temp >= min && temp <= max
+  if (r.min === null) return r.max !== null && temp < r.max;
+  if (r.max === null) return temp > r.min;
+  return temp >= r.min && temp <= r.max;
 }
 
 function fmtObsTime(iso: string): string {

@@ -150,11 +150,19 @@ export function parseBracketRange(question: string): BracketRange {
 // ── Bracket range logic ───────────────────────────────────────────────────────
 
 function inRange(value: number, r: BracketRange): boolean {
-  const aboveMin = r.min === null || value >= r.min;
-  // "Between" brackets (both bounds set) are fully inclusive: 64-65° includes both 64 and 65.
-  // "Below X" brackets (min = null) are exclusive: <64° does NOT include 64.
-  const belowMax = r.max === null || (r.min !== null ? value <= r.max : value < r.max);
-  return aboveMin && belowMax;
+  // "Between" brackets (both bounds set) are fully inclusive: 50-51° includes both 50 and 65.
+  // "Below X" brackets (min = null) are exclusive: <50° does NOT include 50.
+  // "Above X" brackets (max = null) are exclusive: >51° does NOT include 51 (51 belongs to 50-51°).
+  if (r.min === null) {
+    // bottom-open: value < max
+    return r.max !== null && value < r.max;
+  }
+  if (r.max === null) {
+    // top-open: value > min (strictly greater — boundary belongs to the bracket below)
+    return value > r.min;
+  }
+  // closed bracket: inclusive on both ends
+  return value >= r.min && value <= r.max;
 }
 
 
