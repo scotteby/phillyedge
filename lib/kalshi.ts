@@ -1,4 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/server";
+import { easternToday } from "@/lib/dates";
 
 const DEMO_MODE   = process.env.KALSHI_DEMO_MODE === "true";
 const KALSHI_BASE = DEMO_MODE
@@ -86,7 +87,7 @@ function getEndDate(m: KalshiMarket): string {
 
   // 4. Last resort — today (will show up as stale but won't break the insert)
   console.warn("[kalshi] Could not determine end_date for", m.ticker);
-  return new Date().toISOString().split("T")[0];
+  return easternToday();
 }
 
 /** Keep the first row per market_id — guards against duplicate DB rows. */
@@ -110,7 +111,7 @@ export interface FetchMarketsResult {
 
 export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
   const supabase = createServiceClient();
-  const today    = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+  const today    = easternToday(); // calendar date in Eastern time
 
   // ── Cache freshness check ──────────────────────────────────────────────────
   const { data: cached } = await supabase

@@ -1,4 +1,5 @@
 import type { Forecast, ForecastConfidence, MarketCache, Signal } from "./types";
+import { easternToday, easternTomorrow } from "./dates";
 
 // ── Normal distribution ────────────────────────────────────────────────────────
 
@@ -218,8 +219,8 @@ function groupTitle(series: string, eventKey: string): string {
     month: "short", day: "numeric",
   });
 
-  const todayStr    = new Date().toISOString().split("T")[0];
-  const tomorrowStr = new Date(Date.now() + 86_400_000).toISOString().split("T")[0];
+  const todayStr    = easternToday();
+  const tomorrowStr = easternTomorrow();
 
   if (obsDate === todayStr)    return `${base} · Today, ${dateLabel}`;
   if (obsDate === tomorrowStr) return `${base} · Tomorrow, ${dateLabel}`;
@@ -262,8 +263,7 @@ export function groupBracketMarkets(
       : undefined;
 
     // Observed NWS temp — only applies to today's markets
-    const todayStr    = new Date().toISOString().split("T")[0];
-    const isToday     = obsDate === todayStr;
+    const isToday = obsDate === easternToday();
     const seriesObs   = isToday
       ? (series === "KXHIGHPHIL" ? (observed?.high ?? null) : (observed?.low ?? null))
       : null;

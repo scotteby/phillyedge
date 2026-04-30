@@ -10,15 +10,12 @@ import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
-function toISODate(d: Date): string {
-  return d.toISOString().split("T")[0];
-}
-
 export default async function MarketsPage() {
   const supabase = createServiceClient();
 
-  // Load recent forecasts
-  const today = toISODate(new Date());
+  // Load recent forecasts — use Eastern time so the cutover matches midnight ET
+  const { easternToday } = await import("@/lib/dates");
+  const today = easternToday();
   const { data: forecastsData } = await supabase
     .from("forecasts")
     .select("*")
