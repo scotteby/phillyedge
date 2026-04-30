@@ -472,6 +472,19 @@ export default function HistoryClient({ initialTrades }: Props) {
     return () => clearInterval(interval);
   }, [pollOrder]);
 
+  // One-time on mount: refresh fill prices for already-filled pending trades.
+  // isActiveOrder skips these (filled_count > 0) but their entry_yes_price may
+  // be the original limit price rather than the actual average fill price.
+  useEffect(() => {
+    const filledPending = tradesRef.current.filter(
+      (t) => t.outcome === "pending" &&
+              t.order_status === "filled" &&
+              t.kalshi_order_id != null
+    );
+    filledPending.forEach((t) => pollOrder(t.id));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally runs once on mount only
+
   // ── Sell position ─────────────────────────────────────────────────────────
 
   async function sellPosition(tradeId: string) {
