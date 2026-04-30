@@ -101,6 +101,8 @@ export async function GET(req: NextRequest) {
   const effectiveFilled = (filledCount > 0) ? filledCount
     : (orderStatus === "filled" && remainingCount === 0 ? initialCount : 0);
 
+  console.log(`[order-status] ${tradeId} | ${trade.market_id} | status=${rawStatus} fill_count_fp=${kalshiOrder.fill_count_fp} initial_count_fp=${kalshiOrder.initial_count_fp} remaining_count_fp=${kalshiOrder.remaining_count_fp} → effectiveFilled=${effectiveFilled} taker_cost=${kalshiOrder.taker_fill_cost_dollars}`);
+
   const now = new Date().toISOString();
 
   // Average fill price from actual cost ÷ contracts filled.
