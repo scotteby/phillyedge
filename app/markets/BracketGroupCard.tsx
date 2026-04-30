@@ -445,11 +445,14 @@ function BracketRow({
   isLikelyWinner?: boolean;
   isLeading?:      boolean;
 }) {
-  const isForecast  = bracket.relation === "forecast";
-  const isAdjacent  = bracket.relation === "adjacent";
-  const isConfirmed = bracket.relation === "confirmed";
-  const isLocked    = timeStatus === "locked";
-  const isDimmed    = timeStatus === "warning";
+  const isForecast         = bracket.relation === "forecast";
+  const isAdjacent         = bracket.relation === "adjacent";
+  const isConfirmed        = bracket.relation === "confirmed";
+  const isLocked           = timeStatus === "locked";
+  const isDimmed           = timeStatus === "warning";
+  // Forecast bracket where the market is pricing it HIGHER than our model —
+  // the logical contradiction case: we can't sell our own forecast.
+  const isForecastOverpriced = isForecast && bracket.confidence > 0 && bracket.edge < 0;
 
   const rowBg = isLikelyWinner
     ? "bg-yellow-500/10 hover:bg-yellow-500/15"
@@ -483,6 +486,14 @@ function BracketRow({
         </span>
       );
     }
+    // Overpriced forecast: don't show a trade button — show skip guidance instead
+    if (isForecastOverpriced) return null;
+
+    // For the forecast bracket with a small but positive edge, trade_side is "YES"
+    // (set in brackets.ts).  For edge == 0 exactly it stays null but we still offer
+    // the button in YES style since it IS our forecast pick.
+    const effectiveSide = isForecast ? "YES" : bracket.trade_side;
+
     return (
       <button
         onClick={onTrade}
@@ -491,11 +502,11 @@ function BracketRow({
             ? mobile
               ? "border-yellow-500 text-yellow-400 hover:bg-yellow-500/20"
               : "bg-yellow-600/80 hover:bg-yellow-500 text-white"
-            : bracket.trade_side === "NO"
+            : effectiveSide === "NO"
             ? mobile
               ? "border-orange-600 text-orange-400 hover:bg-orange-600/20 active:bg-orange-600/30"
               : "bg-orange-600/80 hover:bg-orange-500 text-white"
-            : bracket.trade_side === null
+            : effectiveSide === null
             ? mobile
               ? "border-slate-600 text-slate-500 hover:bg-slate-700/50"
               : "bg-slate-600 hover:bg-slate-500 text-white"
@@ -504,7 +515,7 @@ function BracketRow({
             : "bg-sky-600 hover:bg-sky-500 text-white"
         }`}
       >
-        {bracket.trade_side === "NO" ? "Trade NO" : "Trade"}
+        Trade
       </button>
     );
   }
@@ -563,6 +574,8 @@ function BracketRow({
         <div className="flex justify-center">
           {isLocked && !isLikelyWinner
             ? <span className="text-slate-600 text-xs">—</span>
+            : isForecastOverpriced
+            ? <span className="text-xs bg-violet-500/20 text-violet-300 border border-violet-500/30 px-1.5 py-0.5 rounded font-semibold whitespace-nowrap">Market Agrees</span>
             : bracket.confidence > 0
             ? <SignalBadge signal={bracketDisplaySignal(bracket.trade_side, bracket.edge)} />
             : <span className="text-slate-600 text-xs">—</span>}
@@ -573,6 +586,15 @@ function BracketRow({
           <TradeBtn mobile={false} />
         </div>
       </div>
+
+      {/* Overpriced forecast — full-width guidance row (desktop) */}
+      {isForecastOverpriced && (
+        <div className="hidden md:block px-5 py-2 bg-violet-500/5 border-b border-slate-700/30 text-xs text-violet-300/80">
+          <span className="font-semibold text-violet-300">Market agrees · {bracket.yes_pct}% vs our {bracket.confidence}%</span>
+          {" "}— the market is pricing this bracket higher than our model. It&apos;s still your forecast, so NO is never correct here.
+          {" "}<span className="text-slate-400">Options: raise your confidence → edge improves · trade a smaller YES · skip this bracket.</span>
+        </div>
+      )}
 
       {/* ── Mobile card ────────────────────────────────────────────────── */}
       <div className={`md:hidden px-4 py-2 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg} ${isDimmed ? "opacity-60" : ""}`}>
@@ -602,6 +624,8 @@ function BracketRow({
           <div className="shrink-0">
             {isLocked && !isLikelyWinner
               ? null
+              : isForecastOverpriced
+              ? <span className="text-[10px] bg-violet-500/20 text-violet-300 border border-violet-500/30 px-1 py-0.5 rounded font-semibold">Mkt Agrees</span>
               : bracket.confidence > 0
               ? <SignalBadge signal={bracketDisplaySignal(bracket.trade_side, bracket.edge)} />
               : <span className="text-slate-600 text-xs">—</span>}
@@ -612,13 +636,20 @@ function BracketRow({
         {/* Row 2: inline stats */}
         <div className="text-xs mt-0.5">
           {bracket.confidence > 0 ? (
-            <span className="text-slate-500">
-              Kalshi <span className="text-slate-400">{bracket.yes_pct}%</span>
-              {" · "}Ours <span className={isForecast ? "text-emerald-400 font-medium" : "text-slate-400"}>~{bracket.confidence}%</span>
-              {!isLocked && (
-                <>{" · "}Edge <span className={`font-medium ${edgeColor}`}>{bracket.edge > 0 ? "+" : ""}{bracket.edge}</span></>
+            <>
+              <span className="text-slate-500">
+                Kalshi <span className="text-slate-400">{bracket.yes_pct}%</span>
+                {" · "}Ours <span className={isForecast ? "text-emerald-400 font-medium" : "text-slate-400"}>~{bracket.confidence}%</span>
+                {!isLocked && (
+                  <>{" · "}Edge <span className={`font-medium ${edgeColor}`}>{bracket.edge > 0 ? "+" : ""}{bracket.edge}</span></>
+                )}
+              </span>
+              {isForecastOverpriced && (
+                <div className="mt-0.5 text-violet-300/70">
+                  Market agrees with your forecast — raise confidence, trade smaller YES, or skip.
+                </div>
               )}
-            </span>
+            </>
           ) : (
             <span className="text-slate-600">Kalshi {bracket.yes_pct}% · no forecast</span>
           )}

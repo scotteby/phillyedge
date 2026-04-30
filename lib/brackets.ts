@@ -330,9 +330,19 @@ export function groupBracketMarkets(
 
       const edge   = confidence > 0 ? confidence - yes_pct : 0;
       const signal = toSignal(edge);
+
+      // ── Forecast Bracket Protection ─────────────────────────────────────────
+      // If this bracket IS our forecast, we cannot logically recommend NO — that
+      // would mean "we think the temp lands here AND it doesn't land here."
+      // Rule: forecast bracket may only ever be YES or null (never NO).
+      //   edge >  0 → YES (even neutral-magnitude edge; it IS our forecast pick)
+      //   edge <= 0 → null (market over-values our forecast; show special UI)
       const trade_side: "YES" | "NO" | null =
-        signal === "strong-buy" || signal === "buy"       ? "YES" :
-        signal === "sell"       || signal === "strong-sell" ? "NO"  : null;
+        relation === "forecast"
+          ? (edge > 0 ? "YES" : null)
+          : signal === "strong-buy" || signal === "buy"         ? "YES"
+          : signal === "sell"       || signal === "strong-sell" ? "NO"
+          : null;
 
       return {
         market_id: m.market_id,
@@ -404,8 +414,10 @@ export function groupBracketMarkets(
             .filter((b) => b.trade_side === "YES")
             .sort((a, b) => b.edge - a.edge)[0] ?? null);
 
+    // Forecast bracket is never NO (see trade_side logic above), but be explicit:
+    // never let the best-trade banner recommend NO on the bracket that IS our forecast.
     const bestNo = [...brackets]
-      .filter((b) => b.trade_side === "NO")
+      .filter((b) => b.trade_side === "NO" && b.relation !== "forecast")
       .sort((a, b) => a.edge - b.edge)[0] ?? null; // most-negative edge = strongest NO
 
     let best: BracketMarket | null = null;
