@@ -504,14 +504,15 @@ export default function HistoryClient({ initialTrades }: Props) {
     } catch { /* ignore */ }
   }, [addToast]);
 
+  const pollAll = useCallback(() => {
+    tradesRef.current.filter(isActiveOrder).forEach((t) => pollOrder(t.id));
+  }, [pollOrder]);
+
   useEffect(() => {
-    function pollAll() {
-      tradesRef.current.filter(isActiveOrder).forEach((t) => pollOrder(t.id));
-    }
     pollAll();
     const interval = setInterval(pollAll, 60_000);
     return () => clearInterval(interval);
-  }, [pollOrder]);
+  }, [pollAll]);
 
   // One-time on mount: refresh fill prices for already-filled pending trades.
   // isActiveOrder skips these (filled_count > 0) but their entry_yes_price may
@@ -755,12 +756,12 @@ export default function HistoryClient({ initialTrades }: Props) {
             </button>
           </div>
 
-          {/* Live price indicator */}
+          {/* Live price + order status refresh */}
           {pending.length > 0 && (
             <div className="flex items-center gap-2 text-xs">
               {pricesFetching ? (
                 <span className="flex items-center gap-1.5 text-sky-400">
-                  <span className="animate-pulse">●</span> Fetching prices…
+                  <span className="animate-pulse">●</span> Refreshing…
                 </span>
               ) : lastPriceFetch ? (
                 <span className="flex items-center gap-1.5 text-slate-500">
@@ -770,8 +771,9 @@ export default function HistoryClient({ initialTrades }: Props) {
                 </span>
               ) : null}
               <button
-                onClick={fetchLivePrices}
+                onClick={() => { pollAll(); fetchLivePrices(); }}
                 disabled={pricesFetching}
+                title="Refresh order statuses and live prices"
                 className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-40 transition-colors">
                 ↻
               </button>
