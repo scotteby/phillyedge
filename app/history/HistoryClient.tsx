@@ -429,6 +429,7 @@ export default function HistoryClient({ initialTrades }: Props) {
         outcome:         Trade["outcome"];
         pnl:             number | null;
         resolved:        boolean;
+        entry_yes_price?: number;
       };
 
       setTrades((prev) => {

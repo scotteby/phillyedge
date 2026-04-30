@@ -170,8 +170,8 @@ export async function GET(req: NextRequest) {
           //   Win:  filled_count × (1 − side_entry_price)  — profit per contract
           //   Loss: −(filled_count × side_entry_price)     — capital lost
           pnl     = won
-            ? parseFloat((filledCount * (1 - sidePrice)).toFixed(2))
-            : parseFloat((-(filledCount * sidePrice)).toFixed(2));
+            ? parseFloat((effectiveFilled * (1 - sidePrice)).toFixed(2))
+            : parseFloat((-(effectiveFilled * sidePrice)).toFixed(2));
           outcome = won ? "win" : "loss";
           resolved = true;
 
@@ -192,12 +192,14 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     trade_id:        tradeId,
     order_status:    orderStatus,
-    filled_count:    filledCount,
-    remaining_count: remainingCount,
+    filled_count:    Math.round(effectiveFilled),
+    remaining_count: Math.round(remainingCount),
     last_checked_at: now,
     raw_status:      rawStatus,
     outcome,
     pnl,
     resolved,
+    // Return updated entry_yes_price so the client state reflects real fill price
+    ...(dbUpdate.entry_yes_price != null ? { entry_yes_price: dbUpdate.entry_yes_price } : {}),
   });
 }
