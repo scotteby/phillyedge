@@ -175,6 +175,36 @@ function OrderStatusBadge({ status, filledCount }: { status: OrderStatus; filled
   );
 }
 
+// ── Action button ─────────────────────────────────────────────────────────────
+
+const ACTION_STYLES = {
+  cancel: "border-red-500/40    text-red-400    hover:bg-red-500/15    hover:border-red-400",
+  sell:   "border-amber-500/40  text-amber-400  hover:bg-amber-500/15  hover:border-amber-400",
+  boost:  "border-sky-500/40    text-sky-400    hover:bg-sky-500/15    hover:border-sky-400",
+} as const;
+
+function ActionButton({
+  variant, onClick, disabled, loading, label, loadingLabel,
+}: {
+  variant:      keyof typeof ACTION_STYLES;
+  onClick:      (e: React.MouseEvent) => void;
+  disabled?:    boolean;
+  loading?:     boolean;
+  label:        string;
+  loadingLabel: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || loading}
+      className={`cursor-pointer text-xs font-semibold px-2 py-0.5 rounded-full border
+        transition-colors disabled:opacity-40 ${ACTION_STYLES[variant]}`}
+    >
+      {loading ? loadingLabel : label}
+    </button>
+  );
+}
+
 // ── Time formatting ───────────────────────────────────────────────────────────
 
 function formatTimeAgo(date: Date): string {
@@ -1420,31 +1450,16 @@ function TradeCard({
             })()}
             {trade.order_status && <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />}
             {showCancel && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onCancel(); }}
-                disabled={canceling}
-                className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors py-1 px-1"
-              >
-                {canceling ? "Canceling…" : "Cancel"}
-              </button>
+              <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                loading={canceling} label="Cancel" loadingLabel="Canceling…" />
             )}
             {showSell && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onSell(); }}
-                disabled={selling}
-                className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors py-1 px-1 font-medium"
-              >
-                {selling ? "Selling…" : "Sell"}
-              </button>
+              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
+                loading={selling} label="Sell" loadingLabel="Selling…" />
             )}
             {showBoost && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onBoost(); }}
-                disabled={boosting}
-                className="text-xs text-sky-400 hover:text-sky-300 disabled:opacity-50 transition-colors py-1 px-1 font-medium"
-              >
-                {boosting ? "Boosting…" : "Boost ↑"}
-              </button>
+              <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
+                loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
             )}
           </div>
           <div className="shrink-0 text-right">
@@ -1613,22 +1628,16 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
                   </span>
                 )}
                 {showCancel && (
-                  <button onClick={onCancel} disabled={canceling}
-                    className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors">
-                    {canceling ? "Canceling…" : "Cancel"}
-                  </button>
+                  <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                    loading={canceling} label="Cancel" loadingLabel="Canceling…" />
                 )}
                 {showSell && (
-                  <button onClick={onSell} disabled={selling}
-                    className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors font-medium">
-                    {selling ? "Selling…" : "Sell"}
-                  </button>
+                  <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
+                    loading={selling} label="Sell" loadingLabel="Selling…" />
                 )}
                 {showBoost && (
-                  <button onClick={onBoost} disabled={boosting}
-                    className="text-xs text-sky-400 hover:text-sky-300 disabled:opacity-50 transition-colors font-medium">
-                    {boosting ? "Boosting…" : "Boost ↑"}
-                  </button>
+                  <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
+                    loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
                 )}
               </>
             ) : (
