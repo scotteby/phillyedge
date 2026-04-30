@@ -225,11 +225,35 @@ export async function POST(req: NextRequest) {
 
     if (insertErr) {
       console.error("[boost-order] Supabase insert error:", insertErr.message);
-    } else {
-      newTradeId = (inserted as { id: string } | null)?.id ?? null;
+      // Return a 502 so the client knows the trade record is missing.
+      // The Kalshi cancel + re-place already happened, so include the new_order_id
+      // so the caller can recover (e.g. retry or display a warning).
+      return NextResponse.json(
+        {
+          error:        `New order placed on Kalshi (${newOrderId}) but trade record failed to save: ${insertErr.message}`,
+          new_order_id: newOrderId,
+          ticker,
+          side:         side.toUpperCase(),
+          count,
+          new_price_cents,
+        },
+        { status: 502 }
+      );
     }
+    newTradeId = (inserted as { id: string } | null)?.id ?? null;
   } catch (err) {
     console.error("[boost-order] Supabase insert threw:", err);
+    return NextResponse.json(
+      {
+        error:        `New order placed on Kalshi (${newOrderId}) but trade record threw: ${String(err)}`,
+        new_order_id: newOrderId,
+        ticker,
+        side:         side.toUpperCase(),
+        count,
+        new_price_cents,
+      },
+      { status: 502 }
+    );
   }
 
   // Mark old trade as boosted
