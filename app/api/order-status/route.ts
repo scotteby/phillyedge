@@ -92,46 +92,39 @@ export async function GET(req: NextRequest) {
   const rawStatus   = String(kalshiOrder.status ?? "");
   const orderStatus = normaliseStatus(rawStatus);
 
-  // Kalshi uses several field names across API versions; try them all.
-  // For a fully-executed order, fall back to "count" (total order size) which
-  // equals the number of contracts filled when remaining_count = 0.
-  const remaining   = Number(kalshiOrder.remaining_count ?? 0);
-  const filledCount = Number(
-    kalshiOrder.filled_count ??
-    kalshiOrder.quantity_matched ??
-    kalshiOrder.amount_matched ??
-    // If the order is fully filled, total order size = filled count
-    (orderStatus === "filled" && remaining === 0
-      ? (kalshiOrder.count ?? kalshiOrder.original_count)
-      : undefined) ??
-    0
-  );
-  const remainingCount = remaining;
-  const now            = new Date().toISOString();
+  // Kalshi v2 uses *_fp (fixed-point) string fields for counts
+  const filledCount    = parseFloat(String(kalshiOrder.fill_count_fp    ?? kalshiOrder.filled_count    ?? 0));
+  const remainingCount = parseFloat(String(kalshiOrder.remaining_count_fp ?? kalshiOrder.remaining_count ?? 0));
+  const initialCount   = parseFloat(String(kalshiOrder.initial_count_fp  ?? kalshiOrder.count          ?? 0));
 
-  // Average fill price in cents (Kalshi field names vary by version)
-  // Convert to 0–1 decimal for entry_yes_price storage.
-  const avgPriceCents = Number(
-    kalshiOrder.avg_price ??
-    kalshiOrder.average_price ??
-    kalshiOrder.avg_fill_price ??
-    0
-  );
+  // For fully-executed orders with 0 fill_count_fp, fall back to initial_count
+  const effectiveFilled = (filledCount > 0) ? filledCount
+    : (orderStatus === "filled" && remainingCount === 0 ? initialCount : 0);
 
-  // Build the update — only overwrite entry_yes_price when we have a real avg price,
-  // so we don't clobber a good stored value with 0.
+  const now = new Date().toISOString();
+
+  // Average fill price from actual cost ÷ contracts filled.
+  // yes_price_dollars / no_price_dollars are the limit prices (0–1 scale).
+  // taker_fill_cost_dollars is the real dollars spent on fills.
+  const takerCost  = parseFloat(String(kalshiOrder.taker_fill_cost_dollars ?? 0));
+  const side       = String(trade.side ?? "").toLowerCase();
+
+  // Build the update — only overwrite entry_yes_price when we have real fill data
   const dbUpdate: Record<string, unknown> = {
     order_status:    orderStatus,
-    filled_count:    filledCount,
-    remaining_count: remainingCount,
+    filled_count:    Math.round(effectiveFilled),
+    remaining_count: Math.round(remainingCount),
     last_checked_at: now,
   };
 
-  if (avgPriceCents > 0 && filledCount > 0) {
-    const side = String(trade.side ?? "").toLowerCase();
-    // avg_price from Kalshi is the price of the side you bought (YES or NO), in cents
-    const avgDecimal    = avgPriceCents / 100;
-    dbUpdate.entry_yes_price = side === "yes" ? avgDecimal : 1 - avgDecimal;
+  if (effectiveFilled > 0 && takerCost > 0) {
+    // Actual average cost per contract for the side we bought
+    const avgSidePrice   = takerCost / effectiveFilled;
+    dbUpdate.entry_yes_price = side === "yes" ? avgSidePrice : 1 - avgSidePrice;
+  } else if (effectiveFilled > 0) {
+    // No fill cost — use the limit price from the order
+    const yesPrice = parseFloat(String(kalshiOrder.yes_price_dollars ?? 0));
+    if (yesPrice > 0) dbUpdate.entry_yes_price = yesPrice;
   }
 
   // ── Persist order fields to Supabase ────────────────────────────────────
