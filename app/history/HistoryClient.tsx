@@ -692,7 +692,7 @@ export default function HistoryClient({ initialTrades }: Props) {
               onClick={() => setViewMode("resting")}
               className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${viewMode === "resting" ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
             >
-              Resting
+              Orders
               {restingTrades.length > 0 && (
                 <span className="ml-1 text-yellow-400">({restingTrades.length})</span>
               )}
@@ -769,7 +769,7 @@ export default function HistoryClient({ initialTrades }: Props) {
           <p className="text-4xl mb-3">📊</p>
           <p className="text-lg font-medium">
             {trades.length === 0 ? "No trades logged yet"
-              : viewMode === "resting" ? "No resting orders"
+              : viewMode === "resting" ? "No open orders"
               : "No active or settled trades"}
           </p>
           <p className="text-sm mt-1">
