@@ -145,7 +145,7 @@ interface Props {
 export default function PositionBuilderModal({ group, timeStatus = "active", onClose }: Props) {
   const isLate = timeStatus === "warning" || timeStatus === "locked";
 
-  const [budget,        setBudget]        = useState(isLate ? "20" : "50");
+  const [budget,        setBudget]        = useState("20");
   const [legs,          setLegs]          = useState<PositionLeg[]>(() =>
     buildDefaultLegs(group.brackets)
   );
