@@ -334,12 +334,14 @@ export function groupBracketMarkets(
       // ── Forecast Bracket Protection ─────────────────────────────────────────
       // If this bracket IS our forecast, we cannot logically recommend NO — that
       // would mean "we think the temp lands here AND it doesn't land here."
-      // Rule: forecast bracket may only ever be YES or null (never NO).
-      //   edge >  0 → YES (even neutral-magnitude edge; it IS our forecast pick)
-      //   edge <= 0 → null (market over-values our forecast; show special UI)
+      // Rule: forecast bracket is ALWAYS trade_side = "YES", regardless of edge.
+      //   Positive edge    → Buy/Strong Buy + Trade (normal)
+      //   Near-zero edge   → Neutral + Trade + "fairly priced" note
+      //   Negative edge    → Neutral + Trade + "market overconfident" note
+      // The UI (BracketRow) handles the note and signal capping.
       const trade_side: "YES" | "NO" | null =
         relation === "forecast"
-          ? (edge > 0 ? "YES" : null)
+          ? "YES"
           : signal === "strong-buy" || signal === "buy"         ? "YES"
           : signal === "sell"       || signal === "strong-sell" ? "NO"
           : null;
@@ -402,16 +404,17 @@ export function groupBracketMarkets(
       console.log(`[brackets] ${series} N(mean=${meanLabel}, σ=${std}) Σ≈${total}%: ${dist}`);
     }
 
-    // Best YES = forecast bracket when it has edge >= 10, so the banner always
-    // anchors on the bracket that matches our actual forecast rather than an
-    // adjacent bracket with marginally higher edge.  Fall back to highest-edge
-    // YES only when the forecast bracket isn't itself actionable.
+    // Best YES: prefer the forecast bracket only when it has POSITIVE edge
+    // (i.e. Kalshi is underpricing our forecast — a real opportunity).
+    // When forecast is overpriced (edge ≤ 0), fall back to the highest-edge
+    // non-forecast YES bracket — that's the "best alternative" shown in the banner.
+    // The banner component then adds a note about the overpriced forecast bracket.
     const forecastBkt = brackets.find((b) => b.relation === "forecast");
     const bestYes: BracketMarket | null =
-      forecastBkt?.trade_side === "YES"
+      (forecastBkt?.trade_side === "YES" && (forecastBkt?.edge ?? 0) > 0)
         ? forecastBkt
         : ([...brackets]
-            .filter((b) => b.trade_side === "YES")
+            .filter((b) => b.trade_side === "YES" && b.relation !== "forecast")
             .sort((a, b) => b.edge - a.edge)[0] ?? null);
 
     // Forecast bracket is never NO (see trade_side logic above), but be explicit:

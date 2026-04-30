@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { BracketGroup, BracketMarket, BracketRange } from "@/lib/brackets";
+import type { Signal } from "@/lib/types";
 import type { MarketTimeStatus, DailyHighStatus } from "@/lib/nws";
 import SignalBadge from "@/components/SignalBadge";
 import PositionBuilderModal from "./PositionBuilderModal";
@@ -362,6 +363,11 @@ function BestTradeBanner({
   const sigLabel = SIGNAL_LABELS[sig];
   const edgeSign = (n: number) => `${n >= 0 ? "+" : ""}${n}`;
 
+  // Detect Case 3: forecast bracket exists, is overpriced (edge ≤ -8), and is NOT the best trade.
+  // In this case show a header line explaining the situation before the best-alternative trade.
+  const forecastBkt    = brackets.find((b) => b.relation === "forecast");
+  const forecastIsCase3 = forecastBkt && forecastBkt.edge <= -8 && forecastBkt.market_id !== best.market_id;
+
   // Color palette keyed by derived signal — answers "how good is this trade?"
   const palette: Record<string, { bg: string; accent: string; header: string }> = {
     "strong-buy":  { bg: "bg-emerald-500/10 border border-emerald-500/30", accent: "text-emerald-400", header: "text-emerald-400" },
@@ -385,6 +391,13 @@ function BestTradeBanner({
 
   return (
     <div className={`${outerClass} ${clr.bg}`}>
+      {/* Case 3: forecast bracket overpriced — show context before best-alternative trade */}
+      {forecastIsCase3 && forecastBkt && (
+        <p className="text-xs text-amber-300/80 mb-1">
+          <span className="font-semibold text-amber-300">Market overpricing your forecast bracket</span>
+          {" "}({forecastBkt.yes_pct}% vs our {forecastBkt.confidence}%) · best alternative:
+        </p>
+      )}
       {!compact && (
         <p className={`text-xs font-semibold uppercase tracking-wide mb-0.5 ${clr.header}`}>
           Best Trade
@@ -450,12 +463,17 @@ function BracketRow({
   const isConfirmed        = bracket.relation === "confirmed";
   const isLocked           = timeStatus === "locked";
   const isDimmed           = timeStatus === "warning";
-  // Forecast bracket where the market is pricing it HIGHER than our model —
-  // the logical contradiction case: we can't sell our own forecast.
-  const isForecastOverpriced = isForecast && bracket.confidence > 0 && bracket.edge < 0;
+  // ── Forecast bracket sub-cases ───────────────────────────────────────────────
+  // Case 2: edge between -8 and 0 → fairly priced, trade with caution
+  const isForecastFairly   = isForecast && bracket.confidence > 0 && bracket.edge <= 0 && bracket.edge > -8;
+  // Case 3: edge ≤ -8 → market more confident than us
+  const isForecastOverconfident = isForecast && bracket.confidence > 0 && bracket.edge <= -8;
 
-  // Pre-compute display signal for this bracket (used for badge + button color)
-  const rowSig = bracketDisplaySignal(bracket.trade_side, bracket.edge);
+  // Pre-compute display signal for this bracket (used for badge + button color).
+  // For forecast brackets with negative edge, cap at "neutral" — never show a
+  // NO/sell badge on our own forecast bracket.
+  const rawSig = bracketDisplaySignal(bracket.trade_side, bracket.edge);
+  const rowSig: Signal = (isForecast && bracket.edge <= 0) ? "neutral" : rawSig;
 
   const rowBg = isLikelyWinner
     ? "bg-yellow-500/10 hover:bg-yellow-500/15"
@@ -489,9 +507,7 @@ function BracketRow({
         </span>
       );
     }
-    // Overpriced forecast: don't show a trade button — show skip guidance instead
-    if (isForecastOverpriced) return null;
-
+    // Forecast bracket always gets a Trade button (never blocked).
     // For the forecast bracket, always trade YES.
     const effectiveSide = isForecast ? "YES" : bracket.trade_side;
 
@@ -582,8 +598,6 @@ function BracketRow({
         <div className="flex justify-center">
           {isLocked && !isLikelyWinner
             ? <span className="text-slate-600 text-xs">—</span>
-            : isForecastOverpriced
-            ? <span className="text-xs bg-violet-500/20 text-violet-300 border border-violet-500/30 px-1.5 py-0.5 rounded font-semibold whitespace-nowrap">Market Agrees</span>
             : bracket.confidence > 0
             ? <SignalBadge signal={rowSig} />
             : <span className="text-slate-600 text-xs">—</span>}
@@ -595,12 +609,17 @@ function BracketRow({
         </div>
       </div>
 
-      {/* Overpriced forecast — full-width guidance row (desktop) */}
-      {isForecastOverpriced && (
-        <div className="hidden md:block px-5 py-2 bg-violet-500/5 border-b border-slate-700/30 text-xs text-violet-300/80">
-          <span className="font-semibold text-violet-300">Market agrees · {bracket.yes_pct}% vs our {bracket.confidence}%</span>
-          {" "}— the market is pricing this bracket higher than our model. It&apos;s still your forecast, so NO is never correct here.
-          {" "}<span className="text-slate-400">Options: raise your confidence → edge improves · trade a smaller YES · skip this bracket.</span>
+      {/* Forecast bracket notes (desktop) — Cases 2 & 3 */}
+      {isForecastFairly && (
+        <div className="hidden md:flex px-5 py-1.5 bg-emerald-500/5 border-b border-slate-700/30 text-xs text-slate-400 gap-1">
+          <span className="text-emerald-400 font-medium">Fairly priced</span>
+          <span>· Kalshi {bracket.yes_pct}% vs our {bracket.confidence}% · consider a smaller YES position</span>
+        </div>
+      )}
+      {isForecastOverconfident && (
+        <div className="hidden md:flex px-5 py-1.5 bg-amber-500/5 border-b border-slate-700/30 text-xs text-slate-400 gap-1">
+          <span className="text-amber-400 font-medium">Market overconfident</span>
+          <span>· Kalshi {bracket.yes_pct}% vs our {bracket.confidence}% · raise your confidence level or trade a smaller YES</span>
         </div>
       )}
 
@@ -632,8 +651,6 @@ function BracketRow({
           <div className="shrink-0">
             {isLocked && !isLikelyWinner
               ? null
-              : isForecastOverpriced
-              ? <span className="text-[10px] bg-violet-500/20 text-violet-300 border border-violet-500/30 px-1 py-0.5 rounded font-semibold">Mkt Agrees</span>
               : bracket.confidence > 0
               ? <SignalBadge signal={rowSig} />
               : <span className="text-slate-600 text-xs">—</span>}
@@ -652,10 +669,11 @@ function BracketRow({
                   <>{" · "}Edge <span className={`font-medium ${edgeColor}`}>{bracket.edge > 0 ? "+" : ""}{bracket.edge}</span></>
                 )}
               </span>
-              {isForecastOverpriced && (
-                <div className="mt-0.5 text-violet-300/70">
-                  Market agrees with your forecast — raise confidence, trade smaller YES, or skip.
-                </div>
+              {isForecastFairly && (
+                <div className="mt-0.5 text-emerald-400/70">Fairly priced · consider smaller YES</div>
+              )}
+              {isForecastOverconfident && (
+                <div className="mt-0.5 text-amber-400/70">Market overconfident · raise confidence or trade smaller YES</div>
               )}
             </>
           ) : (
