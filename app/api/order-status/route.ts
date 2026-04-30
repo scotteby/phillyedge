@@ -87,18 +87,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  console.log("[order-status] raw order fields:", JSON.stringify({
-    status:           kalshiOrder.status,
-    filled_count:     kalshiOrder.filled_count,
-    quantity_matched: kalshiOrder.quantity_matched,
-    amount_matched:   kalshiOrder.amount_matched,
-    count:            kalshiOrder.count,
-    original_count:   kalshiOrder.original_count,
-    remaining_count:  kalshiOrder.remaining_count,
-    avg_price:        kalshiOrder.avg_price,
-    average_price:    kalshiOrder.average_price,
-    avg_fill_price:   kalshiOrder.avg_fill_price,
-  }));
+  console.log("[order-status] FULL order response:", JSON.stringify(kalshiOrder));
 
   const rawStatus   = String(kalshiOrder.status ?? "");
   const orderStatus = normaliseStatus(rawStatus);
