@@ -26,23 +26,21 @@ interface KalshiMarket {
 }
 
 function getYesPrice(m: KalshiMarket): number {
-  const bid  = parseFloat(m.yes_bid_dollars  ?? "0");
-  const ask  = parseFloat(m.yes_ask_dollars  ?? "0");
+  // 1. Last traded price — this is what Kalshi displays as "Chance" in their UI
   const last = parseFloat(m.last_price_dollars ?? "0");
+  if (last > 0) return last;
 
-  // 1. Live order-book mid — matches what Kalshi's UI displays as "chance".
-  //    last_price_dollars is the last *traded* price and can be hours stale
-  //    on thin brackets; the bid/ask always reflects the current book state.
-  //    A $1 ask means nobody is selling (empty ask side), not a real offer.
+  // 2. Midpoint of a genuine two-sided market (ask must be < $1 — a $1 ask
+  //    just means nobody is selling, not an actual offer)
+  const bid = parseFloat(m.yes_bid_dollars ?? "0");
+  const ask = parseFloat(m.yes_ask_dollars ?? "0");
   if (bid > 0 && ask > 0 && ask < 1) return (bid + ask) / 2;
 
-  // 2. Best one-sided quote
+  // 3. Best available one-sided quote
   if (bid > 0) return bid;
   if (ask > 0 && ask < 1) return ask;
 
-  // 3. Last traded price — fallback only (may be stale on low-volume brackets)
-  if (last > 0) return last;
-
+  // 4. No market data yet
   return 0;
 }
 
