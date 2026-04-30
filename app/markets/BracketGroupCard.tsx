@@ -358,9 +358,9 @@ function BestTradeBanner({
   compact?:      boolean;
 }) {
   const isNo    = best.trade_side === "NO";
-  const absEdge = Math.abs(best.edge);
   const sig     = bracketDisplaySignal(best.trade_side, best.edge);
   const sigLabel = SIGNAL_LABELS[sig];
+  const edgeSign = (n: number) => `${n >= 0 ? "+" : ""}${n}`;
 
   // Color palette keyed by derived signal — answers "how good is this trade?"
   const palette: Record<string, { bg: string; accent: string; header: string }> = {
@@ -408,7 +408,7 @@ function BestTradeBanner({
           </span>
         )}
         <span className={`ml-1.5 font-bold ${clr.accent}`}>
-          {sigLabel} · +{absEdge}pt edge
+          {sigLabel} · {edgeSign(best.edge)}pt edge
         </span>
       </p>
       {!compact && secondary.length > 0 && (
@@ -422,7 +422,7 @@ function BestTradeBanner({
                 {i > 0 && " · "}
                 <span className="text-slate-200 font-medium">{b.range.label} {sideLabel}</span>
                 {" "}<span className="font-medium">{bLabel}</span>
-                <span className={palette[bSig]?.accent ?? "text-slate-400"}> +{Math.abs(b.edge)}pt</span>
+                <span className={palette[bSig]?.accent ?? "text-slate-400"}> {edgeSign(b.edge)}pt</span>
               </span>
             );
           })}
@@ -453,6 +453,9 @@ function BracketRow({
   // Forecast bracket where the market is pricing it HIGHER than our model —
   // the logical contradiction case: we can't sell our own forecast.
   const isForecastOverpriced = isForecast && bracket.confidence > 0 && bracket.edge < 0;
+
+  // Pre-compute display signal for this bracket (used for badge + button color)
+  const rowSig = bracketDisplaySignal(bracket.trade_side, bracket.edge);
 
   const rowBg = isLikelyWinner
     ? "bg-yellow-500/10 hover:bg-yellow-500/15"
@@ -489,10 +492,15 @@ function BracketRow({
     // Overpriced forecast: don't show a trade button — show skip guidance instead
     if (isForecastOverpriced) return null;
 
-    // For the forecast bracket with a small but positive edge, trade_side is "YES"
-    // (set in brackets.ts).  For edge == 0 exactly it stays null but we still offer
-    // the button in YES style since it IS our forecast pick.
+    // For the forecast bracket, always trade YES.
     const effectiveSide = isForecast ? "YES" : bracket.trade_side;
+
+    // Orange button only when this is a *recommended* NO trade (buy or strong-buy signal).
+    // Neutral-direction NO brackets (cascade-forced or thin edge) get a gray button.
+    const isRecommendedNo =
+      effectiveSide === "NO" && (rowSig === "buy" || rowSig === "strong-buy");
+
+    const label = effectiveSide === "NO" ? "Trade NO" : "Trade";
 
     return (
       <button
@@ -502,20 +510,20 @@ function BracketRow({
             ? mobile
               ? "border-yellow-500 text-yellow-400 hover:bg-yellow-500/20"
               : "bg-yellow-600/80 hover:bg-yellow-500 text-white"
-            : effectiveSide === "NO"
+            : isRecommendedNo
             ? mobile
               ? "border-orange-600 text-orange-400 hover:bg-orange-600/20 active:bg-orange-600/30"
               : "bg-orange-600/80 hover:bg-orange-500 text-white"
-            : effectiveSide === null
+            : effectiveSide === "YES"
             ? mobile
-              ? "border-slate-600 text-slate-500 hover:bg-slate-700/50"
-              : "bg-slate-600 hover:bg-slate-500 text-white"
+              ? "border-sky-600 text-sky-400 hover:bg-sky-600/20 active:bg-sky-600/30"
+              : "bg-sky-600 hover:bg-sky-500 text-white"
             : mobile
-            ? "border-sky-600 text-sky-400 hover:bg-sky-600/20 active:bg-sky-600/30"
-            : "bg-sky-600 hover:bg-sky-500 text-white"
+            ? "border-slate-600 text-slate-500 hover:bg-slate-700/50"
+            : "bg-slate-600 hover:bg-slate-500 text-white"
         }`}
       >
-        Trade
+        {label}
       </button>
     );
   }
@@ -577,7 +585,7 @@ function BracketRow({
             : isForecastOverpriced
             ? <span className="text-xs bg-violet-500/20 text-violet-300 border border-violet-500/30 px-1.5 py-0.5 rounded font-semibold whitespace-nowrap">Market Agrees</span>
             : bracket.confidence > 0
-            ? <SignalBadge signal={bracketDisplaySignal(bracket.trade_side, bracket.edge)} />
+            ? <SignalBadge signal={rowSig} />
             : <span className="text-slate-600 text-xs">—</span>}
         </div>
 
@@ -627,7 +635,7 @@ function BracketRow({
               : isForecastOverpriced
               ? <span className="text-[10px] bg-violet-500/20 text-violet-300 border border-violet-500/30 px-1 py-0.5 rounded font-semibold">Mkt Agrees</span>
               : bracket.confidence > 0
-              ? <SignalBadge signal={bracketDisplaySignal(bracket.trade_side, bracket.edge)} />
+              ? <SignalBadge signal={rowSig} />
               : <span className="text-slate-600 text-xs">—</span>}
           </div>
           <TradeBtn mobile={true} />
