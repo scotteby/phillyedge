@@ -448,11 +448,7 @@ export default function HistoryClient({ initialTrades }: Props) {
               addToast(`🟠 Partial fill — ${t?.market_question ?? tradeId} (${json.filled_count} filled)`, "fill");
             }
           }
-          if (json.resolved && json.outcome === "loss") {
-            const t = updated.find((x) => x.id === tradeId);
-            addToast(`📉 Loss — ${t?.market_question ?? tradeId}`, "cancel");
           }
-        }
         return updated;
       });
     } catch { /* ignore */ }
