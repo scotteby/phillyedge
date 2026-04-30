@@ -5,6 +5,7 @@ import type { MarketWithEdge } from "@/lib/types";
 import type { BracketGroup } from "@/lib/brackets";
 import type { MarketTimeGates, MarketTimeStatus, CurrentObservation, DailyHighStatus } from "@/lib/nws";
 import SignalBadge from "@/components/SignalBadge";
+import KalshiBalance from "@/components/KalshiBalance";
 import TradeModal from "./TradeModal";
 import BracketGroupCard from "./BracketGroupCard";
 
@@ -80,13 +81,16 @@ export default function MarketsClient({ groups, markets, lastUpdatedLabel, rawCo
             </p>
           )}
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="text-sm px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors disabled:opacity-50"
-        >
-          {refreshing ? "Refreshing..." : "↻ Refresh"}
-        </button>
+        <div className="flex items-center gap-3">
+          <KalshiBalance showRefresh />
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="text-sm px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors disabled:opacity-50"
+          >
+            {refreshing ? "Refreshing..." : "↻ Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

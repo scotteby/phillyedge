@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { BracketGroup, BracketMarket } from "@/lib/brackets";
 import type { MarketTimeStatus } from "@/lib/nws";
 import { bracketDisplaySignal } from "@/lib/signal";
+import KalshiBalance from "@/components/KalshiBalance";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -396,12 +397,15 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
               </p>
               <h2 className="text-white font-semibold text-base leading-snug">{group.title}</h2>
             </div>
-            {!isPlacing && (
-              <button onClick={onClose}
-                className="text-slate-400 hover:text-white transition-colors mt-0.5 text-lg leading-none">
-                ✕
-              </button>
-            )}
+            <div className="flex items-center gap-3 shrink-0">
+              <KalshiBalance />
+              {!isPlacing && (
+                <button onClick={onClose}
+                  className="text-slate-400 hover:text-white transition-colors text-lg leading-none">
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
