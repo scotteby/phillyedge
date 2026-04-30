@@ -87,10 +87,34 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const rawStatus      = String(kalshiOrder.status ?? "");
-  const orderStatus    = normaliseStatus(rawStatus);
-  const filledCount    = Number(kalshiOrder.quantity_matched ?? kalshiOrder.filled_count ?? 0);
-  const remainingCount = Number(kalshiOrder.remaining_count ?? 0);
+  console.log("[order-status] raw order fields:", JSON.stringify({
+    status:           kalshiOrder.status,
+    filled_count:     kalshiOrder.filled_count,
+    quantity_matched: kalshiOrder.quantity_matched,
+    amount_matched:   kalshiOrder.amount_matched,
+    count:            kalshiOrder.count,
+    original_count:   kalshiOrder.original_count,
+    remaining_count:  kalshiOrder.remaining_count,
+  }));
+
+  const rawStatus   = String(kalshiOrder.status ?? "");
+  const orderStatus = normaliseStatus(rawStatus);
+
+  // Kalshi uses several field names across API versions; try them all.
+  // For a fully-executed order, fall back to "count" (total order size) which
+  // equals the number of contracts filled when remaining_count = 0.
+  const remaining   = Number(kalshiOrder.remaining_count ?? 0);
+  const filledCount = Number(
+    kalshiOrder.filled_count ??
+    kalshiOrder.quantity_matched ??
+    kalshiOrder.amount_matched ??
+    // If the order is fully filled, total order size = filled count
+    (orderStatus === "filled" && remaining === 0
+      ? (kalshiOrder.count ?? kalshiOrder.original_count)
+      : undefined) ??
+    0
+  );
+  const remainingCount = remaining;
   const now            = new Date().toISOString();
 
   // ── Persist order fields to Supabase ────────────────────────────────────
