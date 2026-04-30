@@ -205,6 +205,19 @@ function getBracketLabel(question: string): string {
   return sep >= 0 ? question.slice(sep + 3) : question;
 }
 
+/**
+ * Numeric sort key for a bracket label so brackets sort low→high.
+ * "<46°F" → 45.5  |  "47–49°F" → 47  |  ">51°F" → 51
+ */
+function bracketSortKey(question: string): number {
+  const label = getBracketLabel(question);
+  const m     = label.match(/(\d+(?:\.\d+)?)/);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  // "<X" / "≤X" sits just below X; everything else sorts at its lower bound
+  return (label.startsWith("<") || label.startsWith("≤")) ? n - 0.5 : n;
+}
+
 interface TradeGroup {
   key:        string;   // "KXHIGHPHIL__2026-04-30"
   series:     string;
@@ -238,12 +251,10 @@ function buildGroups(trades: Trade[], today: string): TradeGroup[] {
     // All trades in a Kalshi event share the same resolution date — use first trade's
     const targetDate = gTrades[0].target_date;
     const dateLabel  = getDateLabel(targetDate, today, tomorrow);
-    // Sort within group: Strong Buy → Buy → Neutral → Avoid
-    const sorted = [...gTrades].sort((a, b) => {
-      const ra = SIGNAL_RANK[deriveTradeSignal(a.side, a.edge)] ?? 2;
-      const rb = SIGNAL_RANK[deriveTradeSignal(b.side, b.edge)] ?? 2;
-      return ra - rb;
-    });
+    // Sort within group by bracket range (low → high temperature)
+    const sorted = [...gTrades].sort(
+      (a, b) => bracketSortKey(a.market_question) - bracketSortKey(b.market_question)
+    );
     groups.push({ key, series, seriesName, targetDate, dateLabel, trades: sorted });
   }
 
