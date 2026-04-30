@@ -1,15 +1,12 @@
 import { createServiceClient } from "@/lib/supabase/server";
+import { easternToday } from "@/lib/dates";
 import ForecastForm from "./ForecastForm";
 import type { Forecast } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-function toISODate(d: Date): string {
-  return d.toISOString().split("T")[0];
-}
-
 export default async function ForecastPage() {
-  const today = toISODate(new Date());
+  const today = easternToday();
   const supabase = createServiceClient();
 
   const { data } = await supabase

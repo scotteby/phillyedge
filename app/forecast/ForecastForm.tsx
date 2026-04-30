@@ -11,8 +11,9 @@ function addDays(base: Date, n: number): Date {
   return d;
 }
 
+/** Format a Date as YYYY-MM-DD using local (Eastern) calendar date components. */
 function toISODate(d: Date): string {
-  return d.toISOString().split("T")[0];
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 type PrecipType = "None" | "Rain" | "Snow" | "Mix";

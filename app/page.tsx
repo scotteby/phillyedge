@@ -1,15 +1,12 @@
 import { redirect } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
+import { easternToday } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
 
-function toISODate(d: Date): string {
-  return d.toISOString().split("T")[0];
-}
-
 export default async function RootPage() {
   const supabase = createServiceClient();
-  const today = toISODate(new Date());
+  const today = easternToday();
 
   const { data } = await supabase
     .from("forecasts")
