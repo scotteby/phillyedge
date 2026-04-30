@@ -448,14 +448,9 @@ export default function HistoryClient({ initialTrades }: Props) {
               addToast(`🟠 Partial fill — ${t?.market_question ?? tradeId} (${json.filled_count} filled)`, "fill");
             }
           }
-          if (json.resolved) {
+          if (json.resolved && json.outcome === "loss") {
             const t = updated.find((x) => x.id === tradeId);
-            const label = t?.market_question ?? tradeId;
-            if (json.outcome === "win") {
-              addToast(`🏆 Win! ${label} · +$${(json.pnl ?? 0).toFixed(2)}`, "fill");
-            } else if (json.outcome === "loss") {
-              addToast(`📉 Loss — ${label}`, "cancel");
-            }
+            addToast(`📉 Loss — ${t?.market_question ?? tradeId}`, "cancel");
           }
         }
         return updated;
