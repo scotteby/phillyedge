@@ -151,7 +151,7 @@ function isActiveOrder(trade: Trade): boolean {
   return s === "resting" || s === "partially_filled" || s === null;
 }
 
-function OrderStatusBadge({ status }: { status: OrderStatus }) {
+function OrderStatusBadge({ status, filledCount }: { status: OrderStatus; filledCount?: number | null }) {
   if (status === null) return null;
 
   const map: Record<NonNullable<OrderStatus>, { label: string; classes: string }> = {
@@ -162,10 +162,15 @@ function OrderStatusBadge({ status }: { status: OrderStatus }) {
     expired:          { label: "⚫ Expired",   classes: "bg-slate-500/20 text-slate-400 border-slate-500/30" },
   };
 
-  const { label, classes } = map[status];
+  // A cancelled order that had fills should show as Partial, not Cancelled —
+  // the contracts that filled are real and "Cancelled" implies nothing happened.
+  const entry = (status === "canceled" && (filledCount ?? 0) > 0)
+    ? { label: "🟠 Partial", classes: "bg-orange-500/15 text-orange-300 border-orange-500/30" }
+    : map[status];
+
   return (
-    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${classes}`}>
-      {label}
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${entry.classes}`}>
+      {entry.label}
     </span>
   );
 }
@@ -1413,7 +1418,7 @@ function TradeCard({
               const sig = deriveTradeSignal(trade.side, trade.edge);
               return <SignalBadge signal={sig} title={signalTooltip(sig, trade.side, trade.edge)} />;
             })()}
-            {trade.order_status && <OrderStatusBadge status={trade.order_status} />}
+            {trade.order_status && <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />}
             {showCancel && (
               <button
                 onClick={(e) => { e.stopPropagation(); onCancel(); }}
@@ -1601,7 +1606,7 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
           <div className="flex flex-col gap-1.5 items-start">
             {trade.kalshi_order_id ? (
               <>
-                <OrderStatusBadge status={trade.order_status} />
+                <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
                 {trade.order_status === "partially_filled" && trade.filled_count != null && (
                   <span className="text-xs text-slate-500">
                     {trade.filled_count} filled / {trade.remaining_count} left
