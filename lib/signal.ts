@@ -62,7 +62,6 @@ export function bracketDisplaySignal(
   if (trade_side === "NO") {
     if (edge <= -25) return "strong-buy";
     if (edge <= -10) return "buy";
-    if (edge <= -5)  return "sell";  // "NO" orange badge — marginal
     return "neutral";
   }
   // YES or neutral bracket — standard thresholds
