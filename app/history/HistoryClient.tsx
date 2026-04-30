@@ -108,8 +108,7 @@ function isVoidCancelled(trade: Trade): boolean {
 function isBoostable(trade: Trade): boolean {
   return (
     trade.outcome === "pending" &&
-    (trade.filled_count ?? 0) === 0 &&
-    trade.order_status === "resting" &&
+    (trade.order_status === "resting" || trade.order_status === "partially_filled") &&
     trade.kalshi_order_id != null
   );
 }

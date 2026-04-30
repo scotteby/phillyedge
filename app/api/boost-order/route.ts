@@ -68,8 +68,8 @@ export async function POST(req: NextRequest) {
   if (trade.outcome !== "pending") {
     return NextResponse.json({ error: "Trade is already settled" }, { status: 422 });
   }
-  if (trade.order_status !== "resting") {
-    return NextResponse.json({ error: "Order is not resting — cannot boost" }, { status: 422 });
+  if (trade.order_status !== "resting" && trade.order_status !== "partially_filled") {
+    return NextResponse.json({ error: "Order is not resting or partially filled — cannot boost" }, { status: 422 });
   }
   if (!trade.kalshi_order_id) {
     return NextResponse.json({ error: "No Kalshi order ID for this trade" }, { status: 422 });
