@@ -186,6 +186,26 @@ const SERIES_NAMES: Record<string, string> = {
   KXPRECIPPHIL: "Precipitation Philadelphia",
 };
 
+const MONTH_MAP: Record<string, string> = {
+  JAN: "01", FEB: "02", MAR: "03", APR: "04",
+  MAY: "05", JUN: "06", JUL: "07", AUG: "08",
+  SEP: "09", OCT: "10", NOV: "11", DEC: "12",
+};
+
+/**
+ * Parse the observation date from a Kalshi event key.
+ * "KXLOWTPHIL-26APR29"  →  "2026-04-29"  (YYMMMDD format)
+ * Returns null if the pattern doesn't match.
+ */
+function parseDateFromEventKey(eventKey: string): string | null {
+  const m = eventKey.match(/-(\d{2})([A-Z]{3})(\d{2})$/);
+  if (!m) return null;
+  const [, yy, mon, dd] = m;
+  const month = MONTH_MAP[mon];
+  if (!month) return null;
+  return `20${yy}-${month}-${dd}`;
+}
+
 function getTomorrow(today: string): string {
   const [y, m, day] = today.split("-").map(Number);
   // Construct in local time (no "Z") so DST / UTC offset can't shift the date
@@ -248,8 +268,8 @@ function buildGroups(trades: Trade[], today: string): TradeGroup[] {
   for (const [key, gTrades] of map) {
     const series     = key.split("-")[0];
     const seriesName = SERIES_NAMES[series] ?? series;
-    // All trades in a Kalshi event share the same resolution date — use first trade's
-    const targetDate = gTrades[0].target_date;
+    // Parse date from event key (YYMMMDD) — authoritative, immune to bad DB values
+    const targetDate = parseDateFromEventKey(key) ?? gTrades[0].target_date;
     const dateLabel  = getDateLabel(targetDate, today, tomorrow);
     // Sort within group by bracket range (low → high temperature)
     const sorted = [...gTrades].sort(
