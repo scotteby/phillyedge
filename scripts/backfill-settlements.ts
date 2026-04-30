@@ -10,6 +10,18 @@
  * Requires NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in env.
  */
 
+import * as fs   from "fs";
+import * as path from "path";
+
+// Load .env.local so the script works outside of Next.js dev server
+const envFile = path.resolve(process.cwd(), ".env.local");
+if (fs.existsSync(envFile)) {
+  for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
+    const m = line.match(/^([^#=\s][^=]*)=(.*)$/);
+    if (m) process.env[m[1].trim()] ??= m[2].trim().replace(/^["']|["']$/g, "");
+  }
+}
+
 import { createClient } from "@supabase/supabase-js";
 import {
   buildForecastResultRows,
