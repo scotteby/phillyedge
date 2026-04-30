@@ -4,6 +4,7 @@ import {
   buildForecastResultRows,
   buildRecommendationResultRow,
   fetchActualWeather,
+  settleRecommendationLog,
   type ForecastResultRow,
   type RecommendationResultRow,
   type SettlementSummary,
@@ -33,6 +34,7 @@ async function settle(date: string): Promise<SettlementSummary> {
       settled_date:        date,
       forecast_rows:       0,
       recommendation_rows: 0,
+      rec_log_rows:        0,
       skipped:             [],
       errors:              [`fetchActualWeather failed: ${err instanceof Error ? err.message : String(err)}`],
     };
@@ -87,10 +89,17 @@ async function settle(date: string): Promise<SettlementSummary> {
     else recsWritten = rows.length;
   }
 
+  // 4. Phase 2.5: settle recommendation_log rows for this date.
+  const recLogResult = await settleRecommendationLog(date, actuals, supabase);
+  if (recLogResult.errors.length > 0) {
+    errors.push(...recLogResult.errors.map((e) => `rec_log: ${e}`));
+  }
+
   return {
     settled_date:        date,
     forecast_rows:       forecastWritten,
     recommendation_rows: recsWritten,
+    rec_log_rows:        recLogResult.settled,
     skipped,
     errors,
   };

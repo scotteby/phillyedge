@@ -2,6 +2,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { fetchAndCacheMarkets } from "@/lib/kalshi";
 import { calculateEdge, deduplicateByEvent } from "@/lib/edge";
 import { groupBracketMarkets } from "@/lib/brackets";
+import { logActionableSignals } from "@/lib/rec-log";
 import { fetchNWSObservation, fetchCurrentObservation, observationTimeGates, todayMarketTimeGates, getDailyHighStatus } from "@/lib/nws";
 import type { MarketTimeGates, CurrentObservation, DailyHighStatus } from "@/lib/nws";
 import type { Forecast, MarketCache } from "@/lib/types";
@@ -70,6 +71,15 @@ export default async function MarketsPage() {
 
   // Split bracket groups from single binary markets
   const { groups, singles } = groupBracketMarkets(allMarkets, deduped, observed);
+
+  // Phase 2.5: fire-and-forget signal logging for selection-bias tracking.
+  // MUST NOT block render or affect trading flow — failures are swallowed.
+  const confidenceMap = new Map(
+    deduped.map((f) => [f.target_date, f.forecast_confidence ?? "confident"])
+  );
+  void logActionableSignals(groups, confidenceMap, supabase).catch(
+    (e) => console.error("[rec-log] logActionableSignals failed:", e)
+  );
 
   // Edge-calculate single markets (deduplicated)
   const singleWithEdge = deduplicateByEvent(

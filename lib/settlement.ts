@@ -10,6 +10,7 @@
  *   so error is interpretable as a percentage-point probability error.
  */
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Forecast, ForecastConfidence, Trade } from "./types";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ export interface SettlementSummary {
   settled_date:        string;
   forecast_rows:       number;
   recommendation_rows: number;
+  rec_log_rows:        number;
   skipped:             string[];
   errors:              string[];
 }
@@ -540,4 +542,103 @@ export function stdDev(xs: number[]): number {
   const m = safeMean(xs);
   const v = xs.reduce((s, x) => s + (x - m) ** 2, 0) / (xs.length - 1);
   return Math.sqrt(v);
+}
+
+// ── Phase 2.5: recommendation_log settlement ─────────────────────────────────
+
+interface RecLogRowDB {
+  id:           string;
+  market_id:    string;
+  market_question: string;
+  target_date:  string;
+  side:         "YES" | "NO";
+  market_pct:   number | string;
+}
+
+/**
+ * Settle all unsettled recommendation_log rows for a given date.
+ *
+ * Uses market_pct (the market probability at recommendation time) —
+ * NOT entry_yes_price — to compute hypothetical P&L. This is intentional:
+ * we want to measure signal quality at the moment it appeared, not the
+ * fill price (which may differ due to market movement or partial fills).
+ *
+ * Idempotent: only processes rows where settled = false.
+ */
+export async function settleRecommendationLog(
+  date:     string,
+  actuals:  ActualWeather,
+  supabase: SupabaseClient,
+): Promise<{ settled: number; errors: string[] }> {
+  const errors: string[] = [];
+
+  const { data, error: selErr } = await supabase
+    .from("recommendation_log")
+    .select("id, market_id, market_question, target_date, side, market_pct")
+    .eq("target_date", date)
+    .eq("settled", false);
+
+  if (selErr) {
+    errors.push(`select: ${selErr.message}`);
+    return { settled: 0, errors };
+  }
+
+  const rows = (data as RecLogRowDB[] | null) ?? [];
+  let settled = 0;
+
+  for (const row of rows) {
+    try {
+      const marketPct = typeof row.market_pct === "number"
+        ? row.market_pct
+        : parseFloat(row.market_pct);
+      const entryYesPrice = marketPct / 100;
+
+      // Build a minimal Trade-like object — didTradeWin only reads
+      // market_id, market_question, side from the trade.
+      const tradeLike: Trade = {
+        id:               row.id,
+        created_at:       "",
+        market_id:        row.market_id,
+        market_question:  row.market_question,
+        target_date:      row.target_date,
+        side:             row.side,
+        amount_usdc:      0,
+        market_pct:       marketPct,
+        my_pct:           0,
+        edge:             0,
+        signal:           "buy",
+        outcome:          "pending",
+        pnl:              null,
+        polymarket_url:   null,
+        kalshi_order_id:  null,
+        order_status:     null,
+        filled_count:     null,
+        remaining_count:  null,
+        last_checked_at:  null,
+        entry_yes_price:  null,
+      };
+
+      const won = didTradeWin(tradeLike, actuals);
+      const hypoPnl = calcHypotheticalPnl(10, entryYesPrice, row.side, won);
+
+      const { error: updErr } = await supabase
+        .from("recommendation_log")
+        .update({
+          settled:                true,
+          would_have_won:         won,
+          hypothetical_pnl_at_10: hypoPnl,
+        })
+        .eq("id", row.id);
+
+      if (updErr) {
+        errors.push(`update ${row.id}: ${updErr.message}`);
+      } else {
+        settled++;
+      }
+    } catch (err) {
+      errors.push(`row ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { settled, errors };
 }

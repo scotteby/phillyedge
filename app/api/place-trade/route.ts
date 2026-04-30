@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
 import { createServiceClient } from "@/lib/supabase/server";
 import { deriveTradeSignal } from "@/lib/signal";
+import { linkTradeToRecommendation } from "@/lib/rec-log";
 
 const DEMO_MODE  = process.env.KALSHI_DEMO_MODE === "true";
 const KALSHI_BASE = DEMO_MODE
@@ -166,29 +167,42 @@ export async function POST(req: NextRequest) {
 
   try {
     const supabase = createServiceClient();
-    const { error: dbErr } = await supabase.from("trades").insert([
-      {
-        market_id:        ticker,
-        market_question,
-        target_date,
-        side:             side.toUpperCase(),
-        amount_usdc:      amount,
-        market_pct,
-        my_pct,
-        edge,
-        signal:           dbSignal,
-        outcome:          "pending",
-        pnl:              null,
-        polymarket_url:   kalshiUrl(ticker),
-        kalshi_order_id:  orderId,
-        order_status:     orderId ? "resting" : null,
-        entry_yes_price:  sideLower === "yes" ? price : 1 - price,
-      },
-    ]);
+    const { data: inserted, error: dbErr } = await supabase
+      .from("trades")
+      .insert([
+        {
+          market_id:        ticker,
+          market_question,
+          target_date,
+          side:             side.toUpperCase(),
+          amount_usdc:      amount,
+          market_pct,
+          my_pct,
+          edge,
+          signal:           dbSignal,
+          outcome:          "pending",
+          pnl:              null,
+          polymarket_url:   kalshiUrl(ticker),
+          kalshi_order_id:  orderId,
+          order_status:     orderId ? "resting" : null,
+          entry_yes_price:  sideLower === "yes" ? price : 1 - price,
+        },
+      ])
+      .select("id")
+      .single();
     if (dbErr) {
       // Surface DB errors so they're visible in the response (non-fatal —
       // the Kalshi order already succeeded at this point).
       console.error("[place-trade] Supabase insert failed:", dbErr.message);
+    } else if (inserted?.id) {
+      // Phase 2.5: fire-and-forget link to recommendation_log.
+      // Failure must never affect trade confirmation.
+      void linkTradeToRecommendation(
+        inserted.id as string,
+        ticker,
+        target_date,
+        supabase,
+      ).catch((e) => console.error("[rec-log] linkTradeToRecommendation failed:", e));
     }
   } catch (err) {
     console.error("[place-trade] Supabase insert threw:", err);

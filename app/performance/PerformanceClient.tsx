@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -60,17 +60,120 @@ export interface RecommendationResultDB {
   created_at:            string;
 }
 
+export interface RecLogDB {
+  id:                     string;
+  generated_at:           string;
+  target_date:            string;
+  market_id:              string;
+  market_question:        string;
+  signal:                 string;
+  edge:                   number | string;
+  bracket_type:           "forecast" | "adjacent_low" | "adjacent_high" | "other";
+  my_pct:                 number | string;
+  market_pct:             number | string;
+  side:                   "YES" | "NO";
+  confidence_level:       string;
+  acted_on:               boolean;
+  trade_id:               string | null;
+  settled:                boolean;
+  would_have_won:         boolean | null;
+  hypothetical_pnl_at_10: number | string | null;
+}
+
+// Coerced flat shape used by the dashboard
+export interface RLRow {
+  id:                     string;
+  generated_at:           string;
+  target_date:            string;
+  market_id:              string;
+  market_question:        string;
+  signal:                 string;
+  edge:                   number;
+  bracket_type:           "forecast" | "adjacent_low" | "adjacent_high" | "other";
+  my_pct:                 number;
+  market_pct:             number;
+  side:                   "YES" | "NO";
+  confidence_level:       string;
+  acted_on:               boolean;
+  trade_id:               string | null;
+  settled:                boolean;
+  would_have_won:         boolean | null;
+  hypothetical_pnl_at_10: number | null;
+}
+
+type RecView = "placed" | "all" | "compare";
+
 interface Props {
   forecastResults: ForecastResultDB[];
   recResults:      RecommendationResultDB[];
+  recLog:          RecLogDB[];
 }
 
 const num = (x: number | string | null | undefined): number =>
   x == null ? 0 : typeof x === "number" ? x : parseFloat(x);
 
+// ── Phase 2.5: insights from recommendation_log ──────────────────────────────
+
+interface RecLogInsight { text: string; n: number; deviationScore: number }
+
+function generateRecLogInsights(rl: RLRow[]): RecLogInsight[] {
+  const out: RecLogInsight[] = [];
+  const settled = rl.filter((r) => r.settled && r.would_have_won != null);
+
+  // Action rate insight (Strong Buy)
+  const sb       = rl.filter((r) => r.signal === "strong-buy");
+  const sbActed  = sb.filter((r) => r.acted_on);
+  const sbSkipped = sb.filter((r) => !r.acted_on);
+  const sbActedSettled  = sbActed.filter((r) => r.settled && r.would_have_won != null);
+  const sbSkipSettled   = sbSkipped.filter((r) => r.settled && r.would_have_won != null);
+  if (sbActedSettled.length >= 10 && sbSkipSettled.length >= 10) {
+    const actedRate = sbActedSettled.filter((r) => r.would_have_won).length / sbActedSettled.length;
+    const skipRate  = sbSkipSettled.filter((r) => r.would_have_won).length / sbSkipSettled.length;
+    const pct = Math.round((sbActed.length / sb.length) * 100);
+    out.push({
+      text: `You acted on ${pct}% of Strong Buy signals (n=${sb.length}). Those taken won ${Math.round(actedRate * 100)}%, those skipped won ${Math.round(skipRate * 100)}%.`,
+      n: sb.length,
+      deviationScore: Math.abs(actedRate - skipRate) * 100,
+    });
+  }
+
+  // Selection alpha insight
+  const acted    = settled.filter((r) => r.acted_on);
+  const notActed = settled.filter((r) => !r.acted_on);
+  if (acted.length >= 20 && notActed.length >= 20) {
+    const placedAvg = acted.reduce((s, r) => s + (r.hypothetical_pnl_at_10 ?? 0), 0) / acted.length;
+    const allAvg    = settled.reduce((s, r) => s + (r.hypothetical_pnl_at_10 ?? 0), 0) / settled.length;
+    const alpha     = placedAvg - allAvg;
+    const direction = Math.abs(alpha) < 0.20
+      ? "is roughly neutral"
+      : alpha > 0
+        ? "is adding value"
+        : "is hurting performance";
+    out.push({
+      text: `Your selection alpha is ${alpha >= 0 ? "+" : ""}$${alpha.toFixed(2)}/signal — your judgment ${direction}.`,
+      n: settled.length,
+      deviationScore: Math.abs(alpha) * 50,
+    });
+  }
+
+  // Skipped winners with high edge
+  const highEdgeSkipped = rl.filter((r) => !r.acted_on && r.edge > 25);
+  const highEdgeSkippedSettled = highEdgeSkipped.filter((r) => r.settled && r.would_have_won != null);
+  const highEdgeWinners = highEdgeSkippedSettled.filter((r) => r.would_have_won === true);
+  if (highEdgeSkipped.length >= 5 && highEdgeSkippedSettled.length >= 5) {
+    out.push({
+      text: `You skipped ${highEdgeSkipped.length} signals with edge >25pt — ${highEdgeWinners.length} would have won.`,
+      n: highEdgeSkipped.length,
+      deviationScore: highEdgeSkipped.length,
+    });
+  }
+
+  return out;
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function PerformanceClient({ forecastResults, recResults }: Props) {
+export default function PerformanceClient({ forecastResults, recResults, recLog }: Props) {
   // Coerce numeric strings up front so all downstream math is straightforward
   const fr = useMemo(
     () =>
@@ -96,6 +199,30 @@ export default function PerformanceClient({ forecastResults, recResults }: Props
         actual_pnl:           r.actual_pnl == null ? null : num(r.actual_pnl),
       })),
     [recResults],
+  );
+
+  const rl: RLRow[] = useMemo(
+    () =>
+      recLog.map((r) => ({
+        id:                     r.id,
+        generated_at:           r.generated_at,
+        target_date:            r.target_date,
+        market_id:              r.market_id,
+        market_question:        r.market_question,
+        signal:                 r.signal,
+        edge:                   num(r.edge),
+        bracket_type:           r.bracket_type,
+        my_pct:                 num(r.my_pct),
+        market_pct:             num(r.market_pct),
+        side:                   r.side,
+        confidence_level:       r.confidence_level,
+        acted_on:               r.acted_on,
+        trade_id:               r.trade_id,
+        settled:                r.settled,
+        would_have_won:         r.would_have_won,
+        hypothetical_pnl_at_10: r.hypothetical_pnl_at_10 == null ? null : num(r.hypothetical_pnl_at_10),
+      })),
+    [recLog],
   );
 
   // Insights — settlement.ts expects pure ForecastResultRow / RecommendationResultRow shapes,
@@ -126,8 +253,10 @@ export default function PerformanceClient({ forecastResults, recResults }: Props
       normalized_pnl_at_10:  r.normalized_pnl_at_10,
       actual_pnl:            r.actual_pnl,
     }));
-    return generateInsights(fRows, rRows).sort((a, b) => b.deviationScore - a.deviationScore).slice(0, 5);
-  }, [fr, rr]);
+    const base = generateInsights(fRows, rRows);
+    const recLogIns = generateRecLogInsights(rl);
+    return [...base, ...recLogIns].sort((a, b) => b.deviationScore - a.deviationScore).slice(0, 5);
+  }, [fr, rr, rl]);
 
   const noData = fr.length === 0 && rr.length === 0;
 
@@ -166,8 +295,8 @@ export default function PerformanceClient({ forecastResults, recResults }: Props
       <SectionNav />
 
       <ForecastAccuracy fr={fr} />
-      <RecommendationPerformance rr={rr} />
-      <CalibrationSection fr={fr} />
+      <RecommendationPerformance rr={rr} rl={rl} />
+      <CalibrationSection fr={fr} rl={rl} />
     </div>
   );
 }
@@ -475,21 +604,41 @@ interface RRow {
   actual_pnl:           number | null;
 }
 
-function RecommendationPerformance({ rr }: { rr: RRow[] }) {
+function RecommendationPerformance({ rr, rl }: { rr: RRow[]; rl: RLRow[] }) {
+  const [recView, setRecView] = useState<RecView>("placed");
+
+  // Settled subset of recLog for analysis
+  const rlSettled = useMemo(
+    () => rl.filter((r) => r.settled && r.hypothetical_pnl_at_10 != null),
+    [rl],
+  );
+
   const cumulative = useMemo(() => {
     const sorted = [...rr].sort((a, b) => a.forecast_date.localeCompare(b.forecast_date));
     let cumActual = 0;
     let cumHypo   = 0;
+
+    // Build a per-date sum of all-signal P&L from recLog so we can layer
+    // a third line on the existing chart.
+    const allByDate = new Map<string, number>();
+    for (const r of rlSettled) {
+      const v = r.hypothetical_pnl_at_10 ?? 0;
+      allByDate.set(r.target_date, (allByDate.get(r.target_date) ?? 0) + v);
+    }
+    let cumAll = 0;
+
     return sorted.map((r) => {
       if (r.actual_pnl != null) cumActual += r.actual_pnl;
       cumHypo += r.hypothetical_pnl;
+      cumAll  += allByDate.get(r.forecast_date) ?? 0;
       return {
-        date:        r.forecast_date,
-        actual:      r.actual_pnl != null ? cumActual : null,
+        date:         r.forecast_date,
+        actual:       r.actual_pnl != null ? cumActual : null,
         hypothetical: cumHypo,
+        allSignals:   cumAll,
       };
     });
-  }, [rr]);
+  }, [rr, rlSettled]);
 
   const winRate = (rows: RRow[]): { rate: number | null; n: number; wins: number } => {
     if (rows.length === 0) return { rate: null, n: 0, wins: 0 };
@@ -519,17 +668,172 @@ function RecommendationPerformance({ rr }: { rr: RRow[] }) {
     { label: "Adjacent high bracket", rows: rr.filter((r) => r.bracket_type === "adjacent_high") },
   ];
 
-  const hasData = rr.length > 0;
+  // ── Phase 2.5: signal coverage / selection alpha (recLog) ──────────────────
+  const coverage = useMemo(() => {
+    const tally = (sig: "strong-buy" | "buy") => {
+      const all   = rl.filter((r) => r.signal === sig);
+      const acted = all.filter((r) => r.acted_on).length;
+      return {
+        signal: sig,
+        total:  all.length,
+        acted,
+        rate:   all.length === 0 ? null : acted / all.length,
+      };
+    };
+    return [tally("strong-buy"), tally("buy")];
+  }, [rl]);
+
+  const selectionAlpha = useMemo(() => {
+    const acted    = rlSettled.filter((r) => r.acted_on);
+    const notActed = rlSettled.filter((r) => !r.acted_on);
+    if (acted.length < 20 || notActed.length < 20) {
+      return { ready: false as const, n_acted: acted.length, n_not_acted: notActed.length };
+    }
+    const meanOf = (xs: RLRow[]) =>
+      xs.reduce((s, r) => s + (r.hypothetical_pnl_at_10 ?? 0), 0) / xs.length;
+    const placedAvg = meanOf(acted);
+    const allAvg    = meanOf(rlSettled);
+    return {
+      ready:       true as const,
+      placedAvg,
+      allAvg,
+      alpha:       placedAvg - allAvg,
+      n_acted:     acted.length,
+      n_not_acted: notActed.length,
+    };
+  }, [rlSettled]);
+
+  // Win rate / action rate helpers for recLog segments
+  const rlWin = (rows: RLRow[]): { rate: number | null; n: number } => {
+    const settledRows = rows.filter((r) => r.settled && r.would_have_won != null);
+    if (settledRows.length === 0) return { rate: null, n: 0 };
+    const wins = settledRows.filter((r) => r.would_have_won === true).length;
+    return { rate: wins / settledRows.length, n: settledRows.length };
+  };
+  const rlActionRate = (rows: RLRow[]): { rate: number | null; n: number } => {
+    if (rows.length === 0) return { rate: null, n: 0 };
+    const acted = rows.filter((r) => r.acted_on).length;
+    return { rate: acted / rows.length, n: rows.length };
+  };
+
+  // Recompute segments with parallel recLog buckets so the table can show
+  // win rate (all signals) and action rate per segment.
+  const recLogSegments = useMemo(() => ({
+    "Strong Buy":            rl.filter((r) => r.signal === "strong-buy"),
+    "Buy":                   rl.filter((r) => r.signal === "buy"),
+    "Edge 5–10pt":           rl.filter((r) => r.edge >= 5  && r.edge < 10),
+    "Edge 10–25pt":          rl.filter((r) => r.edge >= 10 && r.edge < 25),
+    "Edge 25pt+":            rl.filter((r) => r.edge >= 25),
+    "Forecast bracket":      rl.filter((r) => r.bracket_type === "forecast"),
+    "Adjacent low bracket":  rl.filter((r) => r.bracket_type === "adjacent_low"),
+    "Adjacent high bracket": rl.filter((r) => r.bracket_type === "adjacent_high"),
+  } as Record<string, RLRow[]>), [rl]);
+
+  // Skipped-signal stats
+  const skipped = useMemo(() => {
+    const skippedSettled = rlSettled.filter((r) => !r.acted_on);
+    const win = rlWin(skippedSettled);
+    const avgPnl = skippedSettled.length === 0
+      ? null
+      : skippedSettled.reduce((s, r) => s + (r.hypothetical_pnl_at_10 ?? 0), 0) / skippedSettled.length;
+    const topMissed = skippedSettled
+      .filter((r) => r.would_have_won === true)
+      .sort((a, b) => b.edge - a.edge)
+      .slice(0, 5);
+    return { win, avgPnl, topMissed };
+  }, [rlSettled]);
+
+  const hasData    = rr.length > 0;
+  const hasRecLog  = rl.length > 0;
+  const showAll    = recView !== "placed" && hasRecLog;
+  const showCompare = recView === "compare" && hasRecLog;
 
   return (
     <section id="recommendations" className="space-y-5 scroll-mt-20">
-      <h2 className="text-xl font-bold text-white">Recommendation Performance</h2>
-      {!hasData ? (
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-xl font-bold text-white">Recommendation Performance</h2>
+        {hasRecLog && (
+          <div className="inline-flex rounded-md border border-slate-700 overflow-hidden text-xs">
+            {(["placed", "all", "compare"] as RecView[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => setRecView(v)}
+                className={`px-3 py-1.5 transition-colors ${
+                  recView === v ? "bg-sky-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                }`}
+              >
+                {v === "placed" ? "Placed trades only" : v === "all" ? "All signals" : "Compare"}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {!hasData && !hasRecLog ? (
         <p className="text-sm text-slate-500">
           No recommendation results yet — run the daily settlement job.
         </p>
       ) : (
         <>
+          {showAll && hasRecLog && (
+            <ChartCard title="Signal coverage (last 90 days)">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {coverage.map((c) => (
+                  <div key={c.signal} className="bg-slate-900/40 rounded-lg p-3">
+                    <p className="text-xs text-slate-500 uppercase tracking-wider">
+                      {c.signal === "strong-buy" ? "Strong Buy" : "Buy"}
+                    </p>
+                    <p className="text-lg font-semibold text-white mt-1">
+                      {c.total} signals
+                    </p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {c.acted} acted on
+                      {c.rate != null && ` (${Math.round(c.rate * 100)}%)`}
+                    </p>
+                  </div>
+                ))}
+                <div className="bg-slate-900/40 rounded-lg p-3">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">Total signals</p>
+                  <p className="text-lg font-semibold text-white mt-1">{rl.length}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {rl.filter((r) => r.acted_on).length} acted on
+                  </p>
+                </div>
+              </div>
+            </ChartCard>
+          )}
+
+          {showAll && selectionAlpha.ready && (
+            <ChartCard title="Selection alpha">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">My avg P&L/signal ($10)</p>
+                  <p className={`text-lg font-semibold mt-1 ${selectionAlpha.placedAvg >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {selectionAlpha.placedAvg >= 0 ? "+" : ""}${selectionAlpha.placedAvg.toFixed(2)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">All-signal avg P&L ($10)</p>
+                  <p className={`text-lg font-semibold mt-1 ${selectionAlpha.allAvg >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {selectionAlpha.allAvg >= 0 ? "+" : ""}${selectionAlpha.allAvg.toFixed(2)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">Selection alpha</p>
+                  <p className={`text-lg font-semibold mt-1 ${selectionAlpha.alpha >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {selectionAlpha.alpha >= 0 ? "+" : ""}${selectionAlpha.alpha.toFixed(2)}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {Math.abs(selectionAlpha.alpha) < 0.20
+                      ? "Selection is roughly neutral"
+                      : selectionAlpha.alpha > 0
+                        ? "Your selection is adding value"
+                        : "Your selection is hurting performance"}
+                  </p>
+                </div>
+              </div>
+            </ChartCard>
+          )}
+
           <ChartCard title="Cumulative P&L">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={cumulative}>
@@ -537,8 +841,11 @@ function RecommendationPerformance({ rr }: { rr: RRow[] }) {
                 <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} />
                 <YAxis stroke="#94a3b8" fontSize={11} />
                 <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" }} />
-                <Line type="monotone" dataKey="actual"       stroke="#10b981" name="Actual P&L"        dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="hypothetical" stroke="#0ea5e9" name="Hypothetical P&L"  dot={false} strokeWidth={2} strokeDasharray="5 4" />
+                <Line type="monotone" dataKey="actual"       stroke="#10b981" name="Actual P&L"                  dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="hypothetical" stroke="#0ea5e9" name="Placed (normalized $10)"     dot={false} strokeWidth={2} strokeDasharray="5 4" />
+                {showCompare && (
+                  <Line type="monotone" dataKey="allSignals" stroke="#7dd3fc" name="All signals (normalized $10)" dot={false} strokeWidth={2} strokeDasharray="2 3" />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </ChartCard>
@@ -558,7 +865,9 @@ function RecommendationPerformance({ rr }: { rr: RRow[] }) {
                     <th className="py-2 pr-4">n</th>
                     <th className="py-2 pr-4">Win rate</th>
                     <th className="py-2 pr-4">Avg actual P&L</th>
-                    <th className="py-2">Avg normalized P&L ($10)</th>
+                    <th className="py-2 pr-4">Avg normalized P&L ($10)</th>
+                    {showAll && <th className="py-2 pr-4">Win rate (all)</th>}
+                    {showAll && <th className="py-2">Action rate</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700/30">
@@ -567,6 +876,9 @@ function RecommendationPerformance({ rr }: { rr: RRow[] }) {
                     const ap  = avg(s.rows, "actual_pnl");
                     const np  = avg(s.rows, "normalized_pnl_at_10");
                     const low = wr.n < 5;
+                    const rlSeg = recLogSegments[s.label] ?? [];
+                    const rlW   = rlWin(rlSeg);
+                    const rlA   = rlActionRate(rlSeg);
                     return (
                       <tr key={s.label} className={`text-slate-200 ${low ? "opacity-50" : ""}`}>
                         <td className="py-2 pr-4">{s.label}</td>
@@ -578,9 +890,19 @@ function RecommendationPerformance({ rr }: { rr: RRow[] }) {
                         <td className={`py-2 pr-4 ${ap == null ? "text-slate-500" : ap >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                           {ap == null ? "—" : `${ap >= 0 ? "+" : ""}$${ap.toFixed(2)}`}
                         </td>
-                        <td className={`py-2 ${np == null ? "text-slate-500" : np >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        <td className={`py-2 pr-4 ${np == null ? "text-slate-500" : np >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                           {np == null ? "—" : `${np >= 0 ? "+" : ""}$${np.toFixed(2)}`}
                         </td>
+                        {showAll && (
+                          <td className="py-2 pr-4 text-slate-300">
+                            {rlW.rate == null ? "—" : `${Math.round(rlW.rate * 100)}% (n=${rlW.n})`}
+                          </td>
+                        )}
+                        {showAll && (
+                          <td className="py-2 text-slate-300">
+                            {rlA.rate == null ? "—" : `${Math.round(rlA.rate * 100)}% (n=${rlA.n})`}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -588,6 +910,60 @@ function RecommendationPerformance({ rr }: { rr: RRow[] }) {
               </table>
             </div>
           </ChartCard>
+
+          {showAll && (
+            <ChartCard title="Skipped signals">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mb-4">
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">Skipped win rate</p>
+                  <p className="text-lg font-semibold text-white mt-1">
+                    {skipped.win.rate == null ? "—" : `${Math.round(skipped.win.rate * 100)}%`}
+                    <span className="text-xs text-slate-500 ml-2">n = {skipped.win.n}</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">Avg hypothetical P&L ($10)</p>
+                  <p className={`text-lg font-semibold mt-1 ${
+                    skipped.avgPnl == null ? "text-slate-500" : skipped.avgPnl >= 0 ? "text-emerald-400" : "text-red-400"
+                  }`}>
+                    {skipped.avgPnl == null
+                      ? "—"
+                      : `${skipped.avgPnl >= 0 ? "+" : ""}$${skipped.avgPnl.toFixed(2)}`}
+                  </p>
+                </div>
+              </div>
+              {skipped.topMissed.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
+                        <th className="py-2 pr-4">Date</th>
+                        <th className="py-2 pr-4">Bracket</th>
+                        <th className="py-2 pr-4">Edge</th>
+                        <th className="py-2 pr-4">Would have won</th>
+                        <th className="py-2">Hypothetical P&L</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-700/30">
+                      {skipped.topMissed.map((r) => (
+                        <tr key={r.id} className="text-slate-200">
+                          <td className="py-2 pr-4 text-slate-400 whitespace-nowrap">{r.target_date}</td>
+                          <td className="py-2 pr-4 truncate max-w-[280px]">{r.market_question}</td>
+                          <td className="py-2 pr-4">{r.edge.toFixed(0)}pt</td>
+                          <td className="py-2 pr-4 text-emerald-400">Yes</td>
+                          <td className={`py-2 ${(r.hypothetical_pnl_at_10 ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            {(r.hypothetical_pnl_at_10 ?? 0) >= 0 ? "+" : ""}${(r.hypothetical_pnl_at_10 ?? 0).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">No settled skipped winners yet.</p>
+              )}
+            </ChartCard>
+          )}
         </>
       )}
     </section>
@@ -608,10 +984,11 @@ function RateCard({ label, rate, n }: { label: string; rate: number | null; n: n
 
 // ── Section 3: Calibration ───────────────────────────────────────────────────
 
-function CalibrationSection({ fr }: { fr: FRow[] }) {
+function CalibrationSection({ fr, rl }: { fr: FRow[]; rl: RLRow[] }) {
+  const [calibMode, setCalibMode] = useState<"placed" | "all">("placed");
   const precip = useMemo(() => fr.filter((r) => r.metric === "precip"), [fr]);
 
-  // Calibration bins
+  // Calibration bins (precip — original)
   const calibration = useMemo(() => {
     return CALIBRATION_BINS.map((bin, i) => {
       const inBin = precip.filter((r) => calibrationBin(r.predicted_value) === i);
@@ -624,6 +1001,26 @@ function CalibrationSection({ fr }: { fr: FRow[] }) {
       };
     });
   }, [precip]);
+
+  // All-signals calibration: bin by recLog.market_pct (the market price at
+  // recommendation time, treated as the predicted probability), outcome is
+  // would_have_won.
+  const allSignalsCalibration = useMemo(() => {
+    const settled = rl.filter((r) => r.settled && r.would_have_won != null);
+    return CALIBRATION_BINS.map((bin, i) => {
+      const inBin = settled.filter((r) => calibrationBin(r.market_pct) === i);
+      const hits  = inBin.filter((r) => r.would_have_won === true).length;
+      return {
+        label:    bin.label,
+        midpoint: (bin.lo + bin.hi) / 2,
+        hitRate:  inBin.length === 0 ? null : (hits / inBin.length) * 100,
+        n:        inBin.length,
+      };
+    });
+  }, [rl]);
+
+  const calibData = calibMode === "all" ? allSignalsCalibration : calibration;
+  const hasRecLog = rl.length > 0;
 
   // Per-confidence-level temperature std-dev (60-day window)
   const stdByConfidence = useMemo(() => {
@@ -657,9 +1054,24 @@ function CalibrationSection({ fr }: { fr: FRow[] }) {
         <p className="text-sm text-slate-500">No data yet — run the daily settlement job.</p>
       ) : (
         <>
-          <ChartCard title="Precipitation calibration curve (predicted % vs actual hit rate)">
+          <ChartCard title={calibMode === "all" ? "All-signals calibration (market % vs win rate)" : "Precipitation calibration curve (predicted % vs actual hit rate)"}>
+            {hasRecLog && (
+              <div className="inline-flex rounded-md border border-slate-700 overflow-hidden text-xs mb-3">
+                {(["placed", "all"] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setCalibMode(v)}
+                    className={`px-3 py-1.5 transition-colors ${
+                      calibMode === v ? "bg-sky-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    }`}
+                  >
+                    {v === "placed" ? "Placed trades only" : "All signals"}
+                  </button>
+                ))}
+              </div>
+            )}
             <ResponsiveContainer width="100%" height={260}>
-              <ComposedChart data={calibration}>
+              <ComposedChart data={calibData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                 <XAxis dataKey="midpoint" type="number" domain={[0, 100]} stroke="#94a3b8" fontSize={11} />
                 <YAxis yAxisId="left" type="number" domain={[0, 100]} stroke="#94a3b8" fontSize={11} />
