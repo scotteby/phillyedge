@@ -7,6 +7,7 @@ const tabs = [
   { href: "/forecast", label: "Forecast" },
   { href: "/markets", label: "Markets" },
   { href: "/history", label: "Trades" },
+  { href: "/performance", label: "Performance" },
 ];
 
 export default function Nav() {

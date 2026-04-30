@@ -84,3 +84,11 @@ create index if not exists market_cache_fetched_at_idx on public.market_cache (f
 alter table public.forecasts disable row level security;
 alter table public.trades disable row level security;
 alter table public.market_cache disable row level security;
+
+-- -------------------------------------------------------
+-- Phase 2 (performance tracking): see supabase/migrations/20260430_phase2_performance.sql
+--   adds forecast_results and recommendation_results tables.
+--   precip encoding note: predicted_value = precip_chance (0–100),
+--   actual_value = 100 (rained) or 0 (didn't rain), so error is comparable
+--   in "percentage points of probability".
+-- -------------------------------------------------------
