@@ -328,7 +328,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [sellModalTrade, setSellModalTrade]   = useState<Trade | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
-  const [showAll, setShowAll]     = useState(false);
+  const [viewMode, setViewMode]   = useState<"active" | "resting" | "all">("active");
   const [balance, setBalance]     = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
@@ -613,8 +613,12 @@ export default function HistoryClient({ initialTrades }: Props) {
   // from stats — they never deployed capital, so they didn't happen.
   const effectiveTrades = trades.filter((t) => !isVoidCancelled(t));
 
-  // What's shown in the list depends on the toggle
-  const visibleTrades = showAll ? trades : effectiveTrades;
+  // What's shown in the list depends on the view mode
+  const restingTrades  = trades.filter((t) => t.order_status === "resting");
+  const visibleTrades  =
+    viewMode === "all"     ? trades :
+    viewMode === "resting" ? restingTrades :
+    effectiveTrades;
 
   // ── Summary stats (always off effectiveTrades) ────────────────────────────
 
@@ -688,14 +692,23 @@ export default function HistoryClient({ initialTrades }: Props) {
           {/* View toggle */}
           <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs">
             <button
-              onClick={() => setShowAll(false)}
-              className={`px-3 py-1.5 transition-colors ${!showAll ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
+              onClick={() => setViewMode("active")}
+              className={`px-3 py-1.5 transition-colors ${viewMode === "active" ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
             >
               Active &amp; Settled
             </button>
             <button
-              onClick={() => setShowAll(true)}
-              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${showAll ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
+              onClick={() => setViewMode("resting")}
+              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${viewMode === "resting" ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
+            >
+              Resting
+              {restingTrades.length > 0 && (
+                <span className="ml-1 text-yellow-400">({restingTrades.length})</span>
+              )}
+            </button>
+            <button
+              onClick={() => setViewMode("all")}
+              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${viewMode === "all" ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
             >
               All trades
             </button>
@@ -764,12 +777,16 @@ export default function HistoryClient({ initialTrades }: Props) {
         <div className="text-center py-20 text-slate-500">
           <p className="text-4xl mb-3">📊</p>
           <p className="text-lg font-medium">
-            {trades.length === 0 ? "No trades logged yet" : "No active or settled trades"}
+            {trades.length === 0 ? "No trades logged yet"
+              : viewMode === "resting" ? "No resting orders"
+              : "No active or settled trades"}
           </p>
           <p className="text-sm mt-1">
             {trades.length === 0
               ? "Head to Markets to find edges and log your first trade."
-              : <button onClick={() => setShowAll(true)} className="text-sky-400 hover:text-sky-300 underline">Show all trades</button>}
+              : viewMode === "resting"
+              ? <button onClick={() => setViewMode("active")} className="text-sky-400 hover:text-sky-300 underline">Show active &amp; settled trades</button>
+              : <button onClick={() => setViewMode("all")} className="text-sky-400 hover:text-sky-300 underline">Show all trades</button>}
           </p>
         </div>
       ) : (
