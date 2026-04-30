@@ -135,6 +135,21 @@ function legAmount(pct: number, budget: number): number {
   return (pct / 100) * budget;
 }
 
+/** Renormalize an array of legs so their pct values sum to exactly 100. */
+function normalizePcts(legs: PositionLeg[]): PositionLeg[] {
+  if (legs.length === 0) return legs;
+  const total = legs.reduce((s, l) => s + l.pct, 0);
+  if (total <= 0) return legs;
+  const rawPcts  = legs.map((l) => (l.pct / total) * 100);
+  const floored  = rawPcts.map(Math.floor);
+  const remainder = 100 - floored.reduce((s, v) => s + v, 0);
+  const fracOrder = rawPcts
+    .map((v, i) => ({ i, frac: v - floored[i] }))
+    .sort((a, b) => b.frac - a.frac);
+  for (let j = 0; j < remainder; j++) floored[fracOrder[j].i]++;
+  return legs.map((l, i) => ({ ...l, pct: floored[i] }));
+}
+
 // ── Kalshi URL helper ─────────────────────────────────────────────────────────
 
 const SERIES_SLUGS: Record<string, string> = {
@@ -179,16 +194,16 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
   function toggleForecastBracket(include: boolean) {
     if (!forecastOptional) return;
     if (include) {
-      // Add as a custom leg if not already present
       const id = `${forecastOptional.market_id}-YES-forecast`;
       setLegs((prev) => {
         if (prev.some((l) => l.bracket.market_id === forecastOptional.market_id && l.side === "YES")) return prev;
-        return [...prev, { id, bracket: forecastOptional, side: "YES", pct: 10, isPrimary: false }];
+        // Give it equal weight to the other legs, then renormalize so total stays 100
+        const equalShare = prev.length > 0 ? prev[0].pct : 100;
+        return normalizePcts([...prev, { id, bracket: forecastOptional, side: "YES", pct: equalShare, isPrimary: false }]);
       });
     } else {
-      // Remove any YES leg for this bracket
-      setLegs((prev) => prev.filter(
-        (l) => !(l.bracket.market_id === forecastOptional.market_id && l.side === "YES")
+      setLegs((prev) => normalizePcts(
+        prev.filter((l) => !(l.bracket.market_id === forecastOptional.market_id && l.side === "YES"))
       ));
     }
   }
@@ -221,29 +236,16 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
   }
 
   function removeLeg(id: string) {
-    setLegs((prev) => {
-      const remaining = prev.filter((l) => l.id !== id);
-      if (remaining.length === 0) return remaining;
-      // Renormalize pcts so they still sum to 100 after removal
-      const total = remaining.reduce((s, l) => s + l.pct, 0);
-      if (total <= 0) return remaining;
-      const rawPcts = remaining.map((l) => (l.pct / total) * 100);
-      const floored = rawPcts.map(Math.floor);
-      const rem = 100 - floored.reduce((s, v) => s + v, 0);
-      const fracOrder = rawPcts
-        .map((v, i) => ({ i, frac: v - floored[i] }))
-        .sort((a, b) => b.frac - a.frac);
-      for (let j = 0; j < rem; j++) floored[fracOrder[j].i]++;
-      return remaining.map((l, i) => ({ ...l, pct: floored[i] }));
-    });
+    setLegs((prev) => normalizePcts(prev.filter((l) => l.id !== id)));
   }
 
   function addCustomLeg(bracket: BracketMarket, side: "YES" | "NO") {
     const id = `${bracket.market_id}-${side}-custom`;
     setLegs((prev) => {
-      // Don't duplicate
       if (prev.some((l) => l.bracket.market_id === bracket.market_id && l.side === side)) return prev;
-      return [...prev, { id, bracket, side, pct: 10, isPrimary: false }];
+      // Give the new leg a proportional share (equal weight to the others) then renormalize
+      const equalShare = prev.length > 0 ? prev[0].pct : 100;
+      return normalizePcts([...prev, { id, bracket, side, pct: equalShare, isPrimary: false }]);
     });
     setShowAddPicker(false);
   }
