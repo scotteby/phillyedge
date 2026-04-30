@@ -83,7 +83,23 @@ function addDays(date: string, days: number): string {
  * or 04:00 UTC (EDT) — using 05:00Z for both bounds is safe in EST and gives a
  * 1-hour DST overlap in EDT (still better than missing observations).
  */
+/**
+ * Fetch actual weather for a given date.
+ * - Recent data (≤7 days ago): NWS KPHL hourly observations
+ * - Historical data (>7 days ago): Open-Meteo archive API
+ *   (free, no API key, Philadelphia Airport coords 39.8729°N 75.2408°W)
+ */
 export async function fetchActualWeather(date: string): Promise<ActualWeather> {
+  const cutoff = new Date();
+  cutoff.setUTCDate(cutoff.getUTCDate() - 7);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  return date >= cutoffStr
+    ? fetchActualWeatherNWS(date)
+    : fetchActualWeatherOpenMeteo(date);
+}
+
+async function fetchActualWeatherNWS(date: string): Promise<ActualWeather> {
   const start = `${date}T05:00:00Z`;
   const end   = `${addDays(date, 1)}T05:00:00Z`;
   const url   = `https://api.weather.gov/stations/KPHL/observations?start=${start}&end=${end}`;
@@ -127,6 +143,47 @@ export async function fetchActualWeather(date: string): Promise<ActualWeather> {
   }
 
   return { date, actualHigh: max, actualLow: min, rained };
+}
+
+async function fetchActualWeatherOpenMeteo(date: string): Promise<ActualWeather> {
+  // Open-Meteo archive: daily summary for Philadelphia Airport (KPHL) coordinates
+  const url = [
+    "https://archive-api.open-meteo.com/v1/archive",
+    `?latitude=39.8729&longitude=-75.2408`,
+    `&start_date=${date}&end_date=${date}`,
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum`,
+    `&temperature_unit=fahrenheit`,
+    `&precipitation_unit=inch`,
+    `&timezone=America%2FNew_York`,
+  ].join("");
+
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Open-Meteo fetch failed for ${date}: ${res.status}`);
+  }
+
+  const json  = await res.json() as {
+    daily?: {
+      temperature_2m_max:  (number | null)[];
+      temperature_2m_min:  (number | null)[];
+      precipitation_sum:   (number | null)[];
+    };
+  };
+
+  const high   = json.daily?.temperature_2m_max?.[0]  ?? null;
+  const low    = json.daily?.temperature_2m_min?.[0]   ?? null;
+  const precip = json.daily?.precipitation_sum?.[0]    ?? null;
+
+  if (high === null || low === null) {
+    throw new Error(`No temperature data from Open-Meteo for ${date}`);
+  }
+
+  return {
+    date,
+    actualHigh: Math.round(high),
+    actualLow:  Math.round(low),
+    rained:     precip != null && precip > 0,
+  };
 }
 
 // ── Forecast result rows ──────────────────────────────────────────────────────
