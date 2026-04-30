@@ -146,6 +146,9 @@ function isActiveOrder(trade: Trade): boolean {
   if (!trade.kalshi_order_id) return false;
   if (trade.outcome !== "pending") return false; // don't poll settled/sold/boosted trades
   const s = trade.order_status;
+  // Also re-poll filled orders whose contract count was never stored (filled_count = 0 / null)
+  // so that "if correct" payout reflects the actual fill rather than an estimate.
+  if (s === "filled" && (trade.filled_count ?? 0) === 0) return true;
   return s === "resting" || s === "partially_filled" || s === null;
 }
 

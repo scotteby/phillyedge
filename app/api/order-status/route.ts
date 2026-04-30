@@ -95,6 +95,9 @@ export async function GET(req: NextRequest) {
     count:            kalshiOrder.count,
     original_count:   kalshiOrder.original_count,
     remaining_count:  kalshiOrder.remaining_count,
+    avg_price:        kalshiOrder.avg_price,
+    average_price:    kalshiOrder.average_price,
+    avg_fill_price:   kalshiOrder.avg_fill_price,
   }));
 
   const rawStatus   = String(kalshiOrder.status ?? "");
@@ -117,16 +120,36 @@ export async function GET(req: NextRequest) {
   const remainingCount = remaining;
   const now            = new Date().toISOString();
 
+  // Average fill price in cents (Kalshi field names vary by version)
+  // Convert to 0–1 decimal for entry_yes_price storage.
+  const avgPriceCents = Number(
+    kalshiOrder.avg_price ??
+    kalshiOrder.average_price ??
+    kalshiOrder.avg_fill_price ??
+    0
+  );
+
+  // Build the update — only overwrite entry_yes_price when we have a real avg price,
+  // so we don't clobber a good stored value with 0.
+  const dbUpdate: Record<string, unknown> = {
+    order_status:    orderStatus,
+    filled_count:    filledCount,
+    remaining_count: remainingCount,
+    last_checked_at: now,
+  };
+
+  if (avgPriceCents > 0 && filledCount > 0) {
+    const side = String(trade.side ?? "").toLowerCase();
+    // avg_price from Kalshi is the price of the side you bought (YES or NO), in cents
+    const avgDecimal    = avgPriceCents / 100;
+    dbUpdate.entry_yes_price = side === "yes" ? avgDecimal : 1 - avgDecimal;
+  }
+
   // ── Persist order fields to Supabase ────────────────────────────────────
 
   await supabase
     .from("trades")
-    .update({
-      order_status:    orderStatus,
-      filled_count:    filledCount,
-      remaining_count: remainingCount,
-      last_checked_at: now,
-    })
+    .update(dbUpdate)
     .eq("id", tradeId);
 
   // ── Check market resolution (public endpoint, no auth) ───────────────────
