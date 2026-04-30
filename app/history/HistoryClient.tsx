@@ -94,6 +94,22 @@ function calcPotentialProfit(trade: Trade): number | null {
   return parseFloat((contracts * (1 - entryPrice)).toFixed(2));
 }
 
+/**
+ * The amount of capital actually deployed in this trade.
+ * For a resting/cancelled order with a partial fill, only the filled
+ * contracts represent real capital — the rest was never spent.
+ */
+function deployedAmount(trade: Trade): number {
+  const entryYes   = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const filled     = trade.filled_count ?? 0;
+  const isPartial  =
+    (trade.order_status === "canceled" || trade.order_status === "resting" ||
+     trade.order_status === "partially_filled") &&
+    filled > 0 && filled * entryPrice < trade.amount_usdc - 0.01;
+  return isPartial ? filled * entryPrice : trade.amount_usdc;
+}
+
 /** True when a cancelled/boosted order filled 0 contracts — nothing was spent. */
 function isVoidCancelled(trade: Trade): boolean {
   // Sold trades are always real — never hide them regardless of order_status
@@ -1443,7 +1459,7 @@ function TradeCard({
             <span className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
               {trade.side}
             </span>
-            <span className="text-slate-300">${trade.amount_usdc.toFixed(2)}</span>
+            <span className="text-slate-300">${deployedAmount(trade).toFixed(2)}</span>
             {(() => {
               const sig = deriveTradeSignal(trade.side, trade.edge);
               return <SignalBadge signal={sig} title={signalTooltip(sig, trade.side, trade.edge)} />;
@@ -1600,7 +1616,7 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
 
         {/* Amount */}
         <td className="py-3 pr-4 text-slate-200 whitespace-nowrap">
-          ${trade.amount_usdc.toFixed(2)}
+          ${deployedAmount(trade).toFixed(2)}
         </td>
 
         {/* Signal — derived from side + edge so NO trades show the correct signal */}
