@@ -416,7 +416,7 @@ function BestTradeBanner({
           </span>
         )}
         <span className={`ml-1.5 font-bold ${clr.accent}`}>
-          {sigLabel} · {edgeSign(best.edge)}pt edge
+          {sigLabel} · {isNo ? `${Math.abs(best.edge)}pt NO edge` : `${edgeSign(best.edge)}pt YES edge`}
         </span>
       </p>
     </div>
