@@ -384,11 +384,6 @@ function BestTradeBanner({
   const sideLabel  = isNo ? "NO" : "YES";
   const priceStr   = isNo ? `${Math.round((1 - best.yes_price) * 100)}¢` : `${best.yes_pct}%`;
 
-  // Secondary brackets of the same trade direction (for "Also consider" line)
-  const secondary = brackets
-    .filter((b) => b.trade_side === best.trade_side && b.market_id !== best.market_id && b.confidence > 0)
-    .sort((a, b) => isNo ? a.edge - b.edge : b.edge - a.edge);
-
   return (
     <div className={`${outerClass} ${clr.bg}`}>
       {/* Case 3: forecast bracket overpriced — show context before best-alternative trade */}
@@ -424,23 +419,6 @@ function BestTradeBanner({
           {sigLabel} · {edgeSign(best.edge)}pt edge
         </span>
       </p>
-      {!compact && secondary.length > 0 && (
-        <p className="text-xs text-slate-400 mt-1">
-          Also consider:{" "}
-          {secondary.map((b, i) => {
-            const bSig   = bracketDisplaySignal(b.trade_side, b.edge);
-            const bLabel = SIGNAL_LABELS[bSig];
-            return (
-              <span key={b.market_id}>
-                {i > 0 && " · "}
-                <span className="text-slate-200 font-medium">{b.range.label} {sideLabel}</span>
-                {" "}<span className="font-medium">{bLabel}</span>
-                <span className={palette[bSig]?.accent ?? "text-slate-400"}> {edgeSign(b.edge)}pt</span>
-              </span>
-            );
-          })}
-        </p>
-      )}
     </div>
   );
 }
