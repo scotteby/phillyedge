@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { BracketGroup, BracketMarket } from "@/lib/brackets";
 import type { MarketTimeStatus } from "@/lib/nws";
+import { bracketDisplaySignal } from "@/lib/signal";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,11 +28,25 @@ interface LegResult {
 // ── Allocation helpers ────────────────────────────────────────────────────────
 
 /**
+ * True when a bracket deserves a default position leg.
+ *
+ * Rules:
+ *  - Must have buy or strong-buy signal on the RECOMMENDED side (bracketDisplaySignal)
+ *  - Forecast bracket with edge ≤ 0 is always excluded (Case 2/3 — fairly priced or
+ *    market overconfident); it appears instead as an optional checkbox row in the UI.
+ *  - Neutral brackets (gray button) are never included by default.
+ */
+function isActionable(b: BracketMarket): boolean {
+  if (b.relation === "forecast" && b.edge <= 0) return false;
+  const sig = bracketDisplaySignal(b.trade_side, b.edge);
+  return sig === "buy" || sig === "strong-buy";
+}
+
+/**
  * Build the default legs from signal data.
  *
- * Inclusion: any bracket whose trade_side is "YES" or "NO" — this covers all
- * non-neutral signals including cascaded NO brackets (e.g. <64° showing NO
- * due to directional cascade even with a small raw edge).
+ * Inclusion: only brackets with buy/strong-buy signal on their recommended side.
+ * Forecast brackets with negative edge and neutral-direction NO brackets are excluded.
  *
  * Allocation (two-phase, then normalize to 100%):
  *
@@ -47,9 +62,8 @@ interface LegResult {
  *   Final pcts are integers that sum to exactly 100 via largest-remainder rounding.
  */
 function buildDefaultLegs(brackets: BracketMarket[]): PositionLeg[] {
-  // Use trade_side (signal-derived) not raw edge — includes cascaded NO brackets
-  const yesBrackets = brackets.filter((b) => b.trade_side === "YES" && b.confidence > 0);
-  const noBrackets  = brackets.filter((b) => b.trade_side === "NO"  && b.confidence > 0);
+  const yesBrackets = brackets.filter((b) => b.trade_side === "YES" && b.confidence > 0 && isActionable(b));
+  const noBrackets  = brackets.filter((b) => b.trade_side === "NO"  && b.confidence > 0 && isActionable(b));
 
   if (yesBrackets.length === 0 && noBrackets.length === 0) return [];
 
@@ -153,6 +167,31 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
   const [phase,         setPhase]         = useState<"build" | "placing" | "done">("build");
   const [error,         setError]         = useState<string | null>(null);
   const [showAddPicker, setShowAddPicker] = useState(false);
+
+  // Optional forecast bracket (Case 2/3 — negative edge, excluded from default legs)
+  const forecastOptional = group.brackets.find(
+    (b) => b.relation === "forecast" && b.edge <= 0 && b.confidence > 0
+  ) ?? null;
+  const forecastInLegs = forecastOptional
+    ? legs.some((l) => l.bracket.market_id === forecastOptional.market_id && l.side === "YES")
+    : false;
+
+  function toggleForecastBracket(include: boolean) {
+    if (!forecastOptional) return;
+    if (include) {
+      // Add as a custom leg if not already present
+      const id = `${forecastOptional.market_id}-YES-forecast`;
+      setLegs((prev) => {
+        if (prev.some((l) => l.bracket.market_id === forecastOptional.market_id && l.side === "YES")) return prev;
+        return [...prev, { id, bracket: forecastOptional, side: "YES", pct: 10, isPrimary: false }];
+      });
+    } else {
+      // Remove any YES leg for this bracket
+      setLegs((prev) => prev.filter(
+        (l) => !(l.bracket.market_id === forecastOptional.market_id && l.side === "YES")
+      ));
+    }
+  }
 
   const totalBudget = parseFloat(budget) || 0;
 
@@ -527,6 +566,33 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
               <p className="font-medium">No actionable signals found</p>
               <p className="text-xs mt-1">All brackets are neutral or have no forecast.</p>
             </div>
+          )}
+
+          {/* Optional forecast bracket checkbox (Cases 2 & 3) */}
+          {!isPlacing && forecastOptional && (
+            <label className={`flex items-center gap-2.5 cursor-pointer select-none px-3 py-2 rounded-lg border transition-colors ${
+              forecastInLegs
+                ? "bg-emerald-500/8 border-emerald-500/20"
+                : "bg-slate-700/20 border-slate-700/40 opacity-70 hover:opacity-90"
+            }`}>
+              <input
+                type="checkbox"
+                checked={forecastInLegs}
+                onChange={(e) => toggleForecastBracket(e.target.checked)}
+                className="accent-emerald-500 w-3.5 h-3.5 shrink-0"
+              />
+              <span className="text-sm text-slate-300">
+                <span className="font-medium text-white">{forecastOptional.range.label} YES</span>
+                {" "}
+                <span className="text-slate-400">
+                  · forecast bracket
+                  {forecastOptional.edge <= -8
+                    ? ` · market overconfident (${forecastOptional.yes_pct}% vs our ${forecastOptional.confidence}%)`
+                    : ` · fairly priced`}
+                  {" · "}{Math.round(forecastOptional.yes_price * 100)}¢
+                </span>
+              </span>
+            </label>
           )}
 
           {/* Add custom trade */}
