@@ -373,7 +373,9 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [sellModalTrade, setSellModalTrade]   = useState<Trade | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
-  const [viewMode, setViewMode]   = useState<"active" | "all">("active");
+  const [viewMode, setViewMode]   = useState<"active" | "history">("active");
+  const [historyDays, setHistoryDays] = useState<7 | 30 | 90 | null>(30);
+  const [showCancelled, setShowCancelled] = useState(false);
   const [balance, setBalance]     = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
@@ -674,28 +676,60 @@ export default function HistoryClient({ initialTrades }: Props) {
 
   // ── Filtered trade sets ───────────────────────────────────────────────────
 
-  // Void-cancelled trades (order placed but 0 contracts filled) are excluded
-  // from stats — they never deployed capital, so they didn't happen.
-  const effectiveTrades = trades.filter((t) => !isVoidCancelled(t) && t.order_status !== "resting");
+  /** Convert an ISO timestamp (UTC) to local-timezone YYYY-MM-DD. */
+  function dateInLocalTZ(iso: string): string {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
 
-  // Void-cancelled trades (boosted predecessors, cancelled-unfilled orders) are hidden
-  // in both views — they represent no deployed capital and no real position.
+  // Void-cancelled = boosted predecessors or cancelled orders with 0 fills.
+  // Hidden by default in both views (no capital deployed, no real position).
   const nonVoidTrades = trades.filter((t) => !isVoidCancelled(t));
-  const visibleTrades = nonVoidTrades;
 
-  // ── Summary stats (always off effectiveTrades) ────────────────────────────
+  // ── Active & Settled view ─────────────────────────────────────────────────
+  // Scope: all open positions (any age) + trades placed or settled today (local TZ).
+  // "Today" uses the user's local calendar date so the view stays small over time.
+  const activeVisibleTrades = nonVoidTrades.filter((t) => {
+    if (t.outcome === "pending") return true;            // all open positions
+    if (dateInLocalTZ(t.created_at) === today) return true;  // placed today
+    if (                                                      // settled today
+      (t.outcome === "win" || t.outcome === "loss" || t.outcome === "sold") &&
+      t.last_checked_at && dateInLocalTZ(t.last_checked_at) === today
+    ) return true;
+    return false;
+  });
 
-  const total    = effectiveTrades.length;
-  const settled  = effectiveTrades.filter((t) => t.outcome !== "pending");
-  const pending  = effectiveTrades.filter((t) => t.outcome === "pending");
-  const wins     = effectiveTrades.filter((t) => t.outcome === "win").length;
-  const winRate  = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
+  // ── History view ──────────────────────────────────────────────────────────
+  // Scope: all trades within the selected date range.
+  // showCancelled=false (default) hides void-cancelled; true surfaces them.
+  const historyStartDate: string | null = historyDays != null ? (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - historyDays);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })() : null;
+
+  const historyBase = showCancelled ? trades : nonVoidTrades;
+  const historyVisibleTrades = historyBase.filter((t) =>
+    historyStartDate === null || dateInLocalTZ(t.created_at) >= historyStartDate
+  );
+
+  // ── Active view for the current mode ─────────────────────────────────────
+  const visibleTrades = viewMode === "history" ? historyVisibleTrades : activeVisibleTrades;
+
+  // ── Summary stats — scoped to visible trades ──────────────────────────────
+  // Exclude resting-only orders from counts (no capital deployed yet).
+  const summaryTrades = visibleTrades.filter((t) => t.order_status !== "resting" || (t.filled_count ?? 0) > 0);
+
+  const total      = summaryTrades.length;
+  const settled    = summaryTrades.filter((t) => t.outcome !== "pending");
+  const pending    = summaryTrades.filter((t) => t.outcome === "pending");
+  const wins       = summaryTrades.filter((t) => t.outcome === "win").length;
   const settledPnl = settled.reduce((s, t) => s + (t.pnl ?? 0), 0);
 
   const liveCount = pending.filter((t) => livePrices.has(t.market_id)).length;
 
   // Position-based P&L math
-  const summaryPositions = buildPositions(effectiveTrades);
+  const summaryPositions = buildPositions(summaryTrades);
 
   // Realized P&L from settled/sold positions
   const totalRealizedPnl = summaryPositions.reduce((s, p) => s + p.realizedPnl, 0);
@@ -767,10 +801,10 @@ export default function HistoryClient({ initialTrades }: Props) {
               Active &amp; Settled
             </button>
             <button
-              onClick={() => setViewMode("all")}
-              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${viewMode === "all" ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
+              onClick={() => setViewMode("history")}
+              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${viewMode === "history" ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
             >
-              All trades
+              History
             </button>
           </div>
 
@@ -802,42 +836,99 @@ export default function HistoryClient({ initialTrades }: Props) {
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <SummaryCard
-          label="Active Markets"
-          value={String(activeMarketCount)}
-          sub={pending.length > 0 ? `${pending.length} open trade${pending.length !== 1 ? "s" : ""}` : "No pending trades"}
-        />
-        <SummaryCard
-          label="Total Trades"
-          value={String(total)}
-          sub={settled.length > 0 ? `${wins}/${settled.length} settled won` : "No settled trades"}
-        />
-        <SummaryCard
-          label="Net Projected P&L"
-          value={pending.length > 0
-            ? `${projectedPnl >= 0 ? "+" : ""}$${projectedPnl.toFixed(2)}`
-            : settledPnl !== 0 ? `${settledPnl >= 0 ? "+" : ""}$${settledPnl.toFixed(2)}` : "—"}
-          valueClass={
-            (pending.length > 0 ? projectedPnl : settledPnl) > 0 ? "text-emerald-400" :
-            (pending.length > 0 ? projectedPnl : settledPnl) < 0 ? "text-red-400" : "text-white"}
-          sub={pending.length > 0
-            ? liveCount > 0 ? `live · ${liveCount} of ${pending.length} priced` : "mark-to-market"
-            : settled.length > 0 ? `${settled.length} settled` : undefined}
-          projected={pending.length > 0}
-        />
+        {viewMode === "active" ? (
+          <>
+            <SummaryCard
+              label="Active Markets"
+              value={String(activeMarketCount)}
+              sub={pending.length > 0 ? `${pending.length} open trade${pending.length !== 1 ? "s" : ""}` : "No pending trades"}
+            />
+            <SummaryCard
+              label="Total Trades"
+              value={String(total)}
+              sub={settled.length > 0 ? `${wins}/${settled.length} settled won` : "No settled trades"}
+            />
+            <SummaryCard
+              label="Net Projected P&L"
+              value={pending.length > 0
+                ? `${projectedPnl >= 0 ? "+" : ""}$${projectedPnl.toFixed(2)}`
+                : settledPnl !== 0 ? `${settledPnl >= 0 ? "+" : ""}$${settledPnl.toFixed(2)}` : "—"}
+              valueClass={
+                (pending.length > 0 ? projectedPnl : settledPnl) > 0 ? "text-emerald-400" :
+                (pending.length > 0 ? projectedPnl : settledPnl) < 0 ? "text-red-400" : "text-white"}
+              sub={pending.length > 0
+                ? liveCount > 0 ? `live · ${liveCount} of ${pending.length} priced` : "mark-to-market"
+                : settled.length > 0 ? `${settled.length} settled` : undefined}
+              projected={pending.length > 0}
+            />
+          </>
+        ) : (
+          <>
+            <SummaryCard
+              label="Trades in Range"
+              value={String(total)}
+              sub={settled.length > 0 ? `${settled.length} settled` : "No settled trades"}
+            />
+            <SummaryCard
+              label="Win Rate"
+              value={settled.length > 0 ? `${Math.round((wins / settled.length) * 100)}%` : "—"}
+              sub={settled.length > 0 ? `${wins}/${settled.length} won` : "No settled trades"}
+            />
+            <SummaryCard
+              label="Net P&L"
+              value={settledPnl !== 0 ? `${settledPnl >= 0 ? "+" : ""}$${settledPnl.toFixed(2)}` : "—"}
+              valueClass={settledPnl > 0 ? "text-emerald-400" : settledPnl < 0 ? "text-red-400" : "text-white"}
+              sub={settled.length > 0 ? "realized" : undefined}
+            />
+          </>
+        )}
       </div>
+
+      {/* History filters */}
+      {viewMode === "history" && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Range</span>
+          <div className="flex gap-1">
+            {([7, 30, 90, null] as const).map((d) => (
+              <button
+                key={String(d)}
+                onClick={() => setHistoryDays(d)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+                  ${historyDays === d
+                    ? "bg-sky-600 text-white"
+                    : "bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"}`}
+              >
+                {d == null ? "All time" : `${d}d`}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none ml-2">
+            <input
+              type="checkbox"
+              checked={showCancelled}
+              onChange={(e) => setShowCancelled(e.target.checked)}
+              className="rounded border-slate-600 bg-slate-800 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900"
+            />
+            Show cancelled / voided
+          </label>
+        </div>
+      )}
 
       {/* Trades — empty state or grouped list */}
       {visibleTrades.length === 0 ? (
         <div className="text-center py-20 text-slate-500">
           <p className="text-4xl mb-3">📊</p>
           <p className="text-lg font-medium">
-            {trades.length === 0 ? "No trades logged yet" : "No active or settled trades"}
+            {trades.length === 0 ? "No trades logged yet" :
+             viewMode === "history" ? "No trades in this date range" :
+             "No active or settled trades"}
           </p>
           <p className="text-sm mt-1">
             {trades.length === 0
               ? "Head to Markets to find edges and log your first trade."
-              : <button onClick={() => setViewMode("all")} className="text-sky-400 hover:text-sky-300 underline">Show all trades</button>}
+              : viewMode === "active"
+              ? <button onClick={() => setViewMode("history")} className="text-sky-400 hover:text-sky-300 underline">View history</button>
+              : null}
           </p>
         </div>
       ) : (
