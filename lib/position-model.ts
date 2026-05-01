@@ -66,11 +66,9 @@ export function hasFills(t: Trade): boolean {
 /** True when this trade is a pending/resting order with no contracts yet. */
 export function isOnlyPendingOrder(t: Trade): boolean {
   if (hasFills(t)) return false;
-  return (
-    t.order_status === "resting" ||
-    (t.order_status === "canceled" && (t.filled_count ?? 0) === 0) ||
-    t.outcome === "boosted"
-  );
+  // Only truly resting orders count as "pending" — cancelled and boosted orders
+  // are done and should not appear in the Pending Orders section.
+  return t.order_status === "resting";
 }
 
 // ── Main builder ──────────────────────────────────────────────────────────────
