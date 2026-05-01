@@ -105,11 +105,11 @@ export async function GET(req: NextRequest) {
 
   const now = new Date().toISOString();
 
-  // Average fill price from actual cost ÷ contracts filled.
-  // yes_price_dollars / no_price_dollars are the limit prices (0–1 scale).
-  // taker_fill_cost_dollars is the real dollars spent on fills.
-  const takerCost  = parseFloat(String(kalshiOrder.taker_fill_cost_dollars ?? 0));
-  const side       = String(trade.side ?? "").toLowerCase();
+  // Average fill price — prefer avg_yes_price / avg_fill_price from Kalshi (native avg fill
+  // price), fall back to the limit price (yes_price_dollars).
+  // NOTE: taker_fill_cost_dollars is the taker FEE, NOT total fill cost — do NOT divide it
+  // by contract count to derive a price.
+  const side = String(trade.side ?? "").toLowerCase();
 
   // Build the update — only overwrite entry_yes_price when we have real fill data
   const dbUpdate: Record<string, unknown> = {
@@ -119,14 +119,25 @@ export async function GET(req: NextRequest) {
     last_checked_at: now,
   };
 
-  if (effectiveFilled > 0 && takerCost > 0) {
-    // Actual average cost per contract for the side we bought
-    const avgSidePrice   = takerCost / effectiveFilled;
-    dbUpdate.entry_yes_price = side === "yes" ? avgSidePrice : 1 - avgSidePrice;
-  } else if (effectiveFilled > 0) {
-    // No fill cost — use the limit price from the order
-    const yesPrice = parseFloat(String(kalshiOrder.yes_price_dollars ?? 0));
-    if (yesPrice > 0) dbUpdate.entry_yes_price = yesPrice;
+  if (effectiveFilled > 0) {
+    // Try the native avg-fill-price fields first (most accurate)
+    const rawAvg =
+      kalshiOrder.avg_yes_price  ??
+      kalshiOrder.avg_fill_price ??
+      null;
+
+    if (rawAvg != null) {
+      const n = Number(rawAvg);
+      // Kalshi can return integer cents (e.g. 45) or decimal (e.g. 0.45)
+      const avgYesPrice = n > 1 ? n / 100 : n;
+      if (avgYesPrice > 0 && avgYesPrice < 1) {
+        dbUpdate.entry_yes_price = side === "yes" ? avgYesPrice : 1 - avgYesPrice;
+      }
+    } else {
+      // Fall back to the order's limit price
+      const yesPrice = parseFloat(String(kalshiOrder.yes_price_dollars ?? 0));
+      if (yesPrice > 0) dbUpdate.entry_yes_price = yesPrice;
+    }
   }
 
   // ── Persist order fields to Supabase ────────────────────────────────────
