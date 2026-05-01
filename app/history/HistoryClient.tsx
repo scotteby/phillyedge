@@ -653,7 +653,7 @@ export default function HistoryClient({ initialTrades }: Props) {
 
   // Void-cancelled trades (order placed but 0 contracts filled) are excluded
   // from stats — they never deployed capital, so they didn't happen.
-  const effectiveTrades = trades.filter((t) => !isVoidCancelled(t));
+  const effectiveTrades = trades.filter((t) => !isVoidCancelled(t) && t.order_status !== "resting");
 
   // What's shown in the list depends on the view mode
   const restingTrades  = trades.filter((t) => t.order_status === "resting");
