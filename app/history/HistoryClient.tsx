@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { Trade, OrderStatus } from "@/lib/types";
 import SignalBadge from "@/components/SignalBadge";
 import { deriveTradeSignal, signalTooltip } from "@/lib/signal";
+import { buildPositionGroups, type PositionGroup } from "@/lib/position-groups";
 
 interface Props {
   initialTrades: Trade[];
@@ -383,6 +384,15 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
   const { collapsed, toggle: toggleGroup } = useCollapsedGroups();
+  const [expandedPositions, setExpandedPositions] = useState<Set<string>>(new Set());
+
+  function togglePosition(key: string) {
+    setExpandedPositions((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
 
   // Live price state
   const [livePrices, setLivePrices]       = useState<Map<string, number>>(new Map());
@@ -854,63 +864,145 @@ export default function HistoryClient({ initialTrades }: Props) {
                 />
 
                 {/* Trades within group */}
-                {!isCollapsed && (
-                  <>
-                    {/* ── Mobile ──────────────────────────────────────── */}
-                    <div className="md:hidden mt-2 pl-2 space-y-2">
-                      {group.trades.map((trade) => (
-                        <TradeCard
-                          key={trade.id}
-                          trade={trade}
-                          liveYesPrice={livePrices.get(trade.market_id)}
-                          today={today}
-                          canceling={canceling === trade.id}
-                          onCancel={() => cancelOrder(trade.id)}
-                          selling={selling === trade.id}
-                          onSell={() => setSellModalTrade(trade)}
-                          boosting={boosting === trade.id}
-                          onBoost={() => setBoostModalTrade(trade)}
-                          groupMode
-                        />
-                      ))}
-                    </div>
+                {!isCollapsed && (() => {
+                  const positionGroups = buildPositionGroups(group.trades);
+                  return (
+                    <>
+                      {/* ── Mobile ──────────────────────────────────────── */}
+                      <div className="md:hidden mt-2 pl-2 space-y-2">
+                        {positionGroups.map((pg) => {
+                          if (pg.trades.length === 1) {
+                            const trade = pg.trades[0];
+                            return (
+                              <TradeCard
+                                key={trade.id}
+                                trade={trade}
+                                liveYesPrice={livePrices.get(trade.market_id)}
+                                today={today}
+                                canceling={canceling === trade.id}
+                                onCancel={() => cancelOrder(trade.id)}
+                                selling={selling === trade.id}
+                                onSell={() => setSellModalTrade(trade)}
+                                boosting={boosting === trade.id}
+                                onBoost={() => setBoostModalTrade(trade)}
+                                groupMode
+                              />
+                            );
+                          }
+                          const isExpanded = expandedPositions.has(pg.key);
+                          return (
+                            <div key={pg.key}>
+                              <PositionGroupCard
+                                pg={pg}
+                                expanded={isExpanded}
+                                onToggle={() => togglePosition(pg.key)}
+                                livePrices={livePrices}
+                                today={today}
+                                canceling={canceling}
+                                selling={selling}
+                                boosting={boosting}
+                                onCancel={cancelOrder}
+                                onSell={(t) => setSellModalTrade(t)}
+                                onBoost={(t) => setBoostModalTrade(t)}
+                              />
+                              {isExpanded && pg.trades.map((trade) => (
+                                <TradeCard
+                                  key={trade.id}
+                                  trade={trade}
+                                  liveYesPrice={livePrices.get(trade.market_id)}
+                                  today={today}
+                                  canceling={canceling === trade.id}
+                                  onCancel={() => cancelOrder(trade.id)}
+                                  selling={selling === trade.id}
+                                  onSell={() => setSellModalTrade(trade)}
+                                  boosting={boosting === trade.id}
+                                  onBoost={() => setBoostModalTrade(trade)}
+                                  groupMode
+                                  isSubRow
+                                />
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
 
-                    {/* ── Desktop ──────────────────────────────────────── */}
-                    <div className="hidden md:block mt-1 overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
-                            <th className="py-2 pr-4 pl-4">Bracket</th>
-                            <th className="py-2 pr-4">Side</th>
-                            <th className="py-2 pr-4">Amount</th>
-                            <th className="py-2 pr-4">Signal</th>
-                            <th className="py-2 pr-4">Edge</th>
-                            <th className="py-2 pr-4">Order</th>
-                            <th className="py-2 pr-4">Outcome</th>
-                            <th className="py-2">P&L</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-700/30">
-                          {group.trades.map((trade) => (
-                            <TradeRow
-                              key={trade.id}
-                              trade={trade}
-                              liveYesPrice={livePrices.get(trade.market_id)}
-                              today={today}
-                              canceling={canceling === trade.id}
-                              onCancel={() => cancelOrder(trade.id)}
-                              selling={selling === trade.id}
-                              onSell={() => setSellModalTrade(trade)}
-                              boosting={boosting === trade.id}
-                              onBoost={() => setBoostModalTrade(trade)}
-                              groupMode
-                            />
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                )}
+                      {/* ── Desktop ──────────────────────────────────────── */}
+                      <div className="hidden md:block mt-1 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
+                              <th className="py-2 pr-4 pl-4">Bracket</th>
+                              <th className="py-2 pr-4">Side</th>
+                              <th className="py-2 pr-4">Amount</th>
+                              <th className="py-2 pr-4">Signal</th>
+                              <th className="py-2 pr-4">Edge</th>
+                              <th className="py-2 pr-4">Order</th>
+                              <th className="py-2 pr-4">Outcome</th>
+                              <th className="py-2">P&L</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-700/30">
+                            {positionGroups.map((pg) => {
+                              if (pg.trades.length === 1) {
+                                const trade = pg.trades[0];
+                                return (
+                                  <TradeRow
+                                    key={trade.id}
+                                    trade={trade}
+                                    liveYesPrice={livePrices.get(trade.market_id)}
+                                    today={today}
+                                    canceling={canceling === trade.id}
+                                    onCancel={() => cancelOrder(trade.id)}
+                                    selling={selling === trade.id}
+                                    onSell={() => setSellModalTrade(trade)}
+                                    boosting={boosting === trade.id}
+                                    onBoost={() => setBoostModalTrade(trade)}
+                                    groupMode
+                                  />
+                                );
+                              }
+                              const isExpanded = expandedPositions.has(pg.key);
+                              return (
+                                <>
+                                  <PositionGroupRow
+                                    key={pg.key}
+                                    pg={pg}
+                                    expanded={isExpanded}
+                                    onToggle={() => togglePosition(pg.key)}
+                                    livePrices={livePrices}
+                                    today={today}
+                                    canceling={canceling}
+                                    selling={selling}
+                                    boosting={boosting}
+                                    onCancel={cancelOrder}
+                                    onSell={(t) => setSellModalTrade(t)}
+                                    onBoost={(t) => setBoostModalTrade(t)}
+                                  />
+                                  {isExpanded && pg.trades.map((trade) => (
+                                    <TradeRow
+                                      key={trade.id}
+                                      trade={trade}
+                                      liveYesPrice={livePrices.get(trade.market_id)}
+                                      today={today}
+                                      canceling={canceling === trade.id}
+                                      onCancel={() => cancelOrder(trade.id)}
+                                      selling={selling === trade.id}
+                                      onSell={() => setSellModalTrade(trade)}
+                                      boosting={boosting === trade.id}
+                                      onBoost={() => setBoostModalTrade(trade)}
+                                      groupMode
+                                      isSubRow
+                                    />
+                                  ))}
+                                </>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             );
           })}
@@ -1378,6 +1470,8 @@ interface TradeRowProps {
   onBoost: () => void;
   /** When true: hide date column; show bracket label instead of full question */
   groupMode?: boolean;
+  /** When true: rendered as a sub-row under a PositionGroupRow/Card */
+  isSubRow?: boolean;
 }
 
 // ── Outcome badge ─────────────────────────────────────────────────────────────
@@ -1402,7 +1496,7 @@ function OutcomeBadge({ outcome }: { outcome: Trade["outcome"] }) {
 
 function TradeCard({
   trade, liveYesPrice, today, canceling, onCancel, selling, onSell, boosting, onBoost,
-  groupMode = false,
+  groupMode = false, isSubRow = false,
 }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -1429,6 +1523,7 @@ function TradeCard({
   const contractCount = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : null);
 
   return (
+    <div className={isSubRow ? "ml-3 border-l-2 border-slate-700/50" : ""}>
     <div
       className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden cursor-pointer select-none"
       onClick={() => setExpanded((v) => !v)}
@@ -1554,12 +1649,13 @@ function TradeCard({
         </div>
       )}
     </div>
+    </div>
   );
 }
 
 // ── Desktop table row ─────────────────────────────────────────────────────────
 
-function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, onSell, boosting, onBoost, groupMode = false }: TradeRowProps) {
+function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, onSell, boosting, onBoost, groupMode = false, isSubRow = false }: TradeRowProps) {
   const [expanded, setExpanded] = useState(false);
 
   const edgeColor =
@@ -1590,7 +1686,7 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
   return (
     <>
       <tr
-        className="hover:bg-slate-800/50 transition-colors cursor-pointer"
+        className={`transition-colors cursor-pointer ${isSubRow ? "hover:bg-slate-700/30" : "hover:bg-slate-800/50"}`}
         onClick={() => setExpanded((v) => !v)}
       >
         {/* Date — hidden in groupMode */}
@@ -1601,9 +1697,9 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
         )}
 
         {/* Market / Bracket */}
-        <td className={`py-3 pr-4 max-w-[220px] ${groupMode ? "pl-4" : ""}`}>
+        <td className={`py-3 pr-4 max-w-[220px] ${groupMode ? (isSubRow ? "pl-8" : "pl-4") : ""}`}>
           <a href={trade.polymarket_url ?? "#"} target="_blank" rel="noopener noreferrer"
-            className="text-slate-200 hover:text-sky-400 transition-colors line-clamp-2 leading-snug"
+            className={`hover:text-sky-400 transition-colors line-clamp-2 leading-snug ${isSubRow ? "text-slate-400" : "text-slate-200"}`}
             onClick={(e) => e.stopPropagation()}>
             {groupMode ? getBracketLabel(trade.market_question) : trade.market_question}
           </a>
@@ -1745,5 +1841,237 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
         </tr>
       )}
     </>
+  );
+}
+
+// ── PositionGroupRow (desktop) ────────────────────────────────────────────────
+
+interface PositionGroupRowProps {
+  pg:         PositionGroup;
+  expanded:   boolean;
+  onToggle:   () => void;
+  livePrices: Map<string, number>;
+  today:      string;
+  canceling:  string | null;
+  selling:    string | null;
+  boosting:   string | null;
+  onCancel:   (id: string) => void;
+  onSell:     (t: Trade) => void;
+  onBoost:    (t: Trade) => void;
+}
+
+function PositionGroupRow({
+  pg, expanded, onToggle, livePrices,
+}: PositionGroupRowProps) {
+  const edgeColor =
+    pg.avgEdge >= 25 ? "text-emerald-400" :
+    pg.avgEdge >= 10 ? "text-sky-400" :
+    pg.avgEdge <= -10 ? "text-red-400" : "text-slate-400";
+
+  // Order status badge: derive a synthetic status
+  const syntheticStatus: { label: string; classes: string } | null = (() => {
+    switch (pg.orderStatusSummary) {
+      case "filled":  return { label: "🟢 Filled",  classes: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" };
+      case "partial": return { label: "🟠 Partial",  classes: "bg-orange-500/15 text-orange-300 border-orange-500/30" };
+      case "resting": return { label: "🟡 Resting",  classes: "bg-yellow-500/15 text-yellow-300 border-yellow-500/30" };
+      default:        return null;
+    }
+  })();
+
+  // P&L: use totalPnl if available, else sum mark-to-market across trades
+  const liveYesPrices = pg.trades.map((t) => livePrices.get(t.market_id));
+  const anyLivePrice  = liveYesPrices.some((p) => p != null);
+  const mtmSum        = anyLivePrice
+    ? pg.trades.reduce((sum, t) => {
+        const live = livePrices.get(t.market_id);
+        if (live == null) return sum;
+        const entryYes   = t.entry_yes_price ?? (t.side === "YES" ? t.market_pct / 100 : 1 - t.market_pct / 100);
+        const entryPrice = t.side === "YES" ? entryYes : 1 - entryYes;
+        const livePrice  = t.side === "YES" ? live : 1 - live;
+        if (entryPrice <= 0) return sum;
+        const isPartialOrder = (t.order_status === "resting" || t.order_status === "canceled") && (t.filled_count ?? 0) > 0;
+        const amount = isPartialOrder ? t.filled_count! * entryPrice : t.amount_usdc;
+        return sum + amount * (livePrice / entryPrice - 1);
+      }, 0)
+    : null;
+
+  const pnlDisplay = pg.totalPnl != null ? pg.totalPnl : mtmSum;
+  const pnlIsEstimate = pg.totalPnl == null && mtmSum != null;
+  const pnlColor = pnlDisplay == null ? "text-slate-600"
+    : pnlDisplay >= 0 ? "text-emerald-400" : "text-red-400";
+
+  const sig = deriveTradeSignal(pg.side, pg.avgEdge);
+
+  return (
+    <tr
+      className="bg-slate-800/30 hover:bg-slate-800/60 cursor-pointer transition-colors"
+      onClick={onToggle}
+    >
+      {/* Bracket */}
+      <td className="py-3 pr-4 pl-4 max-w-[220px]">
+        <div className="flex items-center gap-1.5">
+          <span className={`text-slate-500 text-base leading-none transition-transform duration-150 shrink-0 ${expanded ? "rotate-90" : ""}`}>
+            ›
+          </span>
+          <span className="text-slate-200 line-clamp-2 leading-snug">{pg.bracket}</span>
+        </div>
+      </td>
+
+      {/* Side */}
+      <td className="py-3 pr-4">
+        <span className={`font-semibold ${pg.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+          {pg.side}
+        </span>
+      </td>
+
+      {/* Amount */}
+      <td className="py-3 pr-4 whitespace-nowrap">
+        <span className="text-slate-200">${pg.totalAmount.toFixed(2)}</span>
+        <p className="text-xs text-slate-500 mt-0.5">{pg.trades.length} fills</p>
+      </td>
+
+      {/* Signal */}
+      <td className="py-3 pr-4">
+        <SignalBadge signal={sig} title={signalTooltip(sig, pg.side, pg.avgEdge)} />
+      </td>
+
+      {/* Edge */}
+      <td className={`py-3 pr-4 font-semibold ${edgeColor} whitespace-nowrap`}>
+        {pg.avgEdge > 0 ? "+" : ""}{pg.avgEdge}
+        {pg.edgesVary && (
+          <p className="text-xs text-slate-500 font-normal mt-0.5">({pg.minEdge}..{pg.maxEdge})</p>
+        )}
+      </td>
+
+      {/* Order status */}
+      <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex flex-col gap-1 items-start">
+          {syntheticStatus ? (
+            <>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${syntheticStatus.classes}`}>
+                {syntheticStatus.label}
+              </span>
+              {pg.orderStatusSummary === "partial" && (
+                <span className="text-xs text-slate-500">
+                  {pg.filledContracts} of {pg.totalContracts}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="text-xs text-slate-400">Mixed</span>
+          )}
+        </div>
+      </td>
+
+      {/* Outcome */}
+      <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+        <OutcomeBadge outcome={pg.outcome} />
+      </td>
+
+      {/* P&L */}
+      <td className="py-3 whitespace-nowrap">
+        <div className="flex flex-col">
+          {pnlDisplay != null ? (
+            <span className={`font-semibold ${pnlColor}`}>
+              {pnlIsEstimate && "~"}{pnlDisplay >= 0 ? "+" : ""}${pnlDisplay.toFixed(2)}
+            </span>
+          ) : (
+            <span className="text-slate-600">—</span>
+          )}
+          {pg.totalPotentialProfit != null && (
+            <span className="text-xs text-slate-500 mt-0.5">
+              🎯 +${pg.totalPotentialProfit.toFixed(2)} if correct
+            </span>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ── PositionGroupCard (mobile) ────────────────────────────────────────────────
+
+function PositionGroupCard({
+  pg, expanded, onToggle, livePrices,
+}: PositionGroupRowProps) {
+  const edgeColor =
+    pg.avgEdge >= 25 ? "text-emerald-400" :
+    pg.avgEdge >= 10 ? "text-sky-400" :
+    pg.avgEdge <= -10 ? "text-red-400" : "text-slate-400";
+
+  const liveYesPrices = pg.trades.map((t) => livePrices.get(t.market_id));
+  const anyLivePrice  = liveYesPrices.some((p) => p != null);
+  const mtmSum        = anyLivePrice
+    ? pg.trades.reduce((sum, t) => {
+        const live = livePrices.get(t.market_id);
+        if (live == null) return sum;
+        const entryYes   = t.entry_yes_price ?? (t.side === "YES" ? t.market_pct / 100 : 1 - t.market_pct / 100);
+        const entryPrice = t.side === "YES" ? entryYes : 1 - entryYes;
+        const livePrice  = t.side === "YES" ? live : 1 - live;
+        if (entryPrice <= 0) return sum;
+        const isPartialOrder = (t.order_status === "resting" || t.order_status === "canceled") && (t.filled_count ?? 0) > 0;
+        const amount = isPartialOrder ? t.filled_count! * entryPrice : t.amount_usdc;
+        return sum + amount * (livePrice / entryPrice - 1);
+      }, 0)
+    : null;
+
+  const pnlDisplay   = pg.totalPnl != null ? pg.totalPnl : mtmSum;
+  const pnlIsEstimate = pg.totalPnl == null && mtmSum != null;
+  const pnlColor     = pnlDisplay == null ? ""
+    : pnlDisplay >= 0 ? "text-emerald-400" : "text-red-400";
+
+  const sig = deriveTradeSignal(pg.side, pg.avgEdge);
+
+  return (
+    <div
+      className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden cursor-pointer select-none"
+      onClick={onToggle}
+    >
+      <div className="p-4 space-y-3">
+        {/* Row 1: bracket + chevron */}
+        <div className="flex items-start gap-2">
+          <span className="flex-1 text-slate-200 text-sm leading-snug font-medium">
+            {pg.bracket}
+          </span>
+          <span className={`shrink-0 text-slate-500 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>
+            ›
+          </span>
+        </div>
+
+        {/* Row 2: badges + P&L */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
+            <span className={`font-semibold ${pg.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+              {pg.side}
+            </span>
+            <span className="text-slate-300">${pg.totalAmount.toFixed(2)}</span>
+            <span className="text-xs text-slate-500">{pg.trades.length} fills</span>
+            <SignalBadge signal={sig} title={signalTooltip(sig, pg.side, pg.avgEdge)} />
+            <span className={`text-xs font-semibold ${edgeColor}`}>
+              {pg.avgEdge > 0 ? "+" : ""}{pg.avgEdge}{pg.edgesVary ? ` (${pg.minEdge}..${pg.maxEdge})` : ""}
+            </span>
+          </div>
+          <div className="shrink-0 text-right">
+            {pnlDisplay != null ? (
+              <span className={`font-medium ${pnlColor}`}>
+                {pnlIsEstimate && "~"}{pnlDisplay >= 0 ? "+" : ""}${pnlDisplay.toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-slate-600 text-sm">—</span>
+            )}
+            {pg.totalPotentialProfit != null && (
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                🎯 +${pg.totalPotentialProfit.toFixed(2)} if correct
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Outcome badge */}
+      <div className="px-4 pb-3">
+        <OutcomeBadge outcome={pg.outcome} />
+      </div>
+    </div>
   );
 }
