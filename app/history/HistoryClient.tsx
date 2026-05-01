@@ -907,12 +907,16 @@ export default function HistoryClient({ initialTrades }: Props) {
                     <>
                       {/* ── Mobile ──────────────────────────────────────── */}
                       <div className="md:hidden mt-2 pl-2 space-y-2">
-                        {positions.filter((p) => p.fills.length > 0).map((pos) => (
+                        {positions.filter((p) => p.fills.length > 0).map((pos) => {
+                          const isSingle   = pos.fills.length === 1;
+                          const isExpanded = isSingle || expandedKeys.has(pos.key);
+                          return (
                           <div key={pos.key}>
                             <PositionCard
                               pos={pos}
-                              expanded={expandedKeys.has(pos.key)}
+                              expanded={isExpanded}
                               onToggle={() => toggleExpand(pos.key)}
+                              hasChildren={!isSingle}
                               livePrices={livePrices}
                               canceling={canceling}
                               selling={selling}
@@ -921,7 +925,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                               onSell={(t) => setSellModalTrade(t)}
                               onBoost={(t) => setBoostModalTrade(t)}
                             />
-                            {expandedKeys.has(pos.key) && pos.fills.map((t) => (
+                            {isExpanded && pos.fills.map((t) => (
                               <FillSubCard
                                 key={t.id}
                                 trade={t}
@@ -937,7 +941,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                               />
                             ))}
                           </div>
-                        ))}
+                        ); })}
                         {allPending.length > 0 && (
                           <div className="mt-2">
                             <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold px-1 pb-1">Pending Orders</p>
@@ -968,13 +972,17 @@ export default function HistoryClient({ initialTrades }: Props) {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-700/30">
-                            {positions.filter((p) => p.fills.length > 0).map((pos) => (
+                            {positions.filter((p) => p.fills.length > 0).map((pos) => {
+                              const isSingle   = pos.fills.length === 1;
+                              const isExpanded = isSingle || expandedKeys.has(pos.key);
+                              return (
                               <>
                                 <PositionRow
                                   key={pos.key}
                                   pos={pos}
-                                  expanded={expandedKeys.has(pos.key)}
+                                  expanded={isExpanded}
                                   onToggle={() => toggleExpand(pos.key)}
+                                  hasChildren={!isSingle}
                                   livePrices={livePrices}
                                   canceling={canceling}
                                   selling={selling}
@@ -983,7 +991,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                   onSell={(t) => setSellModalTrade(t)}
                                   onBoost={(t) => setBoostModalTrade(t)}
                                 />
-                                {expandedKeys.has(pos.key) && pos.fills.map((t) => (
+                                {isExpanded && pos.fills.map((t) => (
                                   <FillSubRow
                                     key={t.id}
                                     trade={t}
@@ -999,7 +1007,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                   />
                                 ))}
                               </>
-                            ))}
+                            ); })}
                             {allPending.length > 0 && (
                               <>
                                 <tr>
@@ -2209,9 +2217,10 @@ function PositionGroupCard({
 // ── Position-based components ─────────────────────────────────────────────────
 
 interface PositionRowProps {
-  pos:       Position;
-  expanded:  boolean;
-  onToggle:  () => void;
+  pos:        Position;
+  expanded:   boolean;
+  onToggle:   () => void;
+  hasChildren?: boolean;  // false → hide chevron and make row non-interactive
   livePrices: Map<string, number>;
   canceling:  string | null;
   selling:    string | null;
@@ -2272,7 +2281,7 @@ function PositionSummaryText({ pos }: { pos: Position }) {
 
 // ── Desktop position row ──────────────────────────────────────────────────────
 
-function PositionRow({ pos, expanded, onToggle, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
+function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
 
@@ -2290,15 +2299,17 @@ function PositionRow({ pos, expanded, onToggle, livePrices, canceling, selling, 
 
   return (
     <tr
-      className="bg-slate-800/20 hover:bg-slate-800/50 cursor-pointer transition-colors"
-      onClick={onToggle}
+      className={`bg-slate-800/20 transition-colors ${hasChildren ? "hover:bg-slate-800/50 cursor-pointer" : ""}`}
+      onClick={hasChildren ? onToggle : undefined}
     >
       {/* Bracket */}
       <td className="py-3 pr-4 pl-4 max-w-[220px]">
         <div className="flex items-center gap-1.5">
-          <span className={`text-slate-500 text-base leading-none transition-transform duration-150 shrink-0 ${expanded ? "rotate-90" : ""}`}>
-            ›
-          </span>
+          {hasChildren && (
+            <span className={`text-slate-500 text-base leading-none transition-transform duration-150 shrink-0 ${expanded ? "rotate-90" : ""}`}>
+              ›
+            </span>
+          )}
           <span className="text-slate-200 line-clamp-2 leading-snug">{pos.bracket}</span>
         </div>
       </td>
@@ -2515,7 +2526,7 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
 
 // ── Mobile position card ─────────────────────────────────────────────────────
 
-function PositionCard({ pos, expanded, onToggle, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
+function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
   const unrealized = (livePrice != null && pos.netContracts > 0)
@@ -2531,14 +2542,16 @@ function PositionCard({ pos, expanded, onToggle, livePrices, canceling, selling,
 
   return (
     <div
-      className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden cursor-pointer select-none"
-      onClick={onToggle}
+      className={`bg-slate-800 border border-slate-700 rounded-xl overflow-hidden select-none ${hasChildren ? "cursor-pointer" : ""}`}
+      onClick={hasChildren ? onToggle : undefined}
     >
       <div className="p-4 space-y-3">
         {/* Row 1: bracket + chevron */}
         <div className="flex items-start gap-2">
           <span className="flex-1 text-slate-200 text-sm leading-snug font-medium">{pos.bracket}</span>
-          <span className={`shrink-0 text-slate-500 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>›</span>
+          {hasChildren && (
+            <span className={`shrink-0 text-slate-500 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>›</span>
+          )}
         </div>
 
         {/* Row 2: badges + P&L */}
