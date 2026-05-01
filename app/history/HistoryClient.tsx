@@ -385,7 +385,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [markSoldTrade, setMarkSoldTrade]     = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
   const [markingSold, setMarkingSold] = useState<string | null>(null);
-  const [viewMode, setViewMode]   = useState<"active" | "resting" | "all">("active");
+  const [viewMode, setViewMode]   = useState<"active" | "all">("active");
   const [balance, setBalance]     = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
@@ -707,13 +707,9 @@ export default function HistoryClient({ initialTrades }: Props) {
   const effectiveTrades = trades.filter((t) => !isVoidCancelled(t) && t.order_status !== "resting");
 
   // What's shown in the list depends on the view mode
-  const restingTrades  = trades.filter((t) => t.order_status === "resting");
   // Active mode shows all non-void trades — pending orders appear in subsection within market groups
   const nonVoidTrades  = trades.filter((t) => !isVoidCancelled(t));
-  const visibleTrades  =
-    viewMode === "all"     ? trades :
-    viewMode === "resting" ? restingTrades :
-    nonVoidTrades;
+  const visibleTrades  = viewMode === "all" ? trades : nonVoidTrades;
 
   // ── Summary stats (always off effectiveTrades) ────────────────────────────
 
@@ -802,15 +798,6 @@ export default function HistoryClient({ initialTrades }: Props) {
               Active &amp; Settled
             </button>
             <button
-              onClick={() => setViewMode("resting")}
-              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${viewMode === "resting" ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
-            >
-              Orders
-              {restingTrades.length > 0 && (
-                <span className="ml-1 text-yellow-400">({restingTrades.length})</span>
-              )}
-            </button>
-            <button
               onClick={() => setViewMode("all")}
               className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${viewMode === "all" ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
             >
@@ -882,15 +869,11 @@ export default function HistoryClient({ initialTrades }: Props) {
         <div className="text-center py-20 text-slate-500">
           <p className="text-4xl mb-3">📊</p>
           <p className="text-lg font-medium">
-            {trades.length === 0 ? "No trades logged yet"
-              : viewMode === "resting" ? "No open orders"
-              : "No active or settled trades"}
+            {trades.length === 0 ? "No trades logged yet" : "No active or settled trades"}
           </p>
           <p className="text-sm mt-1">
             {trades.length === 0
               ? "Head to Markets to find edges and log your first trade."
-              : viewMode === "resting"
-              ? <button onClick={() => setViewMode("active")} className="text-sky-400 hover:text-sky-300 underline">Show active &amp; settled trades</button>
               : <button onClick={() => setViewMode("all")} className="text-sky-400 hover:text-sky-300 underline">Show all trades</button>}
           </p>
         </div>
