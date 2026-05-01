@@ -30,6 +30,84 @@ function todayET(): string {
   }).replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2"); // MM/DD/YYYY → YYYY-MM-DD
 }
 
+/**
+ * Scrape the NWS observation history page (KPHL) and return today's min/max
+ * air temperature in °F, rounded to the nearest integer.
+ *
+ * Why: the NWS JSON API stores temperature in Celsius.  Our cToF() rounds
+ * after converting, which can differ by 1°F from the authoritative reading
+ * (e.g. 7.78°C → 46.0°F in the API, but the official Fahrenheit reading is
+ * 46.9°F which rounds to 47°F).  The obhistory HTML page exposes the native
+ * Fahrenheit value directly, matching what Kalshi uses for settlement.
+ *
+ * Column layout in data rows (0-indexed):
+ *   0 = Date (day-of-month, e.g. "1" or "01")
+ *   1 = Time (HH:MM)
+ *   2 = Wind  3 = Vis  4 = Weather  5 = Sky Cond.
+ *   6 = Air temperature (°F)   ← what we want
+ *   7 = Dew point  8 = RH  9 = Wind Chill  10 = Heat Index
+ *   11–12 = Pressure  13–15 = Precipitation
+ */
+async function fetchObHistoryTemps(): Promise<{ low: number | null; high: number | null }> {
+  const empty = { low: null, high: null };
+  try {
+    const res = await fetch("https://forecast.weather.gov/data/obhistory/KPHL.html", {
+      headers: { "User-Agent": "PhillyEdge/1.0 (scott.m.eby@gmail.com)" },
+      next: { revalidate: 300 },
+    });
+    if (!res.ok) {
+      console.warn("[nws] obhistory fetch failed:", res.status);
+      return empty;
+    }
+
+    const html = await res.text();
+
+    // Today's day-of-month in ET as a number (1–31, no leading zero)
+    const todayDay = parseInt(
+      new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", day: "numeric" }),
+      10,
+    );
+
+    let minTemp: number | null = null;
+    let maxTemp: number | null = null;
+
+    // Iterate over all <tr> blocks
+    const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let rowMatch: RegExpExecArray | null;
+
+    while ((rowMatch = rowRe.exec(html)) !== null) {
+      const cells: string[] = [];
+      const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+      let cellMatch: RegExpExecArray | null;
+      while ((cellMatch = cellRe.exec(rowMatch[1])) !== null) {
+        cells.push(cellMatch[1].replace(/<[^>]+>/g, "").trim());
+      }
+
+      if (cells.length < 7) continue;
+
+      // Column 0 = day-of-month; skip rows from other days
+      const day = parseInt(cells[0], 10);
+      if (isNaN(day) || day !== todayDay) continue;
+
+      // Column 6 = air temperature in °F (may be decimal, e.g. 46.9)
+      const temp = parseFloat(cells[6]);
+      if (isNaN(temp)) continue;
+
+      if (minTemp === null || temp < minTemp) minTemp = temp;
+      if (maxTemp === null || temp > maxTemp) maxTemp = temp;
+    }
+
+    console.log(`[nws] obhistory KPHL day=${todayDay}: low=${minTemp}°F high=${maxTemp}°F`);
+    return {
+      low:  minTemp !== null ? Math.round(minTemp) : null,
+      high: maxTemp !== null ? Math.round(maxTemp) : null,
+    };
+  } catch (err) {
+    console.error("[nws] obhistory error:", err);
+    return empty;
+  }
+}
+
 export async function fetchNWSObservation(): Promise<NWSObservation> {
   const empty: NWSObservation = {
     observedLow: null, observedHigh: null,
@@ -38,21 +116,29 @@ export async function fetchNWSObservation(): Promise<NWSObservation> {
   };
 
   try {
-    // Fetch the past 26 hours — guarantees full coverage of today's ET calendar day
-    // regardless of DST.  We filter by ET date below so yesterday's tail is excluded.
+    // Run the NWS JSON API fetch (for timestamps) and the obhistory HTML scrape
+    // (for accurate Fahrenheit readings) in parallel.
     const start = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
     const url   = `https://api.weather.gov/stations/KPHL/observations?start=${start}`;
 
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "PhillyEdge/1.0 (scott.m.eby@gmail.com)",
-        Accept: "application/geo+json",
-      },
-      next: { revalidate: 300 }, // re-fetch at most every 5 min
-    });
+    // Fire both requests in parallel
+    const [res, obhTemps] = await Promise.all([
+      fetch(url, {
+        headers: {
+          "User-Agent": "PhillyEdge/1.0 (scott.m.eby@gmail.com)",
+          Accept: "application/geo+json",
+        },
+        next: { revalidate: 300 },
+      }),
+      fetchObHistoryTemps(),
+    ]);
 
     if (!res.ok) {
       console.warn("[nws] Observations fetch failed:", res.status);
+      // Return obhistory temps if we at least got those
+      if (obhTemps.low !== null || obhTemps.high !== null) {
+        return { ...empty, observedLow: obhTemps.low, observedHigh: obhTemps.high };
+      }
       return empty;
     }
 
@@ -107,16 +193,21 @@ export async function fetchNWSObservation(): Promise<NWSObservation> {
       }
     }
 
+    // Prefer obhistory values (native °F, avoids C→F rounding errors).
+    // Fall back to the C→F converted values from the JSON API.
+    const finalLow  = obhTemps.low  ?? runningMin;
+    const finalHigh = obhTemps.high ?? runningMax;
+
     console.log(
       `[nws] KPHL today (${etToday}):` +
-      `  low=${runningMin}°F (reached ${lowReachedAt})` +
-      `  high=${runningMax}°F (reached ${highReachedAt})` +
+      `  low=${finalLow}°F (obh=${obhTemps.low}, api=${runningMin}, reached ${lowReachedAt})` +
+      `  high=${finalHigh}°F (obh=${obhTemps.high}, api=${runningMax}, reached ${highReachedAt})` +
       `  (${readings.length} readings)`
     );
 
     return {
-      observedLow:   runningMin,
-      observedHigh:  runningMax,
+      observedLow:   finalLow,
+      observedHigh:  finalHigh,
       highReachedAt,
       lowReachedAt,
       readingCount:  readings.length,
