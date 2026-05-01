@@ -2,7 +2,7 @@
   "name": "PhillyEdge",
   "short_name": "PhillyEdge",
   "description": "Weather prediction trading for Philadelphia",
-  "start_url": "/",
+  "start_url": "/forecast",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0a0e1a",
