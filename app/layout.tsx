@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Nav from "@/components/Nav";
@@ -15,7 +15,29 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "PhillyEdge — Weather Trading Dashboard",
-  description: "Polymarket weather trading dashboard for the Philadelphia region",
+  description: "Weather prediction trading for Philadelphia",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "PhillyEdge",
+  },
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+    icon: [
+      { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/favicon-16.png", sizes: "16x16", type: "image/png" },
+    ],
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#0a0e1a",
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
