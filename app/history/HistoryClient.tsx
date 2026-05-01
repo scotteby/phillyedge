@@ -576,6 +576,25 @@ export default function HistoryClient({ initialTrades }: Props) {
     }
   }
 
+  /**
+   * Called when the position-level Sell button is clicked.
+   * - 1 fill: open SellModal for confirmation as usual.
+   * - Multiple fills: sell each sequentially without a modal
+   *   (clicking Sell at the position level is already confirmation enough).
+   */
+  function handlePositionSell(fills: Trade[]) {
+    if (fills.length === 1) {
+      setSellModalTrade(fills[0]);
+    } else {
+      // Sell each fill in sequence; no additional modal
+      void (async () => {
+        for (const fill of fills) {
+          await sellPosition(fill.id);
+        }
+      })();
+    }
+  }
+
   // ── Boost order ──────────────────────────────────────────────────────────
 
   async function boostOrder(tradeId: string, newPriceCents: number) {
@@ -885,7 +904,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                               selling={selling}
                               boosting={boosting}
                               onCancel={cancelOrder}
-                              onSell={(t) => setSellModalTrade(t)}
+                              onSell={(fills) => handlePositionSell(fills)}
                               onBoost={(t) => setBoostModalTrade(t)}
                             />
                             {/* Multi-fill only: show fill sub-cards when expanded */}
@@ -950,7 +969,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                   selling={selling}
                                   boosting={boosting}
                                   onCancel={cancelOrder}
-                                  onSell={(t) => setSellModalTrade(t)}
+                                  onSell={(fills) => handlePositionSell(fills)}
                                   onBoost={(t) => setBoostModalTrade(t)}
                                 />
                                 {/* Multi-fill only: show fill sub-rows when expanded */}
@@ -2179,7 +2198,7 @@ interface PositionRowProps {
   selling:     string | null;
   boosting:    string | null;
   onCancel:    (id: string) => void;
-  onSell:      (t: Trade) => void;
+  onSell:      (fills: Trade[]) => void;  // all sellable fills for this position
   onBoost:     (t: Trade) => void;
 }
 
@@ -2246,9 +2265,8 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
   const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
   const isEstimate = unrealized != null;
 
-  // Sell: show on position row only when there's exactly one sellable fill
-  const sellableFills  = pos.fills.filter((t) => isSellable(t));
-  const singleSellable = sellableFills.length === 1 ? sellableFills[0] : null;
+  // Sell: show whenever there's at least one sellable fill
+  const sellableFills = pos.fills.filter((t) => isSellable(t));
 
   return (
     <tr
@@ -2300,12 +2318,12 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
                 🎯 +${pos.ifCorrectPayout.toFixed(2)} if correct
               </span>
             )}
-            {singleSellable && (
+            {sellableFills.length > 0 && (
               <div className="mt-1">
                 <ActionButton
                   variant="sell"
-                  onClick={(e) => { e.stopPropagation(); onSell(singleSellable); }}
-                  loading={selling === singleSellable.id}
+                  onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
+                  loading={sellableFills.some((t) => selling === t.id)}
                   label="Sell"
                   loadingLabel="Selling…"
                 />
@@ -2475,8 +2493,7 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
   const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
   const isEstimate = unrealized != null;
 
-  const sellableFills  = pos.fills.filter((t) => isSellable(t));
-  const singleSellable = sellableFills.length === 1 ? sellableFills[0] : null;
+  const sellableFills = pos.fills.filter((t) => isSellable(t));
 
   return (
     <div
@@ -2520,10 +2537,10 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
         </div>
       </div>
 
-      {singleSellable && (
+      {sellableFills.length > 0 && (
         <div className="px-4 pb-3" onClick={(e) => e.stopPropagation()}>
-          <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(singleSellable); }}
-            loading={selling === singleSellable.id} label="Sell" loadingLabel="Selling…" />
+          <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
+            loading={sellableFills.some((t) => selling === t.id)} label="Sell" loadingLabel="Selling…" />
         </div>
       )}
     </div>
