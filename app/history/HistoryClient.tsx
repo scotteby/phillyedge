@@ -336,18 +336,8 @@ function buildGroups(trades: Trade[], today: string): TradeGroup[] {
     groups.push({ key, series, seriesName, targetDate, dateLabel, trades: sorted });
   }
 
-  // Sort groups: today → tomorrow → future (asc) → past (desc)
-  return groups.sort((a, b) => {
-    const rank = (g: TradeGroup) =>
-      g.targetDate === today    ? 0 :
-      g.targetDate === tomorrow ? 1 :
-      g.targetDate > today      ? 2 : 3;
-    const ra = rank(a), rb = rank(b);
-    if (ra !== rb) return ra - rb;
-    return ra <= 2
-      ? a.targetDate.localeCompare(b.targetDate)   // future: oldest first
-      : b.targetDate.localeCompare(a.targetDate);  // past: newest first
-  });
+  // Sort groups: descending by close date (furthest future first → most recent past last)
+  return groups.sort((a, b) => b.targetDate.localeCompare(a.targetDate));
 }
 
 function useCollapsedGroups() {
