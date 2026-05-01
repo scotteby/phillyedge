@@ -382,9 +382,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [selling, setSelling]     = useState<string | null>(null);
   const [sellModalTrade, setSellModalTrade]   = useState<Trade | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
-  const [markSoldTrade, setMarkSoldTrade]     = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
-  const [markingSold, setMarkingSold] = useState<string | null>(null);
   const [viewMode, setViewMode]   = useState<"active" | "all">("active");
   const [balance, setBalance]     = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
@@ -575,41 +573,6 @@ export default function HistoryClient({ initialTrades }: Props) {
       addToast(`Sell error: ${String(err)}`, "error");
     } finally {
       setSelling(null);
-    }
-  }
-
-  // ── Mark as sold (manual reconciliation) ────────────────────────────────
-
-  async function markAsSold(tradeId: string, sellPriceCents: number | null) {
-    setMarkingSold(tradeId);
-    setMarkSoldTrade(null);
-    try {
-      const res  = await fetch("/api/mark-sold", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ trade_id: tradeId, sell_price_cents: sellPriceCents ?? undefined }),
-      });
-      const json = await res.json();
-      if (res.ok) {
-        setTrades((prev) =>
-          prev.map((t) =>
-            t.id === tradeId
-              ? { ...t, outcome: "sold" as Trade["outcome"], pnl: json.pnl ?? null }
-              : t
-          )
-        );
-        const pnl = json.pnl as number | null;
-        addToast(
-          `✅ Marked as sold${pnl != null ? ` — ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}` : ""}`,
-          "fill"
-        );
-      } else {
-        addToast(`Mark sold failed: ${json.error ?? "unknown error"}`, "error");
-      }
-    } catch (err) {
-      addToast(`Mark sold error: ${String(err)}`, "error");
-    } finally {
-      setMarkingSold(null);
     }
   }
 
@@ -921,11 +884,9 @@ export default function HistoryClient({ initialTrades }: Props) {
                               canceling={canceling}
                               selling={selling}
                               boosting={boosting}
-                              markingSold={markingSold}
                               onCancel={cancelOrder}
                               onSell={(t) => setSellModalTrade(t)}
                               onBoost={(t) => setBoostModalTrade(t)}
-                              onMarkSold={(t) => setMarkSoldTrade(t)}
                             />
                             {/* Multi-fill only: show fill sub-cards when expanded */}
                             {!isSingle && isExpanded && pos.fills.map((t) => (
@@ -936,11 +897,9 @@ export default function HistoryClient({ initialTrades }: Props) {
                                 canceling={canceling === t.id}
                                 selling={selling === t.id}
                                 boosting={boosting === t.id}
-                                markingSold={markingSold === t.id}
                                 onCancel={() => cancelOrder(t.id)}
                                 onSell={() => setSellModalTrade(t)}
                                 onBoost={() => setBoostModalTrade(t)}
-                                onMarkSold={() => setMarkSoldTrade(t)}
                               />
                             ))}
                           </div>
@@ -990,11 +949,9 @@ export default function HistoryClient({ initialTrades }: Props) {
                                   canceling={canceling}
                                   selling={selling}
                                   boosting={boosting}
-                                  markingSold={markingSold}
                                   onCancel={cancelOrder}
                                   onSell={(t) => setSellModalTrade(t)}
                                   onBoost={(t) => setBoostModalTrade(t)}
-                                  onMarkSold={(t) => setMarkSoldTrade(t)}
                                 />
                                 {/* Multi-fill only: show fill sub-rows when expanded */}
                                 {!isSingle && isExpanded && pos.fills.map((t) => (
@@ -1005,11 +962,9 @@ export default function HistoryClient({ initialTrades }: Props) {
                                     canceling={canceling === t.id}
                                     selling={selling === t.id}
                                     boosting={boosting === t.id}
-                                    markingSold={markingSold === t.id}
                                     onCancel={() => cancelOrder(t.id)}
                                     onSell={() => setSellModalTrade(t)}
                                     onBoost={() => setBoostModalTrade(t)}
-                                    onMarkSold={() => setMarkSoldTrade(t)}
                                   />
                                 ))}
                               </>
@@ -1065,14 +1020,6 @@ export default function HistoryClient({ initialTrades }: Props) {
         />
       )}
 
-      {markSoldTrade && (
-        <MarkSoldModal
-          trade={markSoldTrade}
-          saving={markingSold === markSoldTrade.id}
-          onConfirm={(priceCents) => markAsSold(markSoldTrade.id, priceCents)}
-          onClose={() => setMarkSoldTrade(null)}
-        />
-      )}
     </div>
   );
 }
@@ -2231,11 +2178,9 @@ interface PositionRowProps {
   canceling:   string | null;
   selling:     string | null;
   boosting:    string | null;
-  markingSold?: string | null;
   onCancel:    (id: string) => void;
   onSell:      (t: Trade) => void;
   onBoost:     (t: Trade) => void;
-  onMarkSold?: (t: Trade) => void;
 }
 
 function StateBadge({ state, firstFill }: { state: PositionState; firstFill?: Trade }) {
@@ -2289,7 +2234,7 @@ function PositionSummaryText({ pos }: { pos: Position }) {
 
 // ── Desktop position row ──────────────────────────────────────────────────────
 
-function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, markingSold, onCancel, onSell, onBoost, onMarkSold }: PositionRowProps) {
+function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
 
@@ -2301,13 +2246,9 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
   const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
   const isEstimate = unrealized != null;
 
-  // Sell / Mark Sold: show on position row only for single-fill positions
+  // Sell: show on position row only when there's exactly one sellable fill
   const sellableFills  = pos.fills.filter((t) => isSellable(t));
   const singleSellable = sellableFills.length === 1 ? sellableFills[0] : null;
-  // Mark Sold: only when there's exactly one fill and it's a pending fill with contracts
-  const singleFill      = pos.fills.length === 1 ? pos.fills[0] : null;
-  const showMarkSoldBtn = singleFill != null && singleFill.outcome === "pending"
-    && getContractsForFill(singleFill) > 0 && onMarkSold != null;
 
   return (
     <tr
@@ -2359,26 +2300,15 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
                 🎯 +${pos.ifCorrectPayout.toFixed(2)} if correct
               </span>
             )}
-            {(singleSellable || showMarkSoldBtn) && (
-              <div className="mt-1 flex gap-1 flex-wrap">
-                {singleSellable && (
-                  <ActionButton
-                    variant="sell"
-                    onClick={(e) => { e.stopPropagation(); onSell(singleSellable); }}
-                    loading={selling === singleSellable.id}
-                    label="Sell"
-                    loadingLabel="Selling…"
-                  />
-                )}
-                {showMarkSoldBtn && singleFill && (
-                  <ActionButton
-                    variant="reconcile"
-                    onClick={(e) => { e.stopPropagation(); onMarkSold!(singleFill); }}
-                    loading={markingSold === singleFill.id}
-                    label="Mark Sold"
-                    loadingLabel="Saving…"
-                  />
-                )}
+            {singleSellable && (
+              <div className="mt-1">
+                <ActionButton
+                  variant="sell"
+                  onClick={(e) => { e.stopPropagation(); onSell(singleSellable); }}
+                  loading={selling === singleSellable.id}
+                  label="Sell"
+                  loadingLabel="Selling…"
+                />
               </div>
             )}
           </div>
@@ -2396,27 +2326,20 @@ interface FillSubRowProps {
   canceling:    boolean;
   selling:      boolean;
   boosting:     boolean;
-  markingSold:  boolean;
   onCancel:     () => void;
   onSell:       () => void;
   onBoost:      () => void;
-  onMarkSold:   () => void;
 }
 
-function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, markingSold, onCancel, onSell, onBoost, onMarkSold }: FillSubRowProps) {
+function FillSubRow({ trade, canceling, boosting, onBoost, onCancel }: FillSubRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const isSell     = trade.outcome === "sold";
-  const showSell   = isSellable(trade);
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
-  // Show "Mark Sold" on any pending fill — lets users record a sale that already happened on
-  // Kalshi but wasn't written to our DB (e.g. constraint bug, or sold externally).
-  // Shown alongside "Sell": Sell = place new order, Mark Sold = record past sale.
-  const showMarkSold = trade.outcome === "pending" && contracts > 0;
 
   const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
@@ -2461,10 +2384,6 @@ function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, marking
             </span>
           ) : null}
           <div className="flex gap-1 flex-wrap">
-            {showSell && (
-              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
-                loading={selling} label="Sell" loadingLabel="Selling…" />
-            )}
             {showBoost && (
               <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
                 loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
@@ -2472,10 +2391,6 @@ function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, marking
             {showCancel && (
               <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
                 loading={canceling} label="Cancel" loadingLabel="Canceling…" />
-            )}
-            {showMarkSold && (
-              <ActionButton variant="reconcile" onClick={(e) => { e.stopPropagation(); onMarkSold(); }}
-                loading={markingSold} label="Mark Sold" loadingLabel="Saving…" />
             )}
           </div>
         </div>
@@ -2549,7 +2464,7 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
 
 // ── Mobile position card ─────────────────────────────────────────────────────
 
-function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, markingSold, onCancel, onSell, onBoost, onMarkSold }: PositionRowProps) {
+function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
   const unrealized = (livePrice != null && pos.netContracts > 0)
@@ -2562,9 +2477,6 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
 
   const sellableFills  = pos.fills.filter((t) => isSellable(t));
   const singleSellable = sellableFills.length === 1 ? sellableFills[0] : null;
-  const singleFill      = pos.fills.length === 1 ? pos.fills[0] : null;
-  const showMarkSoldBtn = singleFill != null && singleFill.outcome === "pending"
-    && getContractsForFill(singleFill) > 0 && onMarkSold != null;
 
   return (
     <div
@@ -2608,17 +2520,10 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
         </div>
       </div>
 
-      {/* Action buttons for single-fill positions */}
-      {(singleSellable || showMarkSoldBtn) && (
-        <div className="px-4 pb-3 flex gap-1 flex-wrap" onClick={(e) => e.stopPropagation()}>
-          {singleSellable && (
-            <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(singleSellable); }}
-              loading={selling === singleSellable.id} label="Sell" loadingLabel="Selling…" />
-          )}
-          {showMarkSoldBtn && singleFill && (
-            <ActionButton variant="reconcile" onClick={(e) => { e.stopPropagation(); onMarkSold!(singleFill); }}
-              loading={markingSold === singleFill.id} label="Mark Sold" loadingLabel="Saving…" />
-          )}
+      {singleSellable && (
+        <div className="px-4 pb-3" onClick={(e) => e.stopPropagation()}>
+          <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(singleSellable); }}
+            loading={selling === singleSellable.id} label="Sell" loadingLabel="Selling…" />
         </div>
       )}
     </div>
@@ -2627,18 +2532,15 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
 
 // ── Mobile fill sub-card ─────────────────────────────────────────────────────
 
-function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, markingSold, onCancel, onSell, onBoost, onMarkSold }: FillSubRowProps) {
+function FillSubCard({ trade, liveYesPrice, canceling, boosting, onCancel, onBoost }: FillSubRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const isSell     = trade.outcome === "sold";
-  const showSell   = isSellable(trade);
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
-  const showMarkSold = trade.outcome === "pending" && contracts > 0 &&
-    !showSell && !showBoost && !showCancel;
   const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
   void liveYesPrice; // available for future MTM display
@@ -2666,12 +2568,8 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, markin
             <span className="ml-2 text-slate-600">{trade.signal} {trade.edge > 0 ? "+" : ""}{trade.edge}pt</span>
           )}
         </div>
-        {(showSell || showBoost || showCancel || showMarkSold) && (
+        {(showBoost || showCancel) && (
           <div className="flex gap-1 flex-wrap">
-            {showSell && (
-              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
-                loading={selling} label="Sell" loadingLabel="Selling…" />
-            )}
             {showBoost && (
               <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
                 loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
@@ -2679,10 +2577,6 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, markin
             {showCancel && (
               <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
                 loading={canceling} label="Cancel" loadingLabel="Canceling…" />
-            )}
-            {showMarkSold && (
-              <ActionButton variant="reconcile" onClick={(e) => { e.stopPropagation(); onMarkSold(); }}
-                loading={markingSold} label="Mark Sold" loadingLabel="Saving…" />
             )}
           </div>
         )}
