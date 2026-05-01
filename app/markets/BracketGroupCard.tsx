@@ -98,7 +98,7 @@ export default function BracketGroupCard({
           </button>
         </div>
 
-        {/* Banners — priority: confirmed > locked > warning > best trade */}
+        {/* Banners — priority: confirmed > locked > warning > current high > best trade */}
         {group.observed_value !== null ? (
           isLow ? (
             <div className="mt-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2">
@@ -127,6 +127,8 @@ export default function BracketGroupCard({
           <TimeGateBanner status="warning" isHigh={isHigh} isLow={isLow}
             currentObsF={currentObsF} currentObsAt={currentObsAt}
             highSoFarF={highSoFarF} highReachedAt={highReachedAt} highObsStatus={highObsStatus} compact />
+        ) : isHigh && highSoFarF !== null ? (
+          <CurrentHighBanner highSoFarF={highSoFarF} highReachedAt={highReachedAt ?? null} highObsStatus={highObsStatus} compact />
         ) : group.best ? (
           <BestTradeBanner best={group.best} brackets={group.brackets} forecastValue={group.forecast_value} compact />
         ) : null}
@@ -185,6 +187,8 @@ export default function BracketGroupCard({
           <TimeGateBanner status="warning" isHigh={isHigh} isLow={isLow}
             currentObsF={currentObsF} currentObsAt={currentObsAt}
             highSoFarF={highSoFarF} highReachedAt={highReachedAt} highObsStatus={highObsStatus} />
+        ) : isHigh && highSoFarF !== null ? (
+          <CurrentHighBanner highSoFarF={highSoFarF} highReachedAt={highReachedAt ?? null} highObsStatus={highObsStatus} />
         ) : group.best ? (
           <BestTradeBanner best={group.best} brackets={group.brackets} forecastValue={group.forecast_value} />
         ) : null}
@@ -233,6 +237,64 @@ export default function BracketGroupCard({
           onClose={() => setShowPositionBuilder(false)}
         />
       )}
+    </div>
+  );
+}
+
+// ── Current high temp banner ──────────────────────────────────────────────────
+// Shown in the active (pre-lock) phase when we have a live running high from NWS.
+
+function CurrentHighBanner({
+  highSoFarF, highReachedAt, highObsStatus, compact = false,
+}: {
+  highSoFarF:     number;
+  highReachedAt:  string | null;
+  highObsStatus:  DailyHighStatus;
+  compact?:       boolean;
+}) {
+  const outerClass = compact ? "mt-2 rounded-lg px-3 py-2" : "mt-3 rounded-lg px-4 py-2.5";
+  const textMd     = compact ? "text-xs"     : "text-sm";
+  const textSm     = compact ? "text-[10px]" : "text-xs";
+
+  const peakNote = highReachedAt
+    ? ` · peaked at ${fmtObsTime(highReachedAt)}`
+    : "";
+
+  if (highObsStatus === "likely-final") {
+    return (
+      <div className={`${outerClass} border bg-emerald-500/10 border-emerald-500/30`}>
+        <p className={`${textMd} text-emerald-300 font-semibold`}>
+          ✅ Current high: {highSoFarF}°F — Likely Final{peakNote}
+        </p>
+        <p className={`${textSm} text-emerald-400/70 mt-0.5`}>
+          Stable for 2+ hours · market outcome is likely determined
+        </p>
+      </div>
+    );
+  }
+
+  if (highObsStatus === "leading") {
+    return (
+      <div className={`${outerClass} border bg-orange-500/10 border-orange-500/30`}>
+        <p className={`${textMd} text-orange-300 font-semibold`}>
+          📊 Current high: {highSoFarF}°F — Leading{peakNote}
+        </p>
+        <p className={`${textSm} text-orange-400/70 mt-0.5`}>
+          2–5 PM peak window · high may still rise before market closes
+        </p>
+      </div>
+    );
+  }
+
+  // monitoring — before 2 PM, high is still building
+  return (
+    <div className={`${outerClass} border bg-sky-500/10 border-sky-500/30`}>
+      <p className={`${textMd} text-sky-300 font-semibold`}>
+        🌡️ Current high so far: {highSoFarF}°F{peakNote}
+      </p>
+      <p className={`${textSm} text-sky-400/70 mt-0.5`}>
+        Still climbing · typically peaks 2–4 PM ET
+      </p>
     </div>
   );
 }
