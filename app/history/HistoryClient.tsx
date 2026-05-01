@@ -84,8 +84,9 @@ function calcMarkToMarket(trade: Trade, liveYesPrice: number): number {
  */
 function calcPotentialProfit(trade: Trade): number | null {
   if (trade.outcome !== "pending") return null;
-  // Cancelled orders have no open position — nothing left to profit from
-  if (trade.order_status === "canceled") return null;
+  // Fully-cancelled orders (0 fills) have no open position — nothing left to profit from.
+  // Partially-cancelled (some fills) still have live contracts, so keep showing "if correct".
+  if (trade.order_status === "canceled" && (trade.filled_count ?? 0) === 0) return null;
   const entryYes   = getEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   if (entryPrice <= 0 || entryPrice >= 1) return null;
