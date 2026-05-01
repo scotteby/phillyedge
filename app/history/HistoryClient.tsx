@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { Trade, OrderStatus } from "@/lib/types";
 import SignalBadge from "@/components/SignalBadge";
 import { deriveTradeSignal, signalTooltip } from "@/lib/signal";
-import { buildPositionGroups, type PositionGroup } from "@/lib/position-groups";
+import { buildPositions, type Position, type PositionState, getEntryYesPrice as modelGetEntryYesPrice, getContractsForFill, getBracketLabel as modelGetBracketLabel } from "@/lib/position-model";
 
 interface Props {
   initialTrades: Trade[];
@@ -387,10 +387,10 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
   const { collapsed, toggle: toggleGroup } = useCollapsedGroups();
-  const [expandedPositions, setExpandedPositions] = useState<Set<string>>(new Set());
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
-  function togglePosition(key: string) {
-    setExpandedPositions((prev) => {
+  function toggleExpand(key: string) {
+    setExpandedKeys((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
@@ -670,10 +670,12 @@ export default function HistoryClient({ initialTrades }: Props) {
 
   // What's shown in the list depends on the view mode
   const restingTrades  = trades.filter((t) => t.order_status === "resting");
+  // Active mode shows all non-void trades — pending orders appear in subsection within market groups
+  const nonVoidTrades  = trades.filter((t) => !isVoidCancelled(t));
   const visibleTrades  =
     viewMode === "all"     ? trades :
     viewMode === "resting" ? restingTrades :
-    effectiveTrades;
+    nonVoidTrades;
 
   // ── Summary stats (always off effectiveTrades) ────────────────────────────
 
@@ -684,18 +686,27 @@ export default function HistoryClient({ initialTrades }: Props) {
   const winRate  = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
   const settledPnl = settled.reduce((s, t) => s + (t.pnl ?? 0), 0);
 
-  const projectedPnl = pending.reduce((sum, t) => {
-    if (hasNoPosition(t)) return sum;
-    const live = livePrices.get(t.market_id);
-    return sum + (live != null ? calcMarkToMarket(t, live) : 0);
-  }, 0);
-
-  const combinedPotential = pending.reduce((sum, t) => {
-    const p = calcPotentialProfit(t);
-    return p != null ? sum + p : sum;
-  }, 0);
-
   const liveCount = pending.filter((t) => livePrices.has(t.market_id)).length;
+
+  // Position-based P&L math
+  const summaryPositions = buildPositions(effectiveTrades);
+
+  // Realized P&L from settled/sold positions
+  const totalRealizedPnl = summaryPositions.reduce((s, p) => s + p.realizedPnl, 0);
+
+  // Unrealized P&L from open positions using live prices
+  const totalUnrealizedPnl = summaryPositions.reduce((sum, p) => {
+    if (p.netContracts <= 0) return sum;
+    const liveYes = livePrices.get(p.market_id);
+    if (liveYes == null) return sum;
+    const livePrice = p.side === "YES" ? liveYes : 1 - liveYes;
+    return sum + p.netContracts * (livePrice - p.avgBuyPrice);
+  }, 0);
+
+  const projectedPnl = totalRealizedPnl + totalUnrealizedPnl;
+
+  const combinedPotential = summaryPositions.reduce((s, p) =>
+    (p.state === "OPEN" || p.state === "PARTIALLY_CLOSED") ? s + p.ifCorrectPayout : s, 0);
 
   // ── Grouped view ─────────────────────────────────────────────────────────────
   const groups = buildGroups(visibleTrades, today);
@@ -864,69 +875,61 @@ export default function HistoryClient({ initialTrades }: Props) {
                   onToggle={() => toggleGroup(group.key)}
                   livePrices={livePrices}
                   today={today}
+                  positions={buildPositions(group.trades)}
                 />
 
                 {/* Trades within group */}
                 {!isCollapsed && (() => {
-                  const positionGroups = buildPositionGroups(group.trades);
+                  const positions = buildPositions(group.trades);
+                  const allPending = positions.flatMap((p) => p.pendingOrders);
                   return (
                     <>
                       {/* ── Mobile ──────────────────────────────────────── */}
                       <div className="md:hidden mt-2 pl-2 space-y-2">
-                        {positionGroups.map((pg) => {
-                          if (pg.trades.length === 1) {
-                            const trade = pg.trades[0];
-                            return (
-                              <TradeCard
-                                key={trade.id}
-                                trade={trade}
-                                liveYesPrice={livePrices.get(trade.market_id)}
-                                today={today}
-                                canceling={canceling === trade.id}
-                                onCancel={() => cancelOrder(trade.id)}
-                                selling={selling === trade.id}
-                                onSell={() => setSellModalTrade(trade)}
-                                boosting={boosting === trade.id}
-                                onBoost={() => setBoostModalTrade(trade)}
-                                groupMode
+                        {positions.filter((p) => p.fills.length > 0).map((pos) => (
+                          <div key={pos.key}>
+                            <PositionCard
+                              pos={pos}
+                              expanded={expandedKeys.has(pos.key)}
+                              onToggle={() => toggleExpand(pos.key)}
+                              livePrices={livePrices}
+                              canceling={canceling}
+                              selling={selling}
+                              boosting={boosting}
+                              onCancel={cancelOrder}
+                              onSell={(t) => setSellModalTrade(t)}
+                              onBoost={(t) => setBoostModalTrade(t)}
+                            />
+                            {expandedKeys.has(pos.key) && pos.fills.map((t) => (
+                              <FillSubCard
+                                key={t.id}
+                                trade={t}
+                                liveYesPrice={livePrices.get(t.market_id)}
+                                canceling={canceling === t.id}
+                                selling={selling === t.id}
+                                boosting={boosting === t.id}
+                                onCancel={() => cancelOrder(t.id)}
+                                onSell={() => setSellModalTrade(t)}
+                                onBoost={() => setBoostModalTrade(t)}
                               />
-                            );
-                          }
-                          const isExpanded = expandedPositions.has(pg.key);
-                          return (
-                            <div key={pg.key}>
-                              <PositionGroupCard
-                                pg={pg}
-                                expanded={isExpanded}
-                                onToggle={() => togglePosition(pg.key)}
-                                livePrices={livePrices}
-                                today={today}
-                                canceling={canceling}
-                                selling={selling}
-                                boosting={boosting}
-                                onCancel={cancelOrder}
-                                onSell={(t) => setSellModalTrade(t)}
-                                onBoost={(t) => setBoostModalTrade(t)}
+                            ))}
+                          </div>
+                        ))}
+                        {allPending.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold px-1 pb-1">Pending Orders</p>
+                            {allPending.map((t) => (
+                              <PendingOrderCard
+                                key={t.id}
+                                trade={t}
+                                canceling={canceling === t.id}
+                                boosting={boosting === t.id}
+                                onCancel={() => cancelOrder(t.id)}
+                                onBoost={() => setBoostModalTrade(t)}
                               />
-                              {isExpanded && pg.trades.map((trade) => (
-                                <TradeCard
-                                  key={trade.id}
-                                  trade={trade}
-                                  liveYesPrice={livePrices.get(trade.market_id)}
-                                  today={today}
-                                  canceling={canceling === trade.id}
-                                  onCancel={() => cancelOrder(trade.id)}
-                                  selling={selling === trade.id}
-                                  onSell={() => setSellModalTrade(trade)}
-                                  boosting={boosting === trade.id}
-                                  onBoost={() => setBoostModalTrade(trade)}
-                                  groupMode
-                                  isSubRow
-                                />
-                              ))}
-                            </div>
-                          );
-                        })}
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       {/* ── Desktop ──────────────────────────────────────── */}
@@ -936,70 +939,61 @@ export default function HistoryClient({ initialTrades }: Props) {
                             <tr className="text-left text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
                               <th className="py-2 pr-4 pl-4">Bracket</th>
                               <th className="py-2 pr-4">Side</th>
-                              <th className="py-2 pr-4">Amount</th>
-                              <th className="py-2 pr-4">Signal</th>
-                              <th className="py-2 pr-4">Edge</th>
-                              <th className="py-2 pr-4">Order</th>
-                              <th className="py-2 pr-4">Outcome</th>
-                              <th className="py-2">P&L</th>
+                              <th className="py-2 pr-4">State</th>
+                              <th className="py-2 pr-4">Position</th>
+                              <th className="py-2">P&amp;L</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-700/30">
-                            {positionGroups.map((pg) => {
-                              if (pg.trades.length === 1) {
-                                const trade = pg.trades[0];
-                                return (
-                                  <TradeRow
-                                    key={trade.id}
-                                    trade={trade}
-                                    liveYesPrice={livePrices.get(trade.market_id)}
-                                    today={today}
-                                    canceling={canceling === trade.id}
-                                    onCancel={() => cancelOrder(trade.id)}
-                                    selling={selling === trade.id}
-                                    onSell={() => setSellModalTrade(trade)}
-                                    boosting={boosting === trade.id}
-                                    onBoost={() => setBoostModalTrade(trade)}
-                                    groupMode
+                            {positions.filter((p) => p.fills.length > 0).map((pos) => (
+                              <>
+                                <PositionRow
+                                  key={pos.key}
+                                  pos={pos}
+                                  expanded={expandedKeys.has(pos.key)}
+                                  onToggle={() => toggleExpand(pos.key)}
+                                  livePrices={livePrices}
+                                  canceling={canceling}
+                                  selling={selling}
+                                  boosting={boosting}
+                                  onCancel={cancelOrder}
+                                  onSell={(t) => setSellModalTrade(t)}
+                                  onBoost={(t) => setBoostModalTrade(t)}
+                                />
+                                {expandedKeys.has(pos.key) && pos.fills.map((t) => (
+                                  <FillSubRow
+                                    key={t.id}
+                                    trade={t}
+                                    liveYesPrice={livePrices.get(t.market_id)}
+                                    canceling={canceling === t.id}
+                                    selling={selling === t.id}
+                                    boosting={boosting === t.id}
+                                    onCancel={() => cancelOrder(t.id)}
+                                    onSell={() => setSellModalTrade(t)}
+                                    onBoost={() => setBoostModalTrade(t)}
                                   />
-                                );
-                              }
-                              const isExpanded = expandedPositions.has(pg.key);
-                              return (
-                                <>
-                                  <PositionGroupRow
-                                    key={pg.key}
-                                    pg={pg}
-                                    expanded={isExpanded}
-                                    onToggle={() => togglePosition(pg.key)}
-                                    livePrices={livePrices}
-                                    today={today}
-                                    canceling={canceling}
-                                    selling={selling}
-                                    boosting={boosting}
-                                    onCancel={cancelOrder}
-                                    onSell={(t) => setSellModalTrade(t)}
-                                    onBoost={(t) => setBoostModalTrade(t)}
+                                ))}
+                              </>
+                            ))}
+                            {allPending.length > 0 && (
+                              <>
+                                <tr>
+                                  <td colSpan={5} className="pt-4 pb-1 pl-4">
+                                    <span className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Pending Orders</span>
+                                  </td>
+                                </tr>
+                                {allPending.map((t) => (
+                                  <PendingOrderRow
+                                    key={t.id}
+                                    trade={t}
+                                    canceling={canceling === t.id}
+                                    boosting={boosting === t.id}
+                                    onCancel={() => cancelOrder(t.id)}
+                                    onBoost={() => setBoostModalTrade(t)}
                                   />
-                                  {isExpanded && pg.trades.map((trade) => (
-                                    <TradeRow
-                                      key={trade.id}
-                                      trade={trade}
-                                      liveYesPrice={livePrices.get(trade.market_id)}
-                                      today={today}
-                                      canceling={canceling === trade.id}
-                                      onCancel={() => cancelOrder(trade.id)}
-                                      selling={selling === trade.id}
-                                      onSell={() => setSellModalTrade(trade)}
-                                      boosting={boosting === trade.id}
-                                      onBoost={() => setBoostModalTrade(trade)}
-                                      groupMode
-                                      isSubRow
-                                    />
-                                  ))}
-                                </>
-                              );
-                            })}
+                                ))}
+                              </>
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -1384,41 +1378,47 @@ function BoostModal({
 // ── Group header ──────────────────────────────────────────────────────────────
 
 function GroupHeader({
-  group, collapsed, onToggle, livePrices,
+  group, collapsed, onToggle, livePrices, positions,
 }: {
   group:      TradeGroup;
   collapsed:  boolean;
   onToggle:   () => void;
   livePrices: Map<string, number>;
   today:      string;
+  positions:  Position[];
 }) {
-  const pendingTrades = group.trades.filter((t) => t.outcome === "pending");
-  const settledTrades = group.trades.filter((t) => t.outcome !== "pending");
-
-  const settledPnl   = settledTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
-  const projectedPnl = pendingTrades.reduce((sum, t) => {
-    if (hasNoPosition(t)) return sum;
-    const live = livePrices.get(t.market_id);
-    return sum + (live != null ? calcMarkToMarket(t, live) : 0);
+  // Net P&L: realized + unrealized using position math
+  const realized = positions.reduce((s, p) => s + p.realizedPnl, 0);
+  const unrealized = positions.reduce((sum, p) => {
+    if (p.netContracts <= 0) return sum;
+    const liveYes = livePrices.get(p.market_id);
+    if (liveYes == null) return sum;
+    const livePrice = p.side === "YES" ? liveYes : 1 - liveYes;
+    return sum + p.netContracts * (livePrice - p.avgBuyPrice);
   }, 0);
-  const netPnl = settledPnl + projectedPnl;
+  const netPnl = realized + unrealized;
+  const hasMtm = positions.some((p) => p.netContracts > 0 && livePrices.has(p.market_id));
 
-  const combinedPotential = pendingTrades.reduce((sum, t) => {
-    const p = calcPotentialProfit(t);
-    return p != null ? sum + p : sum;
-  }, 0);
+  const ifCorrect = positions.reduce((s, p) =>
+    (p.state === "OPEN" || p.state === "PARTIALLY_CLOSED") ? s + p.ifCorrectPayout : s, 0);
 
-  const hasMtm  = pendingTrades.some((t) => livePrices.has(t.market_id));
-  const hasPnl  = settledTrades.length > 0 || hasMtm;
-  const showNet = hasPnl || settledTrades.length > 0;
+  // Count positions
+  const openCount       = positions.filter((p) => p.state === "OPEN" || p.state === "PARTIALLY_CLOSED").length;
+  const settledCount    = positions.filter((p) => p.state === "SETTLED" || p.state === "CLOSED").length;
+  const pendingOrderCount = positions.reduce((s, p) => s + p.pendingOrders.length, 0);
 
-  const pendingCount  = pendingTrades.length;
-  const settledCount  = settledTrades.length;
-  const countLabel    = pendingCount > 0 && settledCount > 0
-    ? `${pendingCount} pending · ${settledCount} settled`
-    : pendingCount > 0
-    ? `${pendingCount} pending`
-    : `${settledCount} settled`;
+  const hasPnl  = settledCount > 0 || hasMtm;
+  const showNet = hasPnl;
+
+  const countLabel = (() => {
+    const parts: string[] = [];
+    if (openCount > 0) parts.push(`${openCount} open`);
+    if (settledCount > 0) parts.push(`${settledCount} settled`);
+    if (pendingOrderCount > 0) parts.push(`${pendingOrderCount} pending`);
+    return parts.length > 0 ? parts.join(" · ") : "0 positions";
+  })();
+
+  const combinedPotential = ifCorrect;
 
   return (
     <button
@@ -1847,10 +1847,11 @@ function TradeRow({ trade, liveYesPrice, today, canceling, onCancel, selling, on
   );
 }
 
-// ── PositionGroupRow (desktop) ────────────────────────────────────────────────
+// ── PositionGroupRow / PositionGroupCard (legacy — kept for reference) ────────
+// These components are superseded by PositionRow / PositionCard below.
 
 interface PositionGroupRowProps {
-  pg:         PositionGroup;
+  pg:         { bracket: string; side: "YES"|"NO"; trades: Trade[]; avgEdge: number; edgesVary: boolean; minEdge: number; maxEdge: number; filledContracts: number; totalContracts: number; orderStatusSummary: string; outcome: Trade["outcome"]; totalPnl: number|null; totalPotentialProfit: number|null; key: string; totalAmount: number };
   expanded:   boolean;
   onToggle:   () => void;
   livePrices: Map<string, number>;
@@ -2075,6 +2076,476 @@ function PositionGroupCard({
       <div className="px-4 pb-3">
         <OutcomeBadge outcome={pg.outcome} />
       </div>
+    </div>
+  );
+}
+
+// ── Position-based components ─────────────────────────────────────────────────
+
+interface PositionRowProps {
+  pos:       Position;
+  expanded:  boolean;
+  onToggle:  () => void;
+  livePrices: Map<string, number>;
+  canceling:  string | null;
+  selling:    string | null;
+  boosting:   string | null;
+  onCancel:   (id: string) => void;
+  onSell:     (t: Trade) => void;
+  onBoost:    (t: Trade) => void;
+}
+
+function StateBadge({ state, firstFill }: { state: PositionState; firstFill?: Trade }) {
+  if (state === "SETTLED" && firstFill) {
+    return <OutcomeBadge outcome={firstFill.outcome} />;
+  }
+  const map: Record<PositionState, { label: string; classes: string }> = {
+    OPEN:             { label: "🟢 Open",    classes: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
+    CLOSED:           { label: "⚪ Closed",  classes: "bg-slate-500/20 text-slate-400 border-slate-500/30" },
+    PARTIALLY_CLOSED: { label: "🟠 Partial", classes: "bg-orange-500/15 text-orange-300 border-orange-500/30" },
+    SETTLED:          { label: "✓ Settled",  classes: "bg-slate-500/20 text-slate-400 border-slate-500/30" },
+  };
+  const { label, classes } = map[state];
+  return (
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${classes}`}>
+      {label}
+    </span>
+  );
+}
+
+function PositionSummaryText({ pos }: { pos: Position }) {
+  if (pos.state === "OPEN") {
+    return (
+      <span className="text-slate-200">
+        {pos.netContracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg
+      </span>
+    );
+  }
+  if (pos.state === "CLOSED") {
+    return (
+      <span className="text-slate-200">
+        bought ${pos.soldBuyAmount.toFixed(2)} → ${pos.sellProceeds.toFixed(2)}
+      </span>
+    );
+  }
+  if (pos.state === "PARTIALLY_CLOSED") {
+    return (
+      <span className="text-slate-200">
+        {pos.netContracts} of {pos.contractsBought} open · {pos.contractsSold} sold
+      </span>
+    );
+  }
+  // SETTLED
+  const fill = pos.fills.find((t) => t.outcome === "win" || t.outcome === "loss");
+  return (
+    <span className={fill?.outcome === "win" ? "text-emerald-400 font-semibold" : "text-red-400 font-semibold"}>
+      {fill?.outcome === "win" ? "Win" : "Loss"}
+    </span>
+  );
+}
+
+// ── Desktop position row ──────────────────────────────────────────────────────
+
+function PositionRow({ pos, expanded, onToggle, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
+  const liveYes    = livePrices.get(pos.market_id);
+  const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
+
+  const unrealized = (livePrice != null && pos.netContracts > 0)
+    ? pos.netContracts * (livePrice - pos.avgBuyPrice)
+    : null;
+  const totalPnl   = pos.realizedPnl + (unrealized ?? 0);
+  const hasPnl     = pos.realizedPnl !== 0 || unrealized != null;
+  const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const isEstimate = unrealized != null;
+
+  // Sell button: show if position has exactly one sellable fill
+  const sellableFills = pos.fills.filter((t) => isSellable(t));
+  const singleSellable = sellableFills.length === 1 ? sellableFills[0] : null;
+
+  return (
+    <tr
+      className="bg-slate-800/20 hover:bg-slate-800/50 cursor-pointer transition-colors"
+      onClick={onToggle}
+    >
+      {/* Bracket */}
+      <td className="py-3 pr-4 pl-4 max-w-[220px]">
+        <div className="flex items-center gap-1.5">
+          <span className={`text-slate-500 text-base leading-none transition-transform duration-150 shrink-0 ${expanded ? "rotate-90" : ""}`}>
+            ›
+          </span>
+          <span className="text-slate-200 line-clamp-2 leading-snug">{pos.bracket}</span>
+        </div>
+      </td>
+
+      {/* Side */}
+      <td className="py-3 pr-4">
+        <span className={`font-semibold ${pos.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+          {pos.side}
+        </span>
+      </td>
+
+      {/* State */}
+      <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+        <StateBadge state={pos.state} firstFill={pos.fills[0]} />
+      </td>
+
+      {/* Position summary */}
+      <td className="py-3 pr-4">
+        <PositionSummaryText pos={pos} />
+      </td>
+
+      {/* P&L */}
+      <td className="py-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2">
+          <div className="flex flex-col">
+            {hasPnl ? (
+              <span className={`font-semibold ${pnlColor}`}>
+                {isEstimate && "~"}{totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-slate-600">—</span>
+            )}
+            {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
+              <span className="text-xs text-slate-500 mt-0.5">
+                🎯 +${pos.ifCorrectPayout.toFixed(2)} if correct
+              </span>
+            )}
+            {singleSellable && (
+              <div className="mt-1">
+                <ActionButton
+                  variant="sell"
+                  onClick={(e) => { e.stopPropagation(); onSell(singleSellable); }}
+                  loading={selling === singleSellable.id}
+                  label="Sell"
+                  loadingLabel="Selling…"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ── Desktop fill sub-row ─────────────────────────────────────────────────────
+
+interface FillSubRowProps {
+  trade:       Trade;
+  liveYesPrice?: number;
+  canceling:   boolean;
+  selling:     boolean;
+  boosting:    boolean;
+  onCancel:    () => void;
+  onSell:      () => void;
+  onBoost:     () => void;
+}
+
+function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, onCancel, onSell, onBoost }: FillSubRowProps) {
+  const entryYes   = modelGetEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const contracts  = getContractsForFill(trade);
+  const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const isSell     = trade.outcome === "sold";
+  const showSell   = isSellable(trade);
+  const showBoost  = isBoostable(trade);
+  const showCancel = trade.kalshi_order_id != null &&
+    (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
+
+  const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+
+  return (
+    <tr className="bg-slate-900/40 hover:bg-slate-900/60 transition-colors">
+      {/* Bracket / time */}
+      <td className="py-2 pr-4 pl-10 text-slate-500 text-xs whitespace-nowrap">
+        {timeStr}
+        <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold ${isSell ? "bg-amber-500/15 text-amber-400" : "bg-slate-700 text-slate-300"}`}>
+          {isSell ? "SOLD" : "BUY"}
+        </span>
+      </td>
+
+      {/* Side */}
+      <td className="py-2 pr-4">
+        <span className={`text-xs font-semibold ${trade.side === "YES" ? "text-emerald-400/70" : "text-red-400/70"}`}>
+          {trade.side}
+        </span>
+      </td>
+
+      {/* Order status */}
+      <td className="py-2 pr-4">
+        <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
+      </td>
+
+      {/* Position detail */}
+      <td className="py-2 pr-4 text-xs text-slate-400">
+        <span>{contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢</span>
+        {trade.signal && (
+          <span className="ml-2 text-slate-600">
+            {trade.signal} {trade.edge > 0 ? "+" : ""}{trade.edge}pt
+          </span>
+        )}
+      </td>
+
+      {/* P&L + actions */}
+      <td className="py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+        <div className="flex flex-col gap-1 items-start">
+          {trade.pnl != null ? (
+            <span className={`text-xs font-semibold ${pnlColor}`}>
+              {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+            </span>
+          ) : null}
+          <div className="flex gap-1 flex-wrap">
+            {showSell && (
+              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
+                loading={selling} label="Sell" loadingLabel="Selling…" />
+            )}
+            {showBoost && (
+              <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
+                loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
+            )}
+            {showCancel && (
+              <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                loading={canceling} label="Cancel" loadingLabel="Canceling…" />
+            )}
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ── Desktop pending order row ────────────────────────────────────────────────
+
+interface PendingOrderRowProps {
+  trade:     Trade;
+  canceling: boolean;
+  boosting:  boolean;
+  onCancel:  () => void;
+  onBoost:   () => void;
+}
+
+function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: PendingOrderRowProps) {
+  const entryYes   = modelGetEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const contracts  = getContractsForFill(trade);
+  const bracket    = modelGetBracketLabel(trade.market_question);
+  const showBoost  = isBoostable(trade);
+  const showCancel = trade.kalshi_order_id != null;
+  const filledCount   = trade.filled_count ?? 0;
+  const remainingCount = trade.remaining_count ?? 0;
+  const totalCount = filledCount + remainingCount;
+
+  return (
+    <tr className="bg-yellow-500/5 hover:bg-yellow-500/10 transition-colors">
+      {/* Bracket */}
+      <td className="py-2 pr-4 pl-4 text-slate-300 text-sm">{bracket}</td>
+
+      {/* Side */}
+      <td className="py-2 pr-4">
+        <span className={`font-semibold text-sm ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+          {trade.side}
+        </span>
+      </td>
+
+      {/* Status */}
+      <td className="py-2 pr-4">
+        <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
+      </td>
+
+      {/* Position detail */}
+      <td className="py-2 pr-4 text-xs text-slate-400">
+        <span>{contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit</span>
+        {trade.order_status === "partially_filled" && totalCount > 0 && (
+          <span className="ml-2 text-slate-500">{filledCount}/{totalCount} filled</span>
+        )}
+      </td>
+
+      {/* Actions */}
+      <td className="py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+        <div className="flex gap-1 flex-wrap">
+          {showBoost && (
+            <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
+              loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
+          )}
+          {showCancel && (
+            <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
+              loading={canceling} label="Cancel" loadingLabel="Canceling…" />
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ── Mobile position card ─────────────────────────────────────────────────────
+
+function PositionCard({ pos, expanded, onToggle, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
+  const liveYes    = livePrices.get(pos.market_id);
+  const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
+  const unrealized = (livePrice != null && pos.netContracts > 0)
+    ? pos.netContracts * (livePrice - pos.avgBuyPrice)
+    : null;
+  const totalPnl   = pos.realizedPnl + (unrealized ?? 0);
+  const hasPnl     = pos.realizedPnl !== 0 || unrealized != null;
+  const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const isEstimate = unrealized != null;
+
+  const sellableFills  = pos.fills.filter((t) => isSellable(t));
+  const singleSellable = sellableFills.length === 1 ? sellableFills[0] : null;
+
+  return (
+    <div
+      className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden cursor-pointer select-none"
+      onClick={onToggle}
+    >
+      <div className="p-4 space-y-3">
+        {/* Row 1: bracket + chevron */}
+        <div className="flex items-start gap-2">
+          <span className="flex-1 text-slate-200 text-sm leading-snug font-medium">{pos.bracket}</span>
+          <span className={`shrink-0 text-slate-500 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>›</span>
+        </div>
+
+        {/* Row 2: badges + P&L */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
+            <span className={`font-semibold ${pos.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+              {pos.side}
+            </span>
+            <StateBadge state={pos.state} firstFill={pos.fills[0]} />
+          </div>
+          <div className="shrink-0 text-right">
+            {hasPnl ? (
+              <span className={`font-medium ${pnlColor}`}>
+                {isEstimate && "~"}{totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-slate-600 text-sm">—</span>
+            )}
+            {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
+              <p className="text-[10px] text-slate-500 mt-0.5">🎯 +${pos.ifCorrectPayout.toFixed(2)} if correct</p>
+            )}
+          </div>
+        </div>
+
+        {/* Position summary */}
+        <div className="text-xs text-slate-400">
+          <PositionSummaryText pos={pos} />
+        </div>
+      </div>
+
+      {/* Sell button if single sellable fill */}
+      {singleSellable && (
+        <div className="px-4 pb-3" onClick={(e) => e.stopPropagation()}>
+          <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(singleSellable); }}
+            loading={selling === singleSellable.id} label="Sell" loadingLabel="Selling…" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Mobile fill sub-card ─────────────────────────────────────────────────────
+
+function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCancel, onSell, onBoost }: FillSubRowProps) {
+  const entryYes   = modelGetEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const contracts  = getContractsForFill(trade);
+  const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const isSell     = trade.outcome === "sold";
+  const showSell   = isSellable(trade);
+  const showBoost  = isBoostable(trade);
+  const showCancel = trade.kalshi_order_id != null &&
+    (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
+  const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+
+  void liveYesPrice; // available for future MTM display
+
+  return (
+    <div className="ml-3 border-l-2 border-slate-700/50">
+      <div className="bg-slate-900/40 border border-slate-700/30 rounded-lg mx-1 my-1 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500">{timeStr}</span>
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isSell ? "bg-amber-500/15 text-amber-400" : "bg-slate-700 text-slate-300"}`}>
+              {isSell ? "SOLD" : "BUY"}
+            </span>
+            <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
+          </div>
+          {trade.pnl != null && (
+            <span className={`text-xs font-semibold ${pnlColor}`}>
+              {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+            </span>
+          )}
+        </div>
+        <div className="text-xs text-slate-400">
+          {contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢
+          {trade.edge !== 0 && (
+            <span className="ml-2 text-slate-600">{trade.signal} {trade.edge > 0 ? "+" : ""}{trade.edge}pt</span>
+          )}
+        </div>
+        {(showSell || showBoost || showCancel) && (
+          <div className="flex gap-1 flex-wrap">
+            {showSell && (
+              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
+                loading={selling} label="Sell" loadingLabel="Selling…" />
+            )}
+            {showBoost && (
+              <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
+                loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
+            )}
+            {showCancel && (
+              <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                loading={canceling} label="Cancel" loadingLabel="Canceling…" />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Mobile pending order card ────────────────────────────────────────────────
+
+function PendingOrderCard({ trade, canceling, boosting, onCancel, onBoost }: PendingOrderRowProps) {
+  const entryYes   = modelGetEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const contracts  = getContractsForFill(trade);
+  const bracket    = modelGetBracketLabel(trade.market_question);
+  const showBoost  = isBoostable(trade);
+  const showCancel = trade.kalshi_order_id != null;
+  const filledCount    = trade.filled_count ?? 0;
+  const remainingCount = trade.remaining_count ?? 0;
+  const totalCount     = filledCount + remainingCount;
+
+  return (
+    <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-xl p-3 my-1 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className={`font-semibold text-sm ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+            {trade.side}
+          </span>
+          <span className="text-slate-300 text-sm">{bracket}</span>
+        </div>
+        <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
+      </div>
+      <div className="text-xs text-slate-400">
+        {contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit
+        {trade.order_status === "partially_filled" && totalCount > 0 && (
+          <span className="ml-2 text-slate-500">{filledCount}/{totalCount} filled</span>
+        )}
+      </div>
+      {(showBoost || showCancel) && (
+        <div className="flex gap-1 flex-wrap">
+          {showBoost && (
+            <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
+              loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
+          )}
+          {showCancel && (
+            <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
+              loading={canceling} label="Cancel" loadingLabel="Canceling…" />
+          )}
+        </div>
+      )}
     </div>
   );
 }

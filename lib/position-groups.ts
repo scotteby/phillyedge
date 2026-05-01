@@ -1,3 +1,4 @@
+// @deprecated — superseded by lib/position-model.ts
 import type { Trade } from "./types";
 
 export interface PositionGroup {
