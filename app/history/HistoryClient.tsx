@@ -721,9 +721,6 @@ export default function HistoryClient({ initialTrades }: Props) {
 
   const projectedPnl = totalRealizedPnl + totalUnrealizedPnl;
 
-  const combinedPotential = summaryPositions.reduce((s, p) =>
-    (p.state === "OPEN" || p.state === "PARTIALLY_CLOSED") ? s + p.ifCorrectPayout : s, 0);
-
   // ── Grouped view ─────────────────────────────────────────────────────────────
   const groups = buildGroups(visibleTrades, today);
   const activeMarketCount = groups.filter(
@@ -814,7 +811,7 @@ export default function HistoryClient({ initialTrades }: Props) {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <SummaryCard
           label="Active Markets"
           value={String(activeMarketCount)}
@@ -837,12 +834,6 @@ export default function HistoryClient({ initialTrades }: Props) {
             ? liveCount > 0 ? `live · ${liveCount} of ${pending.length} priced` : "mark-to-market"
             : settled.length > 0 ? `${settled.length} settled` : undefined}
           projected={pending.length > 0}
-        />
-        <SummaryCard
-          label="Combined If Correct"
-          value={combinedPotential > 0 ? `+$${combinedPotential.toFixed(2)}` : "—"}
-          valueClass={combinedPotential > 0 ? "text-sky-400" : "text-slate-500"}
-          sub={pending.length > 0 ? "if all pending win" : undefined}
         />
       </div>
 
@@ -1505,9 +1496,6 @@ function GroupHeader({
   const netPnl = realized + unrealized;
   const hasMtm = positions.some((p) => p.netContracts > 0 && livePrices.has(p.market_id));
 
-  const ifCorrect = positions.reduce((s, p) =>
-    (p.state === "OPEN" || p.state === "PARTIALLY_CLOSED") ? s + p.ifCorrectPayout : s, 0);
-
   // Count positions
   const openCount       = positions.filter((p) => p.state === "OPEN" || p.state === "PARTIALLY_CLOSED").length;
   const settledCount    = positions.filter((p) => p.state === "SETTLED" || p.state === "CLOSED").length;
@@ -1523,8 +1511,6 @@ function GroupHeader({
     if (pendingOrderCount > 0) parts.push(`${pendingOrderCount} pending`);
     return parts.length > 0 ? parts.join(" · ") : "0 positions";
   })();
-
-  const combinedPotential = ifCorrect;
 
   return (
     <button
@@ -1542,25 +1528,17 @@ function GroupHeader({
         </div>
       </div>
 
-      {/* Right: P&L / potential */}
-      <div className="flex items-center gap-5 shrink-0">
-        {showNet && (
-          <div className="text-right">
-            <p className="text-slate-500 uppercase tracking-wide text-[10px]">
-              {hasMtm ? "~Net P&L" : "Net P&L"}
-            </p>
-            <p className={`text-sm font-semibold ${netPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-              {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(2)}
-            </p>
-          </div>
-        )}
-        {combinedPotential > 0 && (
-          <div className="text-right">
-            <p className="text-slate-500 uppercase tracking-wide text-[10px]">If correct</p>
-            <p className="text-sm font-semibold text-sky-400">+${combinedPotential.toFixed(2)}</p>
-          </div>
-        )}
-      </div>
+      {/* Right: Net P&L only */}
+      {showNet && (
+        <div className="shrink-0 text-right">
+          <p className="text-slate-500 uppercase tracking-wide text-[10px]">
+            {hasMtm ? "~Net P&L" : "Net P&L"}
+          </p>
+          <p className={`text-sm font-semibold ${netPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(2)}
+          </p>
+        </div>
+      )}
     </button>
   );
 }
@@ -2314,8 +2292,9 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
               <span className="text-slate-600">—</span>
             )}
             {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
-              <span className="text-xs text-slate-500 mt-0.5">
-                🎯 +${pos.ifCorrectPayout.toFixed(2)} if correct
+              <span className="text-sm font-semibold text-sky-400 mt-1">
+                🎯 +${pos.ifCorrectPayout.toFixed(2)}
+                <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
               </span>
             )}
             {sellableFills.length > 0 && (
@@ -2526,7 +2505,10 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
               <span className="text-slate-600 text-sm">—</span>
             )}
             {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
-              <p className="text-[10px] text-slate-500 mt-0.5">🎯 +${pos.ifCorrectPayout.toFixed(2)} if correct</p>
+              <p className="text-sm font-semibold text-sky-400 mt-1">
+                🎯 +${pos.ifCorrectPayout.toFixed(2)}
+                <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
+              </p>
             )}
           </div>
         </div>
