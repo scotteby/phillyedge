@@ -191,9 +191,22 @@ export async function POST(req: NextRequest) {
       .select("id")
       .single();
     if (dbErr) {
-      // Surface DB errors so they're visible in the response (non-fatal —
-      // the Kalshi order already succeeded at this point).
+      // Kalshi order already succeeded — surface the DB failure so the caller
+      // knows the trade record is missing and can investigate.
       console.error("[place-trade] Supabase insert failed:", dbErr.message);
+      return NextResponse.json(
+        {
+          warning:    `Order placed on Kalshi (${orderId}) but trade record failed to save: ${dbErr.message}`,
+          ok:         false,
+          order_id:   orderId,
+          ticker,
+          side:       side.toUpperCase(),
+          count,
+          price_dollars:  price,
+          amount_dollars: amount,
+        },
+        { status: 207 }, // 207 Multi-Status: partial success
+      );
     } else if (inserted?.id) {
       // Phase 2.5: fire-and-forget link to recommendation_log.
       // Failure must never affect trade confirmation.
@@ -206,6 +219,19 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     console.error("[place-trade] Supabase insert threw:", err);
+    return NextResponse.json(
+      {
+        warning:    `Order placed on Kalshi (${orderId}) but trade record threw: ${String(err)}`,
+        ok:         false,
+        order_id:   orderId,
+        ticker,
+        side:       side.toUpperCase(),
+        count,
+        price_dollars:  price,
+        amount_dollars: amount,
+      },
+      { status: 207 },
+    );
   }
 
   return NextResponse.json({
