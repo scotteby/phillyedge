@@ -678,10 +678,10 @@ export default function HistoryClient({ initialTrades }: Props) {
   // from stats — they never deployed capital, so they didn't happen.
   const effectiveTrades = trades.filter((t) => !isVoidCancelled(t) && t.order_status !== "resting");
 
-  // What's shown in the list depends on the view mode
-  // Active mode shows all non-void trades — pending orders appear in subsection within market groups
-  const nonVoidTrades  = trades.filter((t) => !isVoidCancelled(t));
-  const visibleTrades  = viewMode === "all" ? trades : nonVoidTrades;
+  // Void-cancelled trades (boosted predecessors, cancelled-unfilled orders) are hidden
+  // in both views — they represent no deployed capital and no real position.
+  const nonVoidTrades = trades.filter((t) => !isVoidCancelled(t));
+  const visibleTrades = nonVoidTrades;
 
   // ── Summary stats (always off effectiveTrades) ────────────────────────────
 
