@@ -381,7 +381,9 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [selling, setSelling]     = useState<string | null>(null);
   const [sellModalTrade, setSellModalTrade]   = useState<Trade | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
+  const [markSoldTrade, setMarkSoldTrade]     = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
+  const [markingSold, setMarkingSold] = useState<string | null>(null);
   const [viewMode, setViewMode]   = useState<"active" | "resting" | "all">("active");
   const [balance, setBalance]     = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
@@ -572,6 +574,41 @@ export default function HistoryClient({ initialTrades }: Props) {
       addToast(`Sell error: ${String(err)}`, "error");
     } finally {
       setSelling(null);
+    }
+  }
+
+  // ── Mark as sold (manual reconciliation) ────────────────────────────────
+
+  async function markAsSold(tradeId: string, sellPriceCents: number | null) {
+    setMarkingSold(tradeId);
+    setMarkSoldTrade(null);
+    try {
+      const res  = await fetch("/api/mark-sold", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ trade_id: tradeId, sell_price_cents: sellPriceCents ?? undefined }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setTrades((prev) =>
+          prev.map((t) =>
+            t.id === tradeId
+              ? { ...t, outcome: "sold" as Trade["outcome"], pnl: json.pnl ?? null }
+              : t
+          )
+        );
+        const pnl = json.pnl as number | null;
+        addToast(
+          `✅ Marked as sold${pnl != null ? ` — ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}` : ""}`,
+          "fill"
+        );
+      } else {
+        addToast(`Mark sold failed: ${json.error ?? "unknown error"}`, "error");
+      }
+    } catch (err) {
+      addToast(`Mark sold error: ${String(err)}`, "error");
+    } finally {
+      setMarkingSold(null);
     }
   }
 
@@ -908,9 +945,11 @@ export default function HistoryClient({ initialTrades }: Props) {
                                 canceling={canceling === t.id}
                                 selling={selling === t.id}
                                 boosting={boosting === t.id}
+                                markingSold={markingSold === t.id}
                                 onCancel={() => cancelOrder(t.id)}
                                 onSell={() => setSellModalTrade(t)}
                                 onBoost={() => setBoostModalTrade(t)}
+                                onMarkSold={() => setMarkSoldTrade(t)}
                               />
                             ))}
                           </div>
@@ -968,9 +1007,11 @@ export default function HistoryClient({ initialTrades }: Props) {
                                     canceling={canceling === t.id}
                                     selling={selling === t.id}
                                     boosting={boosting === t.id}
+                                    markingSold={markingSold === t.id}
                                     onCancel={() => cancelOrder(t.id)}
                                     onSell={() => setSellModalTrade(t)}
                                     onBoost={() => setBoostModalTrade(t)}
+                                    onMarkSold={() => setMarkSoldTrade(t)}
                                   />
                                 ))}
                               </>
@@ -1023,6 +1064,15 @@ export default function HistoryClient({ initialTrades }: Props) {
           selling={selling === sellModalTrade.id}
           onConfirm={() => sellPosition(sellModalTrade.id)}
           onClose={() => setSellModalTrade(null)}
+        />
+      )}
+
+      {markSoldTrade && (
+        <MarkSoldModal
+          trade={markSoldTrade}
+          saving={markingSold === markSoldTrade.id}
+          onConfirm={(priceCents) => markAsSold(markSoldTrade.id, priceCents)}
+          onClose={() => setMarkSoldTrade(null)}
         />
       )}
     </div>
@@ -1165,6 +1215,98 @@ function SellModal({
             className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white font-bold transition-colors text-sm"
           >
             {selling ? "Selling…" : `Sell ${contracts} contract${contracts !== 1 ? "s" : ""}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Mark Sold modal ───────────────────────────────────────────────────────────
+
+function MarkSoldModal({
+  trade, saving, onConfirm, onClose,
+}: {
+  trade:     Trade;
+  saving:    boolean;
+  onConfirm: (sellPriceCents: number | null) => void;
+  onClose:   () => void;
+}) {
+  const entryYes   = getEntryYesPrice(trade);
+  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
+  const contracts  = trade.filled_count ?? (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
+  const entryCents = Math.round(entryPrice * 100);
+
+  const [priceCentsInput, setPriceCentsInput] = useState(String(entryCents));
+  const parsed = parseInt(priceCentsInput, 10);
+  const validPrice = !isNaN(parsed) && parsed >= 1 && parsed <= 99;
+
+  const estPnl: number | null = validPrice && contracts > 0 ? (() => {
+    const sellProceeds = trade.side === "YES" ? parsed / 100 : 1 - parsed / 100;
+    return parseFloat(((sellProceeds - entryPrice) * contracts).toFixed(2));
+  })() : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="px-5 pt-5 pb-4 border-b border-slate-700">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-white font-bold text-lg">Mark as Sold</h2>
+              <p className="text-slate-400 text-sm mt-0.5 leading-snug">
+                {getBracketLabel(trade.market_question)} · {contracts} contracts @ {entryCents}¢
+              </p>
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xl leading-none mt-0.5">×</button>
+          </div>
+        </div>
+
+        {/* Price input */}
+        <div className="px-5 py-5 space-y-4">
+          <div>
+            <label className="block text-xs text-slate-500 uppercase tracking-wide mb-1.5">
+              Sell price (¢) — check Kalshi trade history
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={99}
+                value={priceCentsInput}
+                onChange={(e) => setPriceCentsInput(e.target.value)}
+                className="w-24 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
+                placeholder="e.g. 72"
+              />
+              <span className="text-slate-500 text-sm">¢  per contract</span>
+            </div>
+          </div>
+
+          {estPnl != null && (
+            <div className="flex items-center justify-between bg-slate-900/50 rounded-lg px-4 py-2.5">
+              <span className="text-slate-400 text-sm">Estimated P&amp;L</span>
+              <span className={`font-bold text-base ${estPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {estPnl >= 0 ? "+" : ""}${estPnl.toFixed(2)}
+              </span>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-500">
+            Leave the price as-is or skip it — you can update P&amp;L later. This only updates our records; the Kalshi trade already happened.
+          </p>
+        </div>
+
+        {/* Buttons */}
+        <div className="px-5 pb-5 flex gap-3">
+          <button onClick={onClose} disabled={saving}
+            className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white transition-colors disabled:opacity-40 text-sm font-medium">
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(validPrice ? parsed : null)}
+            disabled={saving}
+            className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white font-bold transition-colors text-sm">
+            {saving ? "Saving…" : "Mark as Sold"}
           </button>
         </div>
       </div>
@@ -2231,17 +2373,19 @@ function PositionRow({ pos, expanded, onToggle, livePrices, canceling, selling, 
 // ── Desktop fill sub-row ─────────────────────────────────────────────────────
 
 interface FillSubRowProps {
-  trade:       Trade;
+  trade:        Trade;
   liveYesPrice?: number;
-  canceling:   boolean;
-  selling:     boolean;
-  boosting:    boolean;
-  onCancel:    () => void;
-  onSell:      () => void;
-  onBoost:     () => void;
+  canceling:    boolean;
+  selling:      boolean;
+  boosting:     boolean;
+  markingSold:  boolean;
+  onCancel:     () => void;
+  onSell:       () => void;
+  onBoost:      () => void;
+  onMarkSold:   () => void;
 }
 
-function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, onCancel, onSell, onBoost }: FillSubRowProps) {
+function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, markingSold, onCancel, onSell, onBoost, onMarkSold }: FillSubRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
@@ -2251,6 +2395,10 @@ function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, onCance
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
+  // Show "Mark Sold" on filled orders with no active actions — catches sells that happened on
+  // Kalshi but weren't recorded in our DB (e.g. due to the constraint bug, or sold externally).
+  const showMarkSold = trade.outcome === "pending" && contracts > 0 &&
+    !showSell && !showBoost && !showCancel;
 
   const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
@@ -2306,6 +2454,10 @@ function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, onCance
             {showCancel && (
               <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
                 loading={canceling} label="Cancel" loadingLabel="Canceling…" />
+            )}
+            {showMarkSold && (
+              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onMarkSold(); }}
+                loading={markingSold} label="Mark Sold" loadingLabel="Saving…" />
             )}
           </div>
         </div>
@@ -2446,7 +2598,7 @@ function PositionCard({ pos, expanded, onToggle, livePrices, canceling, selling,
 
 // ── Mobile fill sub-card ─────────────────────────────────────────────────────
 
-function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCancel, onSell, onBoost }: FillSubRowProps) {
+function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, markingSold, onCancel, onSell, onBoost, onMarkSold }: FillSubRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
@@ -2456,6 +2608,8 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCanc
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
+  const showMarkSold = trade.outcome === "pending" && contracts > 0 &&
+    !showSell && !showBoost && !showCancel;
   const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
   void liveYesPrice; // available for future MTM display
@@ -2483,7 +2637,7 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCanc
             <span className="ml-2 text-slate-600">{trade.signal} {trade.edge > 0 ? "+" : ""}{trade.edge}pt</span>
           )}
         </div>
-        {(showSell || showBoost || showCancel) && (
+        {(showSell || showBoost || showCancel || showMarkSold) && (
           <div className="flex gap-1 flex-wrap">
             {showSell && (
               <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
@@ -2496,6 +2650,10 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCanc
             {showCancel && (
               <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
                 loading={canceling} label="Cancel" loadingLabel="Canceling…" />
+            )}
+            {showMarkSold && (
+              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onMarkSold(); }}
+                loading={markingSold} label="Mark Sold" loadingLabel="Saving…" />
             )}
           </div>
         )}
