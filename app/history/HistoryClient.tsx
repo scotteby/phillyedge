@@ -198,9 +198,10 @@ function OrderStatusBadge({ status, filledCount }: { status: OrderStatus; filled
 // ── Action button ─────────────────────────────────────────────────────────────
 
 const ACTION_STYLES = {
-  cancel: "border-red-500/40    text-red-400    hover:bg-red-500/15    hover:border-red-400",
-  sell:   "border-amber-500/40  text-amber-400  hover:bg-amber-500/15  hover:border-amber-400",
-  boost:  "border-sky-500/40    text-sky-400    hover:bg-sky-500/15    hover:border-sky-400",
+  cancel:    "border-red-500/40    text-red-400    hover:bg-red-500/15    hover:border-red-400",
+  sell:      "border-amber-500/40  text-amber-400  hover:bg-amber-500/15  hover:border-amber-400",
+  boost:     "border-sky-500/40    text-sky-400    hover:bg-sky-500/15    hover:border-sky-400",
+  reconcile: "border-slate-500/40  text-slate-400  hover:bg-slate-500/15  hover:border-slate-400",
 } as const;
 
 function ActionButton({
@@ -2395,10 +2396,10 @@ function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, marking
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
-  // Show "Mark Sold" on filled orders with no active actions — catches sells that happened on
-  // Kalshi but weren't recorded in our DB (e.g. due to the constraint bug, or sold externally).
-  const showMarkSold = trade.outcome === "pending" && contracts > 0 &&
-    !showSell && !showBoost && !showCancel;
+  // Show "Mark Sold" on any pending fill — lets users record a sale that already happened on
+  // Kalshi but wasn't written to our DB (e.g. constraint bug, or sold externally).
+  // Shown alongside "Sell": Sell = place new order, Mark Sold = record past sale.
+  const showMarkSold = trade.outcome === "pending" && contracts > 0;
 
   const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
 
@@ -2456,7 +2457,7 @@ function FillSubRow({ trade, liveYesPrice, canceling, selling, boosting, marking
                 loading={canceling} label="Cancel" loadingLabel="Canceling…" />
             )}
             {showMarkSold && (
-              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onMarkSold(); }}
+              <ActionButton variant="reconcile" onClick={(e) => { e.stopPropagation(); onMarkSold(); }}
                 loading={markingSold} label="Mark Sold" loadingLabel="Saving…" />
             )}
           </div>
@@ -2652,7 +2653,7 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, markin
                 loading={canceling} label="Cancel" loadingLabel="Canceling…" />
             )}
             {showMarkSold && (
-              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onMarkSold(); }}
+              <ActionButton variant="reconcile" onClick={(e) => { e.stopPropagation(); onMarkSold(); }}
                 loading={markingSold} label="Mark Sold" loadingLabel="Saving…" />
             )}
           </div>
