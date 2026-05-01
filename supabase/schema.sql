@@ -40,7 +40,7 @@ create table if not exists public.trades (
   my_pct           int not null,
   edge             int not null,
   signal           text not null check (signal in ('strong-buy', 'buy', 'neutral', 'avoid')),
-  outcome          text not null default 'pending' check (outcome in ('pending', 'win', 'loss')),
+  outcome          text not null default 'pending' check (outcome in ('pending', 'win', 'loss', 'sold', 'boosted')),
   pnl              numeric(12, 2),
   polymarket_url   text,
   kalshi_order_id  text          -- Kalshi order UUID returned after placement

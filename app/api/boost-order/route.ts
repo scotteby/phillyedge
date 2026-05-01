@@ -257,10 +257,14 @@ export async function POST(req: NextRequest) {
   }
 
   // Mark old trade as boosted
-  await supabase
+  const { error: boostDbErr } = await supabase
     .from("trades")
     .update({ outcome: "boosted", order_status: "canceled", last_checked_at: now })
     .eq("id", trade_id);
+
+  if (boostDbErr) {
+    console.error(`[boost-order] WARN: Supabase update failed for trade ${trade_id}:`, boostDbErr.message);
+  }
 
   console.log(`[boost-order] ${ticker} boosted: old=${trade_id} new=${newTradeId} price=${new_price_cents}¢`);
 

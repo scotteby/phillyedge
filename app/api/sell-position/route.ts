@@ -182,10 +182,15 @@ export async function POST(req: NextRequest) {
 
   // Update trade in Supabase: mark as sold
   const now = new Date().toISOString();
-  await supabase
+  const { error: dbUpdateErr } = await supabase
     .from("trades")
     .update({ outcome: "sold", pnl, last_checked_at: now })
     .eq("id", trade_id);
+
+  if (dbUpdateErr) {
+    // Non-fatal — the Kalshi sell already succeeded. Log loudly so we know to reconcile.
+    console.error(`[sell-position] WARN: Supabase update failed for trade ${trade_id}:`, dbUpdateErr.message);
+  }
 
   console.log(`[sell-position] ${ticker} sold ${filledCount}×${side} avgFillYes=${avgFillYesPrice} pnl=${pnl}`);
 
