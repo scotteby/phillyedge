@@ -443,10 +443,10 @@ export function groupBracketMarkets(
     });
   }
 
-  // High temp before low temp, then by date
+  // Sort descending by close date (furthest future first); series is secondary
   groups.sort((a, b) => {
-    const seriesCmp = a.series.localeCompare(b.series);
-    return seriesCmp !== 0 ? seriesCmp : a.end_date.localeCompare(b.end_date);
+    const dateCmp = b.end_date.localeCompare(a.end_date);
+    return dateCmp !== 0 ? dateCmp : a.series.localeCompare(b.series);
   });
 
   return { groups, singles };
