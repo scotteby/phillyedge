@@ -373,6 +373,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [sellModalTrade, setSellModalTrade]   = useState<Trade | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
+  const [syncing, setSyncing]     = useState(false);
   const [viewMode, setViewMode]   = useState<"active" | "history">("active");
   const [historyDays, setHistoryDays] = useState<7 | 30 | 90 | null>(30);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -647,6 +648,53 @@ export default function HistoryClient({ initialTrades }: Props) {
     }
   }
 
+  // ── Sync open orders from Kalshi ─────────────────────────────────────────
+  // Fetches all resting/partially_filled orders from Kalshi and inserts DB
+  // records for any that are missing (e.g. when a boost's DB insert failed).
+
+  async function syncOrders() {
+    setSyncing(true);
+    try {
+      const res  = await fetch("/api/sync-orders", { method: "POST" });
+      const json = await res.json();
+      if (res.ok && json.recovered?.length > 0) {
+        // Inject recovered trades into local state so they appear immediately
+        const newTrades: Trade[] = json.recovered.map((r: Record<string, unknown>) => ({
+          id:              String(r.trade_id),
+          created_at:      new Date().toISOString(),
+          market_id:       String(r.ticker),
+          market_question: String(r.ticker),
+          target_date:     null,
+          side:            String(r.side) as Trade["side"],
+          amount_usdc:     0,
+          market_pct:      Number(r.market_pct) || 50,
+          my_pct:          50,
+          edge:            0,
+          signal:          "buy" as Trade["signal"],
+          outcome:         "pending" as Trade["outcome"],
+          pnl:             null,
+          polymarket_url:  null,
+          kalshi_order_id: String(r.order_id),
+          order_status:    String(r.order_status) as Trade["order_status"],
+          filled_count:    Number(r.filled)    || 0,
+          remaining_count: Number(r.remaining) || 0,
+          last_checked_at: null,
+          entry_yes_price: null,
+        }));
+        setTrades((prev) => [...newTrades, ...prev]);
+        addToast(`✅ Recovered ${json.recovered.length} missing order${json.recovered.length !== 1 ? "s" : ""} from Kalshi`, "fill");
+      } else if (res.ok) {
+        addToast(`✓ All Kalshi orders already tracked (${json.found} open)`, "fill");
+      } else {
+        addToast(`Sync failed: ${json.error ?? "unknown error"}`, "error");
+      }
+    } catch (err) {
+      addToast(`Sync error: ${String(err)}`, "error");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   // ── Cancel order ─────────────────────────────────────────────────────────
 
   async function cancelOrder(tradeId: string) {
@@ -816,6 +864,16 @@ export default function HistoryClient({ initialTrades }: Props) {
               History
             </button>
           </div>
+
+          {/* Sync missing orders from Kalshi */}
+          <button
+            onClick={syncOrders}
+            disabled={syncing}
+            title="Recover any Kalshi orders missing from the DB"
+            className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-800 border border-slate-700 hover:border-sky-500/50 hover:text-sky-400 text-slate-400 disabled:opacity-40 transition-colors"
+          >
+            {syncing ? "Syncing…" : "⟳ Sync Kalshi"}
+          </button>
 
           {/* Live price + order status refresh */}
           {pending.length > 0 && (
