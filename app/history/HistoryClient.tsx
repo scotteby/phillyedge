@@ -2636,9 +2636,11 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
   const bracket    = modelGetBracketLabel(trade.market_question);
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null;
-  const filledCount   = trade.filled_count ?? 0;
+  const filledCount    = trade.filled_count ?? 0;
   const remainingCount = trade.remaining_count ?? 0;
-  const totalCount = filledCount + remainingCount;
+  const totalCount     = filledCount + remainingCount;
+  // A resting sell has existing fills (the buy) but order_status=resting (sell order resting)
+  const isSellOrder = filledCount > 0 && trade.order_status === "resting";
 
   return (
     <tr className="bg-yellow-500/5 hover:bg-yellow-500/10 transition-colors">
@@ -2654,12 +2656,19 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
 
       {/* Status */}
       <td className="py-2 pr-4">
-        <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
+        <div className="flex items-center gap-1.5">
+          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isSellOrder ? "bg-amber-500/20 text-amber-400" : "bg-sky-500/20 text-sky-400"}`}>
+            {isSellOrder ? "SELL" : "BUY"}
+          </span>
+          <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
+        </div>
       </td>
 
       {/* Position detail */}
       <td className="py-2 pr-4 text-xs text-slate-400">
-        {filledCount > 0 ? (
+        {isSellOrder ? (
+          <span>{filledCount} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit</span>
+        ) : filledCount > 0 ? (
           // Partial fill: show remaining if known, otherwise just filled/total
           <span>
             {remainingCount > 0 ? `${remainingCount} remaining` : "remaining contracts"}
@@ -2830,6 +2839,7 @@ function PendingOrderCard({ trade, canceling, boosting, onCancel, onBoost }: Pen
   const filledCount    = trade.filled_count ?? 0;
   const remainingCount = trade.remaining_count ?? 0;
   const totalCount     = filledCount + remainingCount;
+  const isSellOrder    = filledCount > 0 && trade.order_status === "resting";
 
   return (
     <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-xl p-3 my-1 space-y-2">
@@ -2838,12 +2848,17 @@ function PendingOrderCard({ trade, canceling, boosting, onCancel, onBoost }: Pen
           <span className={`font-semibold text-sm ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
             {trade.side}
           </span>
+          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isSellOrder ? "bg-amber-500/20 text-amber-400" : "bg-sky-500/20 text-sky-400"}`}>
+            {isSellOrder ? "SELL" : "BUY"}
+          </span>
           <span className="text-slate-300 text-sm">{bracket}</span>
         </div>
         <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
       </div>
       <div className="text-xs text-slate-400">
-        {filledCount > 0 ? (
+        {isSellOrder ? (
+          <>{filledCount} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit</>
+        ) : filledCount > 0 ? (
           <>
             {remainingCount > 0 ? `${remainingCount} remaining` : "remaining contracts"}
             {" "}@ {(entryPrice * 100).toFixed(1)}¢ limit
