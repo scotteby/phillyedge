@@ -256,9 +256,7 @@ function CurrentHighBanner({
   const textMd     = compact ? "text-xs"     : "text-sm";
   const textSm     = compact ? "text-[10px]" : "text-xs";
 
-  const peakNote = highReachedAt
-    ? ` · peaked at ${fmtObsTime(highReachedAt)}`
-    : "";
+  const peakNote = "";
 
   if (highObsStatus === "likely-final") {
     return (
@@ -331,12 +329,12 @@ function TimeGateBanner({
       : null;
 
     const highLine = highSoFarF !== null
-      ? `High so far today: ${highSoFarF}°F${highReachedAt ? ` (peaked at ${fmtObsTime(highReachedAt)})` : ""}`
+      ? `High so far today: ${highSoFarF}°F`
       : null;
 
     if (highObsStatus === "likely-final" && highSoFarF !== null) {
       // 5 PM+ and stable for 2h — high is likely set
-      headline = `✅ Today's high is likely recorded: ${highSoFarF}°F${highReachedAt ? ` · peaked at ${fmtObsTime(highReachedAt)}` : ""}`;
+      headline = `✅ Today's high is likely recorded: ${highSoFarF}°F`;
       detail   = currentLine;
     } else if (highObsStatus === "leading") {
       // 2–5 PM — near peak but may still rise
