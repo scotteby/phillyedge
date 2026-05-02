@@ -2348,7 +2348,9 @@ function StateBadge({ state, firstFill }: { state: PositionState; firstFill?: Tr
 
 function PositionSummaryText({ pos, mobile = false }: { pos: Position; mobile?: boolean }) {
   const sizeCls  = mobile ? "text-sm" : "";
-  const contracts = pos.contractsBought || pos.netContracts;
+  // contractsBought only counts non-sold fills; for a fully-closed position
+  // all fills are "sold" so contractsBought is 0. Fall back to contractsSold.
+  const contracts = pos.contractsBought || pos.contractsSold;
   const cost      = contracts * pos.avgBuyPrice;
 
   // All states show Cost + contracts — matches open-trade display
