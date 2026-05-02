@@ -370,7 +370,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [trades, setTrades]       = useState<Trade[]>(initialTrades);
   const [canceling, setCanceling] = useState<string | null>(null);
   const [selling, setSelling]     = useState<string | null>(null);
-  const [sellModalTrade, setSellModalTrade]   = useState<Trade | null>(null);
+  const [sellModalTrades, setSellModalTrades] = useState<Trade[] | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
   const [syncing, setSyncing]     = useState(false);
@@ -536,14 +536,14 @@ export default function HistoryClient({ initialTrades }: Props) {
 
   // ── Sell position ─────────────────────────────────────────────────────────
 
-  async function sellPosition(tradeId: string) {
+  async function sellPosition(tradeId: string, sellPriceCents?: number) {
     setSelling(tradeId);
-    setSellModalTrade(null);
+    setSellModalTrades(null);
     try {
       const res  = await fetch("/api/sell-position", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ trade_id: tradeId }),
+        body:    JSON.stringify({ trade_id: tradeId, sell_price_cents: sellPriceCents }),
       });
       const json = await res.json();
       if (res.ok) {
@@ -569,23 +569,9 @@ export default function HistoryClient({ initialTrades }: Props) {
     }
   }
 
-  /**
-   * Called when the position-level Sell button is clicked.
-   * - 1 fill: open SellModal for confirmation as usual.
-   * - Multiple fills: sell each sequentially without a modal
-   *   (clicking Sell at the position level is already confirmation enough).
-   */
+  /** Always open the sell confirmation modal — for both single and multi-fill positions. */
   function handlePositionSell(fills: Trade[]) {
-    if (fills.length === 1) {
-      setSellModalTrade(fills[0]);
-    } else {
-      // Sell each fill in sequence; no additional modal
-      void (async () => {
-        for (const fill of fills) {
-          await sellPosition(fill.id);
-        }
-      })();
-    }
+    if (fills.length > 0) setSellModalTrades(fills);
   }
 
   // ── Boost order ──────────────────────────────────────────────────────────
@@ -1005,7 +991,7 @@ export default function HistoryClient({ initialTrades }: Props) {
             const sharedProps = {
               livePrices, today, canceling, selling, boosting,
               onCancel: (id: string) => cancelOrder(id),
-              onSell:   (t: Trade)   => setSellModalTrade(t),
+              onSell:   (t: Trade)   => setSellModalTrades([t]),
               onBoost:  (t: Trade)   => setBoostModalTrade(t),
             };
             return (
@@ -1056,7 +1042,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                 selling={selling === t.id}
                                 boosting={boosting === t.id}
                                 onCancel={() => cancelOrder(t.id)}
-                                onSell={() => setSellModalTrade(t)}
+                                onSell={() => setSellModalTrades([t])}
                                 onBoost={() => setBoostModalTrade(t)}
                               />
                             ))}
@@ -1121,7 +1107,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                     selling={selling === t.id}
                                     boosting={boosting === t.id}
                                     onCancel={() => cancelOrder(t.id)}
-                                    onSell={() => setSellModalTrade(t)}
+                                    onSell={() => setSellModalTrades([t])}
                                     onBoost={() => setBoostModalTrade(t)}
                                   />
                                 ))}
@@ -1168,13 +1154,18 @@ export default function HistoryClient({ initialTrades }: Props) {
       )}
 
       {/* Sell confirmation modal */}
-      {sellModalTrade && (
+      {sellModalTrades && sellModalTrades.length > 0 && (
         <SellModal
-          trade={sellModalTrade}
-          liveYesPrice={livePrices.get(sellModalTrade.market_id)}
-          selling={selling === sellModalTrade.id}
-          onConfirm={() => sellPosition(sellModalTrade.id)}
-          onClose={() => setSellModalTrade(null)}
+          trades={sellModalTrades}
+          selling={sellModalTrades.some((t) => selling === t.id)}
+          onConfirm={(priceCents) => {
+            void (async () => {
+              for (const t of sellModalTrades) {
+                await sellPosition(t.id, priceCents);
+              }
+            })();
+          }}
+          onClose={() => setSellModalTrades(null)}
         />
       )}
 
@@ -1204,33 +1195,66 @@ function SummaryCard({
 }
 
 // ── Sell confirmation modal ───────────────────────────────────────────────────
+// Accepts 1+ fills for the same market/side.  Fetches real-time bid from
+// /api/orderbook on open so the user sees the actual current sell price, not
+// a cached value.  Places a limit order at that bid price (not a 1¢ sweep).
 
 function SellModal({
-  trade, liveYesPrice, selling, onConfirm, onClose,
+  trades, selling, onConfirm, onClose,
 }: {
-  trade: Trade;
-  liveYesPrice: number | undefined;
+  trades: Trade[];
   selling: boolean;
-  onConfirm: () => void;
+  onConfirm: (sellPriceCents: number | undefined) => void;
   onClose: () => void;
 }) {
-  const entryYes   = getEntryYesPrice(trade);
-  const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
-  const livePrice  = liveYesPrice != null
-    ? (trade.side === "YES" ? liveYesPrice : 1 - liveYesPrice)
-    : null;
+  const firstTrade = trades[0];
+  const side       = firstTrade.side as "YES" | "NO";
+  const ticker     = firstTrade.market_id;
 
-  // filled_count may be null OR 0 if order-status polling hasn't stored the
-  // real value yet (Kalshi fills set it, but polling may lag).
-  // Estimate from amount_usdc / entry_price whenever the stored value is falsy.
-  const storedFilled = trade.filled_count ?? 0;
-  const contracts = storedFilled > 0
-    ? storedFilled
-    : (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
-  const costBasis  = contracts * entryPrice;
-  const estProceeds = livePrice != null ? contracts * livePrice : null;
-  const estPnl      = estProceeds != null ? estProceeds - costBasis : null;
-  const pnlColor    = estPnl == null ? "text-slate-400"
+  // Aggregate contracts across all fills
+  const totalContracts = trades.reduce((sum, t) => {
+    const entryYes   = getEntryYesPrice(t);
+    const entryPrice = t.side === "YES" ? entryYes : 1 - entryYes;
+    const stored = t.filled_count ?? 0;
+    const count  = stored > 0 ? stored : (entryPrice > 0 ? Math.floor(t.amount_usdc / entryPrice) : 0);
+    return sum + count;
+  }, 0);
+
+  const totalCostBasis = trades.reduce((sum, t) => {
+    const entryYes   = getEntryYesPrice(t);
+    const entryPrice = t.side === "YES" ? entryYes : 1 - entryYes;
+    const stored = t.filled_count ?? 0;
+    const count  = stored > 0 ? stored : (entryPrice > 0 ? Math.floor(t.amount_usdc / entryPrice) : 0);
+    return sum + count * entryPrice;
+  }, 0);
+  const avgEntryPrice = totalContracts > 0 ? totalCostBasis / totalContracts : 0;
+
+  // Real-time bid from Kalshi — fetched once on mount
+  const [bidCents,    setBidCents]    = useState<number | null>(null);
+  const [bidLoading,  setBidLoading]  = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchBid() {
+      setBidLoading(true);
+      try {
+        const res  = await fetch(`/api/orderbook?ticker=${encodeURIComponent(ticker)}`, { cache: "no-store" });
+        const json = await res.json();
+        if (cancelled) return;
+        // Selling YES → we receive the YES bid; selling NO → we receive the NO bid
+        const cents = side === "YES" ? json.yes_bid_cents : json.no_bid_cents;
+        setBidCents(typeof cents === "number" ? cents : null);
+      } catch { /* non-fatal — fall back to no price */ }
+      finally { if (!cancelled) setBidLoading(false); }
+    }
+    void fetchBid();
+    return () => { cancelled = true; };
+  }, [ticker, side]);
+
+  const bidPrice      = bidCents != null ? bidCents / 100 : null;
+  const estProceeds   = bidPrice != null ? totalContracts * bidPrice : null;
+  const estPnl        = estProceeds != null ? estProceeds - totalCostBasis : null;
+  const pnlColor      = estPnl == null ? "text-slate-400"
     : estPnl > 0  ? "text-emerald-400"
     : estPnl < 0  ? "text-red-400"
     : "text-slate-300";
@@ -1243,7 +1267,7 @@ function SellModal({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-white font-bold text-lg">Sell Position</h2>
-              <p className="text-slate-400 text-sm mt-0.5 leading-snug">{trade.market_question}</p>
+              <p className="text-slate-400 text-sm mt-0.5 leading-snug">{firstTrade.market_question}</p>
             </div>
             <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xl leading-none mt-0.5">×</button>
           </div>
@@ -1253,27 +1277,27 @@ function SellModal({
         <div className="px-5 py-4 grid grid-cols-2 gap-4 text-sm">
           <div>
             <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Side</p>
-            <p className={`font-semibold ${trade.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
-              {trade.side}
-            </p>
+            <p className={`font-semibold ${side === "YES" ? "text-emerald-400" : "text-red-400"}`}>{side}</p>
           </div>
           <div>
             <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Contracts</p>
-            <p className="text-white font-semibold">{contracts}</p>
+            <p className="text-white font-semibold">{totalContracts}</p>
           </div>
           <div>
-            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Entry Price</p>
-            <p className="text-slate-200 font-medium">{(entryPrice * 100).toFixed(1)}¢</p>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Avg Entry</p>
+            <p className="text-slate-200 font-medium">{(avgEntryPrice * 100).toFixed(1)}¢</p>
           </div>
           <div>
-            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Live Price</p>
-            {livePrice != null
-              ? <p className="text-slate-200 font-medium">{(livePrice * 100).toFixed(1)}¢</p>
-              : <p className="text-slate-500">—</p>}
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Current Bid</p>
+            {bidLoading
+              ? <p className="text-slate-500 animate-pulse">loading…</p>
+              : bidCents != null
+                ? <p className="text-white font-semibold">{bidCents}¢</p>
+                : <p className="text-slate-500">—</p>}
           </div>
           <div>
             <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Cost Basis</p>
-            <p className="text-slate-200 font-medium">${costBasis.toFixed(2)}</p>
+            <p className="text-slate-200 font-medium">${totalCostBasis.toFixed(2)}</p>
           </div>
           <div>
             <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Est. Proceeds</p>
@@ -1295,11 +1319,13 @@ function SellModal({
           </div>
         )}
 
-        {/* Disclaimer */}
+        {/* Note about limit order */}
         <div className="px-5 pb-4">
           <p className="text-xs text-slate-500 leading-relaxed">
-            ⚠️ This places a <strong className="text-slate-400">market order</strong> on Kalshi.
-            Final fill price may differ slightly from the live estimate above.
+            {bidCents != null
+              ? `Places a limit sell at ${bidCents}¢ — matches the current best bid.`
+              : "Places a market sell order on Kalshi."}
+            {" "}Final fill price may differ if the market moves before the order is submitted.
           </p>
         </div>
 
@@ -1313,11 +1339,11 @@ function SellModal({
             Cancel
           </button>
           <button
-            onClick={onConfirm}
-            disabled={selling}
+            onClick={() => onConfirm(bidCents ?? undefined)}
+            disabled={selling || bidLoading}
             className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white font-bold transition-colors text-sm"
           >
-            {selling ? "Selling…" : `Sell ${contracts} contract${contracts !== 1 ? "s" : ""}`}
+            {selling ? "Selling…" : bidLoading ? "Loading…" : `Sell ${totalContracts} contract${totalContracts !== 1 ? "s" : ""}`}
           </button>
         </div>
       </div>
@@ -2376,6 +2402,7 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
     : null;
   const totalPnl   = pos.realizedPnl + (unrealized ?? 0);
   const hasPnl     = pos.realizedPnl !== 0 || unrealized != null;
+  const pnlPending = !hasPnl && pos.fills.some((t) => t.outcome === "sold" && t.pnl == null);
   const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
   const isEstimate = unrealized != null;
 
@@ -2424,6 +2451,8 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
               <span className={`font-semibold ${pnlColor}`}>
                 {isEstimate && "~"}{totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
               </span>
+            ) : pnlPending ? (
+              <span className="text-slate-500 text-sm">updating…</span>
             ) : (
               <span className="text-slate-600">—</span>
             )}
@@ -2613,6 +2642,7 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
     : null;
   const totalPnl   = pos.realizedPnl + (unrealized ?? 0);
   const hasPnl     = pos.realizedPnl !== 0 || unrealized != null;
+  const pnlPending = !hasPnl && pos.fills.some((t) => t.outcome === "sold" && t.pnl == null);
   const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
   const isEstimate = unrealized != null;
 
@@ -2645,6 +2675,8 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
               <span className={`font-medium ${pnlColor}`}>
                 {isEstimate && "~"}{totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
               </span>
+            ) : pnlPending ? (
+              <span className="text-slate-500 text-xs">updating…</span>
             ) : (
               <span className="text-slate-600 text-sm">—</span>
             )}

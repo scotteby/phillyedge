@@ -9,14 +9,14 @@ const KALSHI_BASE = DEMO_MODE
 const ORDER_PATH  = "/trade-api/v2/portfolio/orders";
 
 export async function POST(req: NextRequest) {
-  let body: { trade_id: string };
+  let body: { trade_id: string; sell_price_cents?: number };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { trade_id } = body;
+  const { trade_id, sell_price_cents } = body;
   if (!trade_id) {
     return NextResponse.json({ error: "Missing trade_id" }, { status: 400 });
   }
@@ -80,16 +80,22 @@ export async function POST(req: NextRequest) {
 
   const ticker = trade.market_id as string;
 
-  // Build market sell order — market type fills at best available price.
-  // Kalshi requires exactly one price field even for market orders; setting 1¢
-  // means "accept any price ≥ 1¢" which behaves as a true market sell.
+  // Build sell order.
+  // If the caller provides a sell_price_cents (fetched from the real-time orderbook),
+  // place a limit order at that price so the user gets approximately what they saw
+  // in the confirmation modal.  Fall back to 1¢ (market sweep) only when no price
+  // is supplied, so the order always fills.
+  const priceForOrder = sell_price_cents != null
+    ? Math.max(1, Math.round(sell_price_cents))
+    : 1;
+
   const orderBody = {
     ticker,
     action: "sell",
     side,
-    type:   "market",
+    type:   priceForOrder > 1 ? "limit" : "market",
     count:  filledCount,
-    ...(side === "yes" ? { yes_price: 1 } : { no_price: 1 }),
+    ...(side === "yes" ? { yes_price: priceForOrder } : { no_price: priceForOrder }),
   };
 
   console.log("[sell-position] order body:", JSON.stringify(orderBody));
@@ -168,7 +174,17 @@ export async function POST(req: NextRequest) {
   if (rawPrice != null) {
     const n = Number(rawPrice);
     // Kalshi can return integer cents (e.g. 45) or decimal (e.g. 0.45)
-    avgFillYesPrice = n > 1 ? n / 100 : n;
+    // Guard against the submitted 1¢ floor price leaking in as the "fill" price.
+    if (n > 1) avgFillYesPrice = n / 100;
+    else if (n > 0 && n <= 1) avgFillYesPrice = n;
+  }
+  // Fallback: use the confirmed sell price from the UI (what the user saw).
+  // sell_price_cents is the side-specific bid (YES cents for YES, NO cents for NO).
+  // Convert to a YES-side price for the pnl calc below.
+  if (avgFillYesPrice == null && sell_price_cents != null && sell_price_cents > 1) {
+    avgFillYesPrice = side === "yes"
+      ? sell_price_cents / 100
+      : 1 - sell_price_cents / 100;
   }
 
   // Calculate P&L (reuse entryYesCalc / entryCostPerContract computed above)
