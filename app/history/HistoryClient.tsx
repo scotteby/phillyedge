@@ -2408,7 +2408,7 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
 
       {/* State */}
       <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
-        <StateBadge state={pos.state} firstFill={pos.fills[0]} />
+        <StateBadge state={pos.state} firstFill={pos.fills.find((t) => t.outcome === "win" || t.outcome === "loss") ?? pos.fills[0]} />
       </td>
 
       {/* Position summary */}
@@ -2638,7 +2638,7 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
             <span className={`font-semibold ${pos.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
               {pos.side}
             </span>
-            <StateBadge state={pos.state} firstFill={pos.fills[0]} />
+            <StateBadge state={pos.state} firstFill={pos.fills.find((t) => t.outcome === "win" || t.outcome === "loss") ?? pos.fills[0]} />
           </div>
           <div className="shrink-0 text-right">
             {hasPnl ? (
