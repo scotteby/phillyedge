@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   // Look up the trade
   const { data: trade, error: dbErr } = await supabase
     .from("trades")
-    .select("id, kalshi_order_id, order_status")
+    .select("id, kalshi_order_id, order_status, filled_count")
     .eq("id", trade_id)
     .single();
 
@@ -76,12 +76,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Update DB
+  // If this was a resting sell order (filled_count > 0 means the buy was already
+  // filled and kalshi_order_id was swapped to the sell order), restore the trade
+  // to "filled" so the position stays open.  For a regular pending buy order
+  // (no fills yet), mark as "canceled" as before.
+  const isSellOrder  = (trade.filled_count as number | null ?? 0) > 0;
+  const restoredStatus = isSellOrder ? "filled" : "canceled";
+
   const now = new Date().toISOString();
   await supabase
     .from("trades")
-    .update({ order_status: "canceled", last_checked_at: now })
+    .update({ order_status: restoredStatus, last_checked_at: now })
     .eq("id", trade_id);
 
-  return NextResponse.json({ ok: true, trade_id, order_status: "canceled" });
+  return NextResponse.json({ ok: true, trade_id, order_status: restoredStatus, is_sell_order: isSellOrder });
 }

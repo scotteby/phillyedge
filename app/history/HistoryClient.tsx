@@ -714,10 +714,11 @@ export default function HistoryClient({ initialTrades }: Props) {
       });
       const json = await res.json();
       if (res.ok) {
+        const restoredStatus = (json.order_status ?? "canceled") as OrderStatus;
         setTrades((prev) =>
-          prev.map((t) => t.id === tradeId ? { ...t, order_status: "canceled" as OrderStatus } : t)
+          prev.map((t) => t.id === tradeId ? { ...t, order_status: restoredStatus } : t)
         );
-        addToast("Order cancelled.", "cancel");
+        addToast(json.is_sell_order ? "Sell order cancelled — position restored." : "Order cancelled.", "cancel");
       } else {
         addToast(`Cancel failed: ${json.error ?? "unknown error"}`, "error");
       }
