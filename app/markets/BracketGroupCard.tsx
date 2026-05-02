@@ -699,7 +699,7 @@ function BracketRow({
         </div>
 
         {/* Row 2: inline stats */}
-        <div className="text-xs mt-0.5">
+        <div className="text-sm mt-0.5">
           {bracket.confidence > 0 ? (
             <>
               <span className="text-slate-500">
@@ -710,14 +710,14 @@ function BracketRow({
                 )}
               </span>
               {isForecastFairly && (
-                <div className="mt-0.5 text-emerald-400/70">Fairly priced · consider smaller YES</div>
+                <div className="mt-0.5 text-emerald-400/70 text-xs">Fairly priced · consider smaller YES</div>
               )}
               {isForecastOverconfident && (
-                <div className="mt-0.5 text-amber-400/70">Market overconfident · raise confidence or trade smaller YES</div>
+                <div className="mt-0.5 text-amber-400/70 text-xs">Market overconfident · raise confidence or trade smaller YES</div>
               )}
             </>
           ) : (
-            <span className="text-slate-600">Kalshi {bracket.yes_pct}% · no forecast</span>
+            <span className="text-slate-500">Kalshi {bracket.yes_pct}% · no forecast</span>
           )}
         </div>
       </div>
