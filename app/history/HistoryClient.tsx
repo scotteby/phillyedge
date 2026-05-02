@@ -1727,9 +1727,16 @@ function BoostModal({
     ? storedRemaining
     : (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
 
-  const newCost     = chosenCents != null ? (chosenCents / 100) * contracts : null;
-  const oldCost     = entryPrice * contracts;
-  const costDiff    = newCost != null ? newCost - oldCost : null;
+  const newCost          = chosenCents != null ? (chosenCents / 100) * contracts : null;
+  const oldCost          = entryPrice * contracts;
+  const costDiff         = newCost != null ? newCost - oldCost : null;
+  // Profit if the market resolves in your favour at the new price.
+  // chosenCents is always the side-specific price (YES ¢ for YES, NO ¢ for NO),
+  // so profit-per-contract = 1 − price regardless of side.
+  const ifCorrectProfit  = chosenCents != null
+    ? parseFloat((contracts * (1 - chosenCents / 100)).toFixed(2))
+    : null;
+  const oldIfCorrectProfit = parseFloat((contracts * (1 - entryPrice)).toFixed(2));
 
   // Edge at chosen price: my_pct - new_price_cents
   // Edge = forecast_for_this_side − price_paid.
@@ -1838,6 +1845,19 @@ function BoostModal({
                   <span className="text-slate-400">Difference</span>
                   <span className={costDiff > 0 ? "text-amber-400" : "text-emerald-400"}>
                     {costDiff > 0 ? "+" : ""}${costDiff.toFixed(2)} more
+                  </span>
+                </div>
+              )}
+              {ifCorrectProfit != null && (
+                <div className="flex justify-between border-t border-slate-700/50 pt-1.5">
+                  <span className="text-slate-400">🎯 If correct</span>
+                  <span className="font-semibold text-sky-400">
+                    +${ifCorrectProfit.toFixed(2)}
+                    {ifCorrectProfit !== oldIfCorrectProfit && (
+                      <span className="text-slate-500 font-normal ml-1.5">
+                        (was +${oldIfCorrectProfit.toFixed(2)})
+                      </span>
+                    )}
                   </span>
                 </div>
               )}
