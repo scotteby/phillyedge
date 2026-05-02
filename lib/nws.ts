@@ -105,12 +105,28 @@ async function fetchObHistoryTemps(): Promise<{ low: number | null; high: number
       const day = parseInt(cells[0], 10);
       if (isNaN(day) || day !== todayDay) continue;
 
-      // Column 6 = air temperature in °F (may be decimal, e.g. 46.9)
+      // Column 6 = instantaneous air temperature in °F
       const temp = parseFloat(cells[6]);
-      if (isNaN(temp)) continue;
+      if (!isNaN(temp)) {
+        if (minTemp === null || temp < minTemp) minTemp = temp;
+        if (maxTemp === null || temp > maxTemp) maxTemp = temp;
+      }
 
-      if (minTemp === null || temp < minTemp) minTemp = temp;
-      if (maxTemp === null || temp > maxTemp) maxTemp = temp;
+      // Column 8 = 6-hour max temp — only populated every 6 hours but more
+      // accurate for the daily high (matches official climate report values).
+      // Column 9 = 6-hour min temp — same cadence, better for daily low.
+      if (cells.length > 8) {
+        const sixHrMax = parseFloat(cells[8]);
+        if (!isNaN(sixHrMax)) {
+          if (maxTemp === null || sixHrMax > maxTemp) maxTemp = sixHrMax;
+        }
+      }
+      if (cells.length > 9) {
+        const sixHrMin = parseFloat(cells[9]);
+        if (!isNaN(sixHrMin)) {
+          if (minTemp === null || sixHrMin < minTemp) minTemp = sixHrMin;
+        }
+      }
     }
 
     console.log(`[nws] obhistory KPHL day=${todayDay}: low=${minTemp}°F high=${maxTemp}°F`);
