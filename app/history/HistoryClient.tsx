@@ -1686,6 +1686,12 @@ function BoostModal({
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const currentCents = Math.round(entryPrice * 100);
 
+  // Orig edge corrected for side: for NO trades, my_pct is the YES forecast so
+  // we flip it to get the NO-side edge = (100 − my_pct) − NO_price.
+  const origEdge = trade.side === "YES"
+    ? trade.my_pct - currentCents
+    : (100 - trade.my_pct) - currentCents;
+
   // Fetch current ask on mount
   useEffect(() => {
     setLoadingAsk(true);
@@ -1726,7 +1732,12 @@ function BoostModal({
   const costDiff    = newCost != null ? newCost - oldCost : null;
 
   // Edge at chosen price: my_pct - new_price_cents
-  const newEdge     = chosenCents != null ? trade.my_pct - chosenCents : null;
+  // Edge = forecast_for_this_side − price_paid.
+  // For YES: edge = my_pct − chosenCents  (my_pct is YES probability)
+  // For NO:  edge = (100 − my_pct) − chosenCents  (flip to NO probability)
+  const newEdge     = chosenCents != null
+    ? (trade.side === "YES" ? trade.my_pct - chosenCents : (100 - trade.my_pct) - chosenCents)
+    : null;
   const edgeNegative = newEdge != null && newEdge < 0;
 
   const options: { key: "ask" | "+1" | "+2" | "custom"; label: string; cents: number | null }[] = [
@@ -1772,8 +1783,8 @@ function BoostModal({
           </div>
           <div>
             <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Orig edge</p>
-            <p className={`font-semibold ${trade.edge >= 10 ? "text-emerald-400" : trade.edge >= 0 ? "text-sky-400" : "text-red-400"}`}>
-              {trade.edge > 0 ? "+" : ""}{trade.edge}pt
+            <p className={`font-semibold ${origEdge >= 10 ? "text-emerald-400" : origEdge >= 0 ? "text-sky-400" : "text-red-400"}`}>
+              {origEdge > 0 ? "+" : ""}{origEdge}pt
             </p>
           </div>
         </div>
