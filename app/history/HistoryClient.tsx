@@ -2519,11 +2519,12 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
 
       {/* Position detail */}
       <td className="py-2 pr-4 text-xs text-slate-400">
-        {remainingCount > 0 && filledCount > 0 ? (
-          // Partial fill: show remaining count + total breakdown
+        {filledCount > 0 ? (
+          // Partial fill: show remaining if known, otherwise just filled/total
           <span>
-            {remainingCount} remaining @ {(entryPrice * 100).toFixed(1)}¢ limit
-            <span className="ml-2 text-slate-500">({filledCount}/{totalCount} filled)</span>
+            {remainingCount > 0 ? `${remainingCount} remaining` : "remaining contracts"}
+            {" "}@ {(entryPrice * 100).toFixed(1)}¢ limit
+            <span className="ml-2 text-slate-500">({filledCount}{totalCount > filledCount ? `/${totalCount}` : ""} filled)</span>
           </span>
         ) : (
           <span>{contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit</span>
@@ -2697,10 +2698,11 @@ function PendingOrderCard({ trade, canceling, boosting, onCancel, onBoost }: Pen
         <OrderStatusBadge status={trade.order_status} filledCount={trade.filled_count} />
       </div>
       <div className="text-xs text-slate-400">
-        {remainingCount > 0 && filledCount > 0 ? (
+        {filledCount > 0 ? (
           <>
-            {remainingCount} remaining @ {(entryPrice * 100).toFixed(1)}¢ limit
-            <span className="ml-2 text-slate-500">({filledCount}/{totalCount} filled)</span>
+            {remainingCount > 0 ? `${remainingCount} remaining` : "remaining contracts"}
+            {" "}@ {(entryPrice * 100).toFixed(1)}¢ limit
+            <span className="ml-2 text-slate-500">({filledCount}{totalCount > filledCount ? `/${totalCount}` : ""} filled)</span>
           </>
         ) : (
           <>{contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit</>

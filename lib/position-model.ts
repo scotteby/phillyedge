@@ -91,24 +91,24 @@ export function buildPositions(trades: Trade[]): Position[] {
     );
 
     // 3. Split into fills and pendingOrders.
-    // Partially-filled orders go into BOTH buckets: fills (for position math)
-    // and pendingOrders (so the remaining contracts appear in the Pending
-    // Orders section with a Boost button).
+    // A trade can appear in BOTH buckets:
+    //   fills         → position math (contracts held, avg price, P&L)
+    //   pendingOrders → PENDING ORDERS display with Boost / Cancel buttons
     //
-    // Note: Kalshi may report a resting order as "resting" even after some
-    // contracts have filled (the status only becomes "partially_filled" once
-    // Kalshi explicitly flips it). We therefore treat any order that has
-    // actual fills (filled_count > 0) AND remaining contracts as a
-    // partially-filled resting order visible in both sections.
+    // A partially-filled order has fills already counted in the position, but
+    // the remaining resting contracts still need to be visible so the user
+    // can boost them. We include a trade in pendingOrders if it is still
+    // live on Kalshi (order_status "resting" or "partially_filled" AND
+    // outcome still "pending"). We do NOT gate on remaining_count because
+    // Kalshi may not return that field in every polling response, leaving it
+    // as 0 in the DB even though contracts are still resting.
+    const isLiveOrder = (t: Trade): boolean =>
+      t.outcome === "pending" &&
+      (t.order_status === "resting" || t.order_status === "partially_filled");
+
     const fills         = sorted.filter(hasFills);
     const pendingOrders = sorted.filter(
-      (t) =>
-        isOnlyPendingOrder(t) ||
-        (
-          hasFills(t) &&
-          (t.remaining_count ?? 0) > 0 &&
-          (t.order_status === "partially_filled" || t.order_status === "resting")
-        ),
+      (t) => isOnlyPendingOrder(t) || (hasFills(t) && isLiveOrder(t)),
     );
 
     // 4. Skip groups with neither
