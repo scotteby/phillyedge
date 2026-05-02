@@ -2284,7 +2284,7 @@ function PositionSummaryText({ pos }: { pos: Position }) {
     const cost = pos.netContracts * pos.avgBuyPrice;
     return (
       <span>
-        <span className="text-slate-200">Cost ${cost.toFixed(2)}</span>
+        <span className="text-slate-200 text-sm font-medium">Cost ${cost.toFixed(2)}</span>
         <span className="text-slate-500 ml-1.5">· {pos.netContracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg</span>
       </span>
     );
