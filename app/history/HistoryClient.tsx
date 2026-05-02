@@ -1244,8 +1244,9 @@ function SellModal({
   }, 0);
   const avgEntryPrice = totalContracts > 0 ? totalCostBasis / totalContracts : 0;
 
-  // Real-time bid from Kalshi — fetched once on mount
+  // Real-time orderbook — fetched once on mount
   const [bidCents,    setBidCents]    = useState<number | null>(null);
+  const [askCents,    setAskCents]    = useState<number | null>(null);
   const [bidLoading,  setBidLoading]  = useState(true);
 
   useEffect(() => {
@@ -1256,20 +1257,35 @@ function SellModal({
         const res  = await fetch(`/api/orderbook?ticker=${encodeURIComponent(ticker)}`, { cache: "no-store" });
         const json = await res.json();
         if (cancelled) return;
-        // Selling YES → we receive the YES bid; selling NO → we receive the NO bid
-        const cents = side === "YES" ? json.yes_bid_cents : json.no_bid_cents;
-        setBidCents(typeof cents === "number" ? cents : null);
-      } catch { /* non-fatal — fall back to no price */ }
+        const bid = side === "YES" ? json.yes_bid_cents : json.no_bid_cents;
+        const ask = side === "YES" ? json.yes_ask_cents : json.no_ask_cents;
+        setBidCents(typeof bid === "number" ? bid : null);
+        setAskCents(typeof ask === "number" ? ask : null);
+      } catch { /* non-fatal */ }
       finally { if (!cancelled) setBidLoading(false); }
     }
     void fetchBid();
     return () => { cancelled = true; };
   }, [ticker, side]);
 
-  const bidPrice      = bidCents != null ? bidCents / 100 : null;
-  const estProceeds   = bidPrice != null ? totalContracts * bidPrice : null;
-  const estPnl        = estProceeds != null ? estProceeds - totalCostBasis : null;
-  const pnlColor      = estPnl == null ? "text-slate-400"
+  // Editable sell price — defaults to current bid once loaded
+  const [priceInput, setPriceInput] = useState("");
+  useEffect(() => {
+    if (bidCents != null && priceInput === "") setPriceInput(String(bidCents));
+  }, [bidCents]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const parsedCents   = parseInt(priceInput, 10);
+  const validPrice    = !isNaN(parsedCents) && parsedCents >= 1 && parsedCents <= 99;
+  const sellPriceCents = validPrice ? parsedCents : null;
+  const sellPrice      = sellPriceCents != null ? sellPriceCents / 100 : null;
+
+  // Will this fill immediately or rest?
+  // A sell rests when price > current ask (no buyer willing to pay that much).
+  const willRest = askCents != null && sellPriceCents != null && sellPriceCents > askCents;
+
+  const estProceeds = sellPrice != null ? totalContracts * sellPrice : null;
+  const estPnl      = estProceeds != null ? estProceeds - totalCostBasis : null;
+  const pnlColor    = estPnl == null ? "text-slate-400"
     : estPnl > 0  ? "text-emerald-400"
     : estPnl < 0  ? "text-red-400"
     : "text-slate-300";
@@ -1303,11 +1319,14 @@ function SellModal({
             <p className="text-slate-200 font-medium">{(avgEntryPrice * 100).toFixed(1)}¢</p>
           </div>
           <div>
-            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Current Bid</p>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+              Current Bid
+              {askCents != null && <span className="ml-1 text-slate-600">/ Ask {askCents}¢</span>}
+            </p>
             {bidLoading
               ? <p className="text-slate-500 animate-pulse">loading…</p>
               : bidCents != null
-                ? <p className="text-white font-semibold">{bidCents}¢</p>
+                ? <p className="text-slate-400">{bidCents}¢</p>
                 : <p className="text-slate-500">—</p>}
           </div>
           <div>
@@ -1322,9 +1341,43 @@ function SellModal({
           </div>
         </div>
 
+        {/* Sell price input */}
+        <div className="px-5 pb-4">
+          <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Sell Price (¢)</p>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <input
+                type="number"
+                min={1}
+                max={99}
+                value={priceInput}
+                onChange={(e) => setPriceInput(e.target.value)}
+                disabled={bidLoading || selling}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white font-semibold text-sm focus:outline-none focus:border-amber-500 disabled:opacity-50"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">¢</span>
+            </div>
+            {bidCents != null && (
+              <button
+                onClick={() => setPriceInput(String(bidCents))}
+                disabled={selling}
+                className="px-3 py-2.5 rounded-lg border border-slate-600 text-slate-400 hover:text-white hover:border-slate-500 text-xs transition-colors disabled:opacity-40"
+              >
+                Reset to bid
+              </button>
+            )}
+          </div>
+          {willRest && (
+            <p className="mt-2 text-xs text-amber-400">
+              ⏳ Price above current ask — order will rest until a buyer matches it.
+              You can boost or cancel it from Pending Orders.
+            </p>
+          )}
+        </div>
+
         {/* Est. P&L */}
         {estPnl != null && (
-          <div className="px-5 pb-3">
+          <div className="px-5 pb-4">
             <div className="flex items-center justify-between bg-slate-900/50 rounded-lg px-4 py-2.5">
               <span className="text-slate-400 text-sm">Estimated P&amp;L</span>
               <span className={`font-bold text-base ${pnlColor}`}>
@@ -1333,16 +1386,6 @@ function SellModal({
             </div>
           </div>
         )}
-
-        {/* Note about limit order */}
-        <div className="px-5 pb-4">
-          <p className="text-xs text-slate-500 leading-relaxed">
-            {bidCents != null
-              ? `Places a limit sell at ${bidCents}¢ — matches the current best bid.`
-              : "Places a market sell order on Kalshi."}
-            {" "}Final fill price may differ if the market moves before the order is submitted.
-          </p>
-        </div>
 
         {/* Buttons */}
         <div className="px-5 pb-5 flex gap-3">
@@ -1354,11 +1397,11 @@ function SellModal({
             Cancel
           </button>
           <button
-            onClick={() => onConfirm(bidCents ?? undefined)}
-            disabled={selling || bidLoading}
+            onClick={() => onConfirm(sellPriceCents ?? undefined)}
+            disabled={selling || bidLoading || !validPrice}
             className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white font-bold transition-colors text-sm"
           >
-            {selling ? "Selling…" : bidLoading ? "Loading…" : `Sell ${totalContracts} contract${totalContracts !== 1 ? "s" : ""}`}
+            {selling ? "Selling…" : bidLoading ? "Loading…" : `Sell ${totalContracts} @ ${sellPriceCents ?? "?"}¢`}
           </button>
         </div>
       </div>
