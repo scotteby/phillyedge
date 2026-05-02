@@ -90,9 +90,16 @@ export function buildPositions(trades: Trade[]): Position[] {
       (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     );
 
-    // 3. Split into fills and pendingOrders
+    // 3. Split into fills and pendingOrders.
+    // Partially-filled orders go into BOTH buckets: fills (for position math)
+    // and pendingOrders (so the remaining contracts appear in the Pending
+    // Orders section with a Boost button).
     const fills         = sorted.filter(hasFills);
-    const pendingOrders = sorted.filter(isOnlyPendingOrder);
+    const pendingOrders = sorted.filter(
+      (t) =>
+        isOnlyPendingOrder(t) ||
+        (t.order_status === "partially_filled" && (t.remaining_count ?? 0) > 0),
+    );
 
     // 4. Skip groups with neither
     if (fills.length === 0 && pendingOrders.length === 0) continue;
