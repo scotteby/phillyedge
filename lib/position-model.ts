@@ -144,9 +144,23 @@ export function buildPositions(trades: Trade[]): Position[] {
     const avgBuyPrice = totalContracts > 0 ? totalWeightedPrice / totalContracts : 0;
 
     // 7. Realized P&L
+    // For win/loss we compute from entry_yes_price rather than the stored pnl,
+    // because pnl was persisted when entry_yes_price may have been wrong (the
+    // taker-fill-cost bug).  entry_yes_price has since been corrected by polling,
+    // so computing on-the-fly is more accurate.
+    // For sold fills we still use the stored pnl (set correctly at sell time).
     const realizedPnl = fills.reduce((s, t) => {
-      if (t.outcome === "sold" || t.outcome === "win" || t.outcome === "loss") {
+      if (t.outcome === "sold") {
         return s + (t.pnl ?? 0);
+      }
+      if (t.outcome === "win" || t.outcome === "loss") {
+        const entryYes = getEntryYesPrice(t);
+        const count    = getContractsForFill(t);
+        const sideCost = t.side === "YES" ? entryYes : 1 - entryYes; // cost per contract
+        const pnl      = t.outcome === "win"
+          ? count * (1 - sideCost)   // payout minus cost
+          : -count * sideCost;       // lost what was paid
+        return s + pnl;
       }
       return s;
     }, 0);
