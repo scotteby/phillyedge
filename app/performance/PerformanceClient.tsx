@@ -352,10 +352,11 @@ function SettlementPanel({
   lastSettledDate: string | null;
   defaultDate:     string;
 }) {
-  const [date, setDate]     = useState(defaultDate);
+  const [open, setOpen]       = useState(false);
+  const [date, setDate]       = useState(defaultDate);
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<SettlementResult | null>(null);
-  const [error, setError]   = useState<string | null>(null);
+  const [result, setResult]   = useState<SettlementResult | null>(null);
+  const [error, setError]     = useState<string | null>(null);
 
   // Format the last-run timestamp in local time for display
   const lastRunLabel = lastSettledAt
@@ -394,20 +395,28 @@ function SettlementPanel({
 
   return (
     <section className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-3">
+      {/* Header row — always visible */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between text-left"
+      >
         <h2 className="text-white font-semibold text-base">Settlement</h2>
-        <span className="text-xs text-slate-400">
-          Last run:{" "}
-          <span className="text-slate-200 font-mono">
-            {lastRunLabel}
-            {lastSettledDate && (
-              <span className="text-slate-500"> (for {lastSettledDate})</span>
-            )}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-400">
+            Last run:{" "}
+            <span className="text-slate-200 font-mono">
+              {lastRunLabel}
+              {lastSettledDate && (
+                <span className="text-slate-500"> (for {lastSettledDate})</span>
+              )}
+            </span>
           </span>
-        </span>
-      </div>
+          <span className="text-slate-500 text-xs">{open ? "▲" : "▼"}</span>
+        </div>
+      </button>
 
-      <div className="flex items-center gap-3 flex-wrap">
+      {/* Collapsible body */}
+      {open && <div className="mt-4 flex items-center gap-3 flex-wrap">
         <label className="text-xs text-slate-400 shrink-0">Settle date</label>
         <input
           type="date"
@@ -422,51 +431,51 @@ function SettlementPanel({
         >
           {running ? "Running…" : "Run Settlement"}
         </button>
-      </div>
 
-      {/* Result */}
-      {result && (
-        <div className="mt-4 rounded-lg bg-slate-700/60 border border-slate-600 p-4 space-y-2 text-sm">
-          <p className="text-green-400 font-semibold">
-            Settlement complete for {result.settled_date}
-          </p>
-          <div className="grid grid-cols-3 gap-3 text-slate-300">
-            <div>
-              <p className="text-xs text-slate-500 uppercase tracking-wide">Forecast rows</p>
-              <p className="text-lg font-bold text-white">{result.forecast_rows}</p>
+        {/* Result */}
+        {result && (
+          <div className="mt-4 w-full rounded-lg bg-slate-700/60 border border-slate-600 p-4 space-y-2 text-sm">
+            <p className="text-green-400 font-semibold">
+              Settlement complete for {result.settled_date}
+            </p>
+            <div className="grid grid-cols-3 gap-3 text-slate-300">
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Forecast rows</p>
+                <p className="text-lg font-bold text-white">{result.forecast_rows}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Rec rows</p>
+                <p className="text-lg font-bold text-white">{result.recommendation_rows}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Log rows</p>
+                <p className="text-lg font-bold text-white">{result.rec_log_rows}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs text-slate-500 uppercase tracking-wide">Rec rows</p>
-              <p className="text-lg font-bold text-white">{result.recommendation_rows}</p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 uppercase tracking-wide">Log rows</p>
-              <p className="text-lg font-bold text-white">{result.rec_log_rows}</p>
-            </div>
+            {result.skipped.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Skipped</p>
+                {result.skipped.map((s, i) => (
+                  <p key={i} className="text-xs text-yellow-400 font-mono">{s}</p>
+                ))}
+              </div>
+            )}
+            {result.errors.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Errors</p>
+                {result.errors.map((e, i) => (
+                  <p key={i} className="text-xs text-red-400 font-mono">{e}</p>
+                ))}
+              </div>
+            )}
           </div>
-          {result.skipped.length > 0 && (
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Skipped</p>
-              {result.skipped.map((s, i) => (
-                <p key={i} className="text-xs text-yellow-400 font-mono">{s}</p>
-              ))}
-            </div>
-          )}
-          {result.errors.length > 0 && (
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Errors</p>
-              {result.errors.map((e, i) => (
-                <p key={i} className="text-xs text-red-400 font-mono">{e}</p>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        )}
 
-      {/* Error */}
-      {error && (
-        <p className="mt-3 text-sm text-red-400 font-mono">{error}</p>
-      )}
+        {/* Error */}
+        {error && (
+          <p className="mt-3 w-full text-sm text-red-400 font-mono">{error}</p>
+        )}
+      </div>}
     </section>
   );
 }
