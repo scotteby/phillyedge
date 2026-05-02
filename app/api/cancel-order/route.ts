@@ -80,13 +80,24 @@ export async function POST(req: NextRequest) {
   // filled and kalshi_order_id was swapped to the sell order), restore the trade
   // to "filled" so the position stays open.  For a regular pending buy order
   // (no fills yet), mark as "canceled" as before.
-  const isSellOrder  = (trade.filled_count as number | null ?? 0) > 0;
+  const isSellOrder    = (trade.filled_count as number | null ?? 0) > 0;
   const restoredStatus = isSellOrder ? "filled" : "canceled";
 
   const now = new Date().toISOString();
+  const dbUpdate: Record<string, unknown> = {
+    order_status:    restoredStatus,
+    last_checked_at: now,
+  };
+
+  if (isSellOrder) {
+    // Null out kalshi_order_id so the order-status poller doesn't fetch the
+    // (now-cancelled) sell order and overwrite filled_count back to 0.
+    dbUpdate.kalshi_order_id = null;
+  }
+
   await supabase
     .from("trades")
-    .update({ order_status: restoredStatus, last_checked_at: now })
+    .update(dbUpdate)
     .eq("id", trade_id);
 
   return NextResponse.json({ ok: true, trade_id, order_status: restoredStatus, is_sell_order: isSellOrder });
