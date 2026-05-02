@@ -202,7 +202,8 @@ export async function POST(req: NextRequest) {
       .update({
         kalshi_order_id: sellOrderId,
         order_status:    "resting",
-        filled_count:    filledCount,   // ensure filled_count is set so UI detects this as a sell
+        filled_count:    filledCount,   // buy contract count — preserved so UI knows contracts exist
+        remaining_count: -1,            // sentinel: -1 = "this is a resting sell order"
         last_checked_at: now,
       })
       .eq("id", trade_id);

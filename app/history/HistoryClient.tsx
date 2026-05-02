@@ -556,9 +556,9 @@ export default function HistoryClient({ initialTrades }: Props) {
               t.id === tradeId
                 ? {
                     ...t,
-                    order_status:  "resting" as Trade["order_status"],
-                    // filled_count must be set so the BUY/SELL detection works without reload
-                    filled_count:  t.filled_count ?? json.contracts_sold ?? null,
+                    order_status:   "resting" as Trade["order_status"],
+                    filled_count:   t.filled_count ?? json.contracts_sold ?? null,
+                    remaining_count: -1, // sentinel: marks this as a resting sell order
                   }
                 : t
             )
@@ -2816,7 +2816,9 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
   const remainingCount = trade.remaining_count ?? 0;
   const totalCount     = filledCount + remainingCount;
   // A resting sell has existing fills (the buy) but order_status=resting (sell order resting)
-  const isSellOrder = filledCount > 0 && trade.order_status === "resting";
+  // remaining_count === -1 is a sentinel set by sell-position when a limit sell
+  // order doesn't immediately fill.  Partial buy orders have remaining_count > 0.
+  const isSellOrder = filledCount > 0 && trade.order_status === "resting" && (trade.remaining_count ?? 0) === -1;
 
   return (
     <tr className="bg-yellow-500/5 hover:bg-yellow-500/10 transition-colors">

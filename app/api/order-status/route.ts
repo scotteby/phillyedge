@@ -111,13 +111,25 @@ export async function GET(req: NextRequest) {
   // by contract count to derive a price.
   const side = String(trade.side ?? "").toLowerCase();
 
-  // Build the update — only overwrite entry_yes_price when we have real fill data
+  // Detect a resting sell early so we can protect its DB sentinel values.
+  // (The full sell-detection block below only fires when status === "filled".)
+  const kalshiActionEarly = String(kalshiOrder.action ?? "").toLowerCase();
+  const isRestingSell = kalshiActionEarly === "sell" && orderStatus !== "filled";
+
+  // Build the update — only overwrite entry_yes_price when we have real fill data.
+  // For resting sell orders:
+  //   - Do NOT overwrite filled_count (it stores the buy contract count, not sell fills)
+  //   - Keep remaining_count = -1 (the sentinel that marks this as a sell order for the UI)
   const dbUpdate: Record<string, unknown> = {
     order_status:    orderStatus,
-    filled_count:    Math.round(effectiveFilled),
-    remaining_count: Math.round(remainingCount),
     last_checked_at: now,
   };
+  if (!isRestingSell) {
+    dbUpdate.filled_count    = Math.round(effectiveFilled);
+    dbUpdate.remaining_count = Math.round(remainingCount);
+  } else {
+    dbUpdate.remaining_count = -1; // preserve sell-order sentinel
+  }
 
   if (effectiveFilled > 0) {
     // Try the native avg-fill-price fields first (most accurate)
