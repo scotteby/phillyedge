@@ -687,15 +687,24 @@ export default function HistoryClient({ initialTrades }: Props) {
   const nonVoidTrades = trades.filter((t) => !isVoidCancelled(t));
 
   // ── Active & Settled view ─────────────────────────────────────────────────
-  // Scope: all open positions (any age) + trades placed or settled today (local TZ).
-  // "Today" uses the user's local calendar date so the view stays small over time.
+  // Scope: all open positions (any age) + trades for today's or yesterday's
+  // markets.  "Yesterday" is included so that a market that resolved May 1
+  // (win, loss, OR previously sold fills) remains visible on May 2 without
+  // relying on last_checked_at being refreshed — sold trades don't have
+  // last_checked_at updated when settlement runs, so the old check was fragile.
+  const yesterday = (() => {
+    const d = new Date(today + "T12:00:00");
+    d.setDate(d.getDate() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+
   const activeVisibleTrades = nonVoidTrades.filter((t) => {
-    if (t.outcome === "pending") return true;            // all open positions
-    if (dateInLocalTZ(t.created_at) === today) return true;  // placed today
-    if (                                                      // settled today
-      (t.outcome === "win" || t.outcome === "loss" || t.outcome === "sold") &&
-      t.last_checked_at && dateInLocalTZ(t.last_checked_at) === today
-    ) return true;
+    if (t.outcome === "pending") return true;                   // all open positions
+    if (dateInLocalTZ(t.created_at) === today) return true;    // placed today
+    // Show settled/sold/closed trades whose market resolved today or yesterday
+    if (t.outcome === "win" || t.outcome === "loss" || t.outcome === "sold") {
+      return t.target_date != null && t.target_date >= yesterday;
+    }
     return false;
   });
 
