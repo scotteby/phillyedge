@@ -2280,35 +2280,15 @@ function StateBadge({ state, firstFill }: { state: PositionState; firstFill?: Tr
 }
 
 function PositionSummaryText({ pos, mobile = false }: { pos: Position; mobile?: boolean }) {
-  if (pos.state === "OPEN") {
-    const cost    = pos.netContracts * pos.avgBuyPrice;
-    const sizeCls = mobile ? "text-sm" : "";
-    return (
-      <span className={sizeCls}>
-        <span className="text-slate-200 font-medium">Cost ${cost.toFixed(2)}</span>
-        <span className="text-slate-500 ml-1.5">· {pos.netContracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg</span>
-      </span>
-    );
-  }
-  if (pos.state === "CLOSED") {
-    return (
-      <span className="text-slate-200">
-        bought ${pos.soldBuyAmount.toFixed(2)} → ${pos.sellProceeds.toFixed(2)}
-      </span>
-    );
-  }
-  if (pos.state === "PARTIALLY_CLOSED") {
-    return (
-      <span className="text-slate-200">
-        {pos.netContracts} of {pos.contractsBought} open · {pos.contractsSold} sold
-      </span>
-    );
-  }
-  // SETTLED
-  const fill = pos.fills.find((t) => t.outcome === "win" || t.outcome === "loss");
+  const sizeCls  = mobile ? "text-sm" : "";
+  const contracts = pos.contractsBought || pos.netContracts;
+  const cost      = contracts * pos.avgBuyPrice;
+
+  // All states show Cost + contracts — matches open-trade display
   return (
-    <span className={fill?.outcome === "win" ? "text-emerald-400 font-semibold" : "text-red-400 font-semibold"}>
-      {fill?.outcome === "win" ? "Win" : "Loss"}
+    <span className={sizeCls}>
+      <span className="text-slate-200 font-medium">Cost ${cost.toFixed(2)}</span>
+      <span className="text-slate-500 ml-1.5">· {contracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg</span>
     </span>
   );
 }
