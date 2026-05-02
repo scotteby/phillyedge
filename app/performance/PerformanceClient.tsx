@@ -104,9 +104,12 @@ export interface RLRow {
 type RecView = "placed" | "all" | "compare";
 
 interface Props {
-  forecastResults: ForecastResultDB[];
-  recResults:      RecommendationResultDB[];
-  recLog:          RecLogDB[];
+  forecastResults:       ForecastResultDB[];
+  recResults:            RecommendationResultDB[];
+  recLog:                RecLogDB[];
+  lastSettledAt:         string | null;   // ISO timestamp of most recent settlement run
+  lastSettledDate:       string | null;   // forecast_date that was settled
+  defaultSettlementDate: string;          // yesterday ET, pre-filled in the date picker
 }
 
 const num = (x: number | string | null | undefined): number =>
@@ -173,7 +176,14 @@ function generateRecLogInsights(rl: RLRow[]): RecLogInsight[] {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function PerformanceClient({ forecastResults, recResults, recLog }: Props) {
+export default function PerformanceClient({
+  forecastResults,
+  recResults,
+  recLog,
+  lastSettledAt,
+  lastSettledDate,
+  defaultSettlementDate,
+}: Props) {
   // Coerce numeric strings up front so all downstream math is straightforward
   const fr = useMemo(
     () =>
@@ -269,6 +279,13 @@ export default function PerformanceClient({ forecastResults, recResults, recLog 
         </p>
       </header>
 
+      {/* Settlement admin panel */}
+      <SettlementPanel
+        lastSettledAt={lastSettledAt}
+        lastSettledDate={lastSettledDate}
+        defaultDate={defaultSettlementDate}
+      />
+
       {/* Observations card */}
       <section className="bg-slate-800 border border-slate-700 rounded-xl p-5">
         <h2 className="text-white font-semibold text-base mb-3">Observations</h2>
@@ -312,6 +329,145 @@ function EmptyState() {
         POST /api/daily-settlement {`{ "date": "YYYY-MM-DD" }`}
       </p>
     </div>
+  );
+}
+
+// ── Settlement panel ─────────────────────────────────────────────────────────
+
+interface SettlementResult {
+  settled_date:        string;
+  forecast_rows:       number;
+  recommendation_rows: number;
+  rec_log_rows:        number;
+  skipped:             string[];
+  errors:              string[];
+}
+
+function SettlementPanel({
+  lastSettledAt,
+  lastSettledDate,
+  defaultDate,
+}: {
+  lastSettledAt:   string | null;
+  lastSettledDate: string | null;
+  defaultDate:     string;
+}) {
+  const [date, setDate]     = useState(defaultDate);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<SettlementResult | null>(null);
+  const [error, setError]   = useState<string | null>(null);
+
+  // Format the last-run timestamp in local time for display
+  const lastRunLabel = lastSettledAt
+    ? new Date(lastSettledAt).toLocaleString("en-US", {
+        timeZone:     "America/New_York",
+        month:        "short",
+        day:          "numeric",
+        hour:         "numeric",
+        minute:       "2-digit",
+        hour12:       true,
+      }) + " ET"
+    : "never";
+
+  async function runSettlement() {
+    setRunning(true);
+    setResult(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/daily-settlement", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ date }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json?.error ?? `HTTP ${res.status}`);
+      } else {
+        setResult(json as SettlementResult);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <section className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-white font-semibold text-base">Settlement</h2>
+        <span className="text-xs text-slate-400">
+          Last run:{" "}
+          <span className="text-slate-200 font-mono">
+            {lastRunLabel}
+            {lastSettledDate && (
+              <span className="text-slate-500 ml-1">(for {lastSettledDate})</span>
+            )}
+          </span>
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="text-xs text-slate-400 shrink-0">Settle date</label>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => { setDate(e.target.value); setResult(null); setError(null); }}
+          className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500"
+        />
+        <button
+          onClick={runSettlement}
+          disabled={running || !date}
+          className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+        >
+          {running ? "Running…" : "Run Settlement"}
+        </button>
+      </div>
+
+      {/* Result */}
+      {result && (
+        <div className="mt-4 rounded-lg bg-slate-700/60 border border-slate-600 p-4 space-y-2 text-sm">
+          <p className="text-green-400 font-semibold">
+            Settlement complete for {result.settled_date}
+          </p>
+          <div className="grid grid-cols-3 gap-3 text-slate-300">
+            <div>
+              <p className="text-xs text-slate-500 uppercase tracking-wide">Forecast rows</p>
+              <p className="text-lg font-bold text-white">{result.forecast_rows}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 uppercase tracking-wide">Rec rows</p>
+              <p className="text-lg font-bold text-white">{result.recommendation_rows}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 uppercase tracking-wide">Log rows</p>
+              <p className="text-lg font-bold text-white">{result.rec_log_rows}</p>
+            </div>
+          </div>
+          {result.skipped.length > 0 && (
+            <div>
+              <p className="text-xs text-slate-500 mb-1">Skipped</p>
+              {result.skipped.map((s, i) => (
+                <p key={i} className="text-xs text-yellow-400 font-mono">{s}</p>
+              ))}
+            </div>
+          )}
+          {result.errors.length > 0 && (
+            <div>
+              <p className="text-xs text-slate-500 mb-1">Errors</p>
+              {result.errors.map((e, i) => (
+                <p key={i} className="text-xs text-red-400 font-mono">{e}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <p className="mt-3 text-sm text-red-400 font-mono">{error}</p>
+      )}
+    </section>
   );
 }
 
