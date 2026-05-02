@@ -6,7 +6,23 @@
  * Strategy: fetch all observations since midnight ET today, compute min/max
  * from the temperature field.  minTemperatureLast24Hours is unreliable — null
  * most of the time — so we derive the values ourselves.
+ *
+ * Caching: the markets page uses `force-dynamic` which disables Next.js fetch-
+ * level caching.  We implement module-level in-memory caches here instead so
+ * that repeated page loads within the TTL window return instantly without
+ * hitting NWS.  Node.js module state persists for the lifetime of the server
+ * process, making this effectively a per-process cache.
  */
+
+// ── In-memory cache ───────────────────────────────────────────────────────────
+
+const OBS_CACHE_TTL_MS      = 10 * 60 * 1000;  // 10 min  — NWS updates hourly
+const CURRENT_CACHE_TTL_MS  =  5 * 60 * 1000;  //  5 min  — current temp
+
+interface CacheEntry<T> { data: T; cachedAt: number }
+
+let obsCache:     CacheEntry<NWSObservation>     | null = null;
+let currentCache: CacheEntry<CurrentObservation> | null = null;
 
 export interface NWSObservation {
   observedLow:   number | null;  // °F — minimum temp recorded so far today
@@ -109,6 +125,12 @@ async function fetchObHistoryTemps(): Promise<{ low: number | null; high: number
 }
 
 export async function fetchNWSObservation(): Promise<NWSObservation> {
+  // Return cached result if still fresh
+  if (obsCache && Date.now() - obsCache.cachedAt < OBS_CACHE_TTL_MS) {
+    console.log(`[nws] returning cached observation (age ${Math.round((Date.now() - obsCache.cachedAt) / 1000)}s)`);
+    return obsCache.data;
+  }
+
   const empty: NWSObservation = {
     observedLow: null, observedHigh: null,
     highReachedAt: null, lowReachedAt: null,
@@ -205,7 +227,7 @@ export async function fetchNWSObservation(): Promise<NWSObservation> {
       `  (${readings.length} readings)`
     );
 
-    return {
+    const result: NWSObservation = {
       observedLow:   finalLow,
       observedHigh:  finalHigh,
       highReachedAt,
@@ -213,6 +235,8 @@ export async function fetchNWSObservation(): Promise<NWSObservation> {
       readingCount:  readings.length,
       fetchedAt:     new Date().toISOString(),
     };
+    obsCache = { data: result, cachedAt: Date.now() };
+    return result;
   } catch (err) {
     console.error("[nws] Fetch error:", err);
     return empty;
@@ -297,6 +321,12 @@ export function getDailyHighStatus(obs: NWSObservation | null): DailyHighStatus 
  * Cached for 60 s at the fetch level.
  */
 export async function fetchCurrentObservation(): Promise<CurrentObservation> {
+  // Return cached result if still fresh
+  if (currentCache && Date.now() - currentCache.cachedAt < CURRENT_CACHE_TTL_MS) {
+    console.log(`[nws] returning cached current obs (age ${Math.round((Date.now() - currentCache.cachedAt) / 1000)}s)`);
+    return currentCache.data;
+  }
+
   const empty: CurrentObservation = { tempF: null, observedAt: null, fetchedAt: new Date().toISOString() };
   try {
     const res = await fetch("https://api.weather.gov/stations/KPHL/observations/latest", {
@@ -316,7 +346,9 @@ export async function fetchCurrentObservation(): Promise<CurrentObservation> {
     const tempF = cToF(tempC);
     const observedAt = (props.timestamp as string | null) ?? null;
     console.log(`[nws] Current KPHL: ${tempF ?? "—"}°F at ${observedAt ?? "unknown"}`);
-    return { tempF, observedAt, fetchedAt: new Date().toISOString() };
+    const result: CurrentObservation = { tempF, observedAt, fetchedAt: new Date().toISOString() };
+    currentCache = { data: result, cachedAt: Date.now() };
+    return result;
   } catch (err) {
     console.error("[nws] Current obs error:", err);
     return empty;
