@@ -554,7 +554,12 @@ export default function HistoryClient({ initialTrades }: Props) {
           setTrades((prev) =>
             prev.map((t) =>
               t.id === tradeId
-                ? { ...t, order_status: "resting" as Trade["order_status"] }
+                ? {
+                    ...t,
+                    order_status:  "resting" as Trade["order_status"],
+                    // filled_count must be set so the BUY/SELL detection works without reload
+                    filled_count:  t.filled_count ?? json.contracts_sold ?? null,
+                  }
                 : t
             )
           );

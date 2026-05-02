@@ -202,6 +202,7 @@ export async function POST(req: NextRequest) {
       .update({
         kalshi_order_id: sellOrderId,
         order_status:    "resting",
+        filled_count:    filledCount,   // ensure filled_count is set so UI detects this as a sell
         last_checked_at: now,
       })
       .eq("id", trade_id);
@@ -213,11 +214,12 @@ export async function POST(req: NextRequest) {
     console.log(`[sell-position] ${ticker} sell order ${sellOrderId} is resting — kept trade pending`);
 
     return NextResponse.json({
-      ok:            true,
-      filled:        false,
+      ok:             true,
+      filled:         false,
       trade_id,
-      sell_order_id: sellOrderId,
-      pnl:           null,
+      sell_order_id:  sellOrderId,
+      contracts_sold: filledCount,
+      pnl:            null,
     });
   }
 
