@@ -2283,9 +2283,9 @@ function PositionSummaryText({ pos }: { pos: Position }) {
   if (pos.state === "OPEN") {
     const cost = pos.netContracts * pos.avgBuyPrice;
     return (
-      <span className="text-slate-200">
-        {pos.netContracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg
-        <span className="text-slate-500 ml-1.5">· Cost ${cost.toFixed(2)}</span>
+      <span>
+        <span className="text-slate-200">Cost ${cost.toFixed(2)}</span>
+        <span className="text-slate-500 ml-1.5">· {pos.netContracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg</span>
       </span>
     );
   }
