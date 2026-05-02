@@ -187,7 +187,41 @@ export async function POST(req: NextRequest) {
       : 1 - sell_price_cents / 100;
   }
 
-  // Calculate P&L (reuse entryYesCalc / entryCostPerContract computed above)
+  // ── Did the sell order actually fill? ────────────────────────────────────
+  const rawFillStatus = String(filledOrder.status ?? initialOrder.status ?? "");
+  const sellFilled    = rawFillStatus === "filled" || rawFillStatus === "executed";
+  const now = new Date().toISOString();
+
+  if (!sellFilled && sellOrderId) {
+    // Sell order is resting (limit didn't match immediately).
+    // Swap kalshi_order_id to the sell order so the order-status poller and
+    // Boost/Cancel buttons operate on the correct order.
+    // Leave outcome as "pending" so the position stays live in the UI.
+    const { error: dbErr } = await supabase
+      .from("trades")
+      .update({
+        kalshi_order_id: sellOrderId,
+        order_status:    "resting",
+        last_checked_at: now,
+      })
+      .eq("id", trade_id);
+
+    if (dbErr) {
+      console.error(`[sell-position] WARN: DB update failed for resting sell ${trade_id}:`, dbErr.message);
+    }
+
+    console.log(`[sell-position] ${ticker} sell order ${sellOrderId} is resting — kept trade pending`);
+
+    return NextResponse.json({
+      ok:            true,
+      filled:        false,
+      trade_id,
+      sell_order_id: sellOrderId,
+      pnl:           null,
+    });
+  }
+
+  // ── Sell filled immediately — calculate P&L and mark sold ────────────────
   const proceedsPerContract = avgFillYesPrice != null
     ? (side === "yes" ? avgFillYesPrice : 1 - avgFillYesPrice)
     : null;
@@ -196,15 +230,12 @@ export async function POST(req: NextRequest) {
     ? parseFloat(((proceedsPerContract - entryCostPerContract) * filledCount).toFixed(2))
     : null;
 
-  // Update trade in Supabase: mark as sold
-  const now = new Date().toISOString();
   const { error: dbUpdateErr } = await supabase
     .from("trades")
     .update({ outcome: "sold", pnl, last_checked_at: now })
     .eq("id", trade_id);
 
   if (dbUpdateErr) {
-    // Non-fatal — the Kalshi sell already succeeded. Log loudly so we know to reconcile.
     console.error(`[sell-position] WARN: Supabase update failed for trade ${trade_id}:`, dbUpdateErr.message);
   }
 
@@ -212,6 +243,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok:             true,
+    filled:         true,
     trade_id,
     sell_order_id:  sellOrderId,
     contracts_sold: filledCount,

@@ -547,18 +547,33 @@ export default function HistoryClient({ initialTrades }: Props) {
       });
       const json = await res.json();
       if (res.ok) {
-        setTrades((prev) =>
-          prev.map((t) =>
-            t.id === tradeId
-              ? { ...t, outcome: "sold" as Trade["outcome"], pnl: json.pnl ?? null }
-              : t
-          )
-        );
-        const pnl = json.pnl as number | null;
-        addToast(
-          `💰 Sold — ${pnl != null ? `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}` : "P&L pending"}`,
-          "fill"
-        );
+        if (json.filled === false) {
+          // Limit sell didn't match immediately — order is resting on Kalshi.
+          // kalshi_order_id has been swapped to the sell order; keep the trade
+          // as pending so it shows in Pending Orders with Boost / Cancel buttons.
+          setTrades((prev) =>
+            prev.map((t) =>
+              t.id === tradeId
+                ? { ...t, order_status: "resting" as Trade["order_status"] }
+                : t
+            )
+          );
+          addToast("⏳ Sell order resting — use Boost or Cancel in Pending Orders", "fill");
+        } else {
+          // Filled immediately — mark sold in local state
+          setTrades((prev) =>
+            prev.map((t) =>
+              t.id === tradeId
+                ? { ...t, outcome: "sold" as Trade["outcome"], pnl: json.pnl ?? null }
+                : t
+            )
+          );
+          const pnl = json.pnl as number | null;
+          addToast(
+            `💰 Sold — ${pnl != null ? `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}` : "P&L pending"}`,
+            "fill"
+          );
+        }
       } else {
         addToast(`Sell failed: ${json.error ?? "unknown error"}`, "error");
       }

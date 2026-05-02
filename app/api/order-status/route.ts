@@ -154,6 +154,55 @@ export async function GET(req: NextRequest) {
   let pnl:     number | null = null;
   let resolved = false;
 
+  // ── Detect a completed sell order ────────────────────────────────────────
+  // When the user placed a limit sell that was resting, kalshi_order_id was
+  // swapped to the sell order.  Detect this by checking action === "sell" on
+  // the polled Kalshi order.
+  const kalshiAction = String(kalshiOrder.action ?? "").toLowerCase();
+  const isSellOrder  = kalshiAction === "sell";
+
+  if (isSellOrder && orderStatus === "filled" && outcome === "pending") {
+    const tradeSide = String(trade.side ?? "").toLowerCase();
+
+    // Best available avg fill YES price
+    const rawAvg =
+      kalshiOrder.avg_yes_price  ??
+      kalshiOrder.avg_fill_price ??
+      null;
+
+    let avgFillYesPrice: number | null = null;
+    if (rawAvg != null) {
+      const n = Number(rawAvg);
+      if (n > 1) avgFillYesPrice = n / 100;
+      else if (n > 0 && n <= 1) avgFillYesPrice = n;
+    }
+
+    const entryYes: number =
+      (trade.entry_yes_price as number | null) ??
+      (tradeSide === "yes"
+        ? (trade.market_pct as number) / 100
+        : 1 - (trade.market_pct as number) / 100);
+
+    const entryCostPerContract = tradeSide === "yes" ? entryYes : 1 - entryYes;
+    const proceedsPerContract  = avgFillYesPrice != null
+      ? (tradeSide === "yes" ? avgFillYesPrice : 1 - avgFillYesPrice)
+      : null;
+
+    pnl = proceedsPerContract != null
+      ? parseFloat(((proceedsPerContract - entryCostPerContract) * effectiveFilled).toFixed(2))
+      : null;
+
+    outcome  = "sold";
+    resolved = true;
+
+    await supabase
+      .from("trades")
+      .update({ outcome: "sold", pnl })
+      .eq("id", tradeId);
+
+    console.log(`[order-status] Sell order ${orderId} filled → outcome=sold, pnl=${pnl}`);
+  }
+
   if (outcome === "pending" && trade.market_id) {
     try {
       const mktRes = await fetch(
