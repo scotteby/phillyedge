@@ -149,18 +149,30 @@ export function buildPositions(trades: Trade[]): Position[] {
     // taker-fill-cost bug).  entry_yes_price has since been corrected by polling,
     // so computing on-the-fly is more accurate.
     // For sold fills we still use the stored pnl (set correctly at sell time).
+    //
+    // Edge case: when a market settles, order-status polling may have updated
+    // only SOME fills to "win"/"loss" while others remain "pending".  We detect
+    // this by finding any settled fill in the group and applying that same
+    // outcome to all still-pending fills so the full position P&L is shown.
+    const settledOutcome =
+      (fills.find((t) => t.outcome === "win")  ? "win"  : null) ??
+      (fills.find((t) => t.outcome === "loss") ? "loss" : null);
+
     const realizedPnl = fills.reduce((s, t) => {
       if (t.outcome === "sold") {
         return s + (t.pnl ?? 0);
       }
-      if (t.outcome === "win" || t.outcome === "loss") {
+      // Use the position's settled outcome for fills still marked "pending"
+      const effectiveOutcome =
+        (t.outcome === "pending" && settledOutcome) ? settledOutcome : t.outcome;
+
+      if (effectiveOutcome === "win" || effectiveOutcome === "loss") {
         const entryYes = getEntryYesPrice(t);
         const count    = getContractsForFill(t);
-        const sideCost = t.side === "YES" ? entryYes : 1 - entryYes; // cost per contract
-        const pnl      = t.outcome === "win"
-          ? count * (1 - sideCost)   // payout minus cost
-          : -count * sideCost;       // lost what was paid
-        return s + pnl;
+        const sideCost = t.side === "YES" ? entryYes : 1 - entryYes;
+        return s + (effectiveOutcome === "win"
+          ? count * (1 - sideCost)
+          : -count * sideCost);
       }
       return s;
     }, 0);
