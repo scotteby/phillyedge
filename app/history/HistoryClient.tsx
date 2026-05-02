@@ -2279,12 +2279,13 @@ function StateBadge({ state, firstFill }: { state: PositionState; firstFill?: Tr
   );
 }
 
-function PositionSummaryText({ pos }: { pos: Position }) {
+function PositionSummaryText({ pos, mobile = false }: { pos: Position; mobile?: boolean }) {
   if (pos.state === "OPEN") {
-    const cost = pos.netContracts * pos.avgBuyPrice;
+    const cost    = pos.netContracts * pos.avgBuyPrice;
+    const sizeCls = mobile ? "text-sm" : "";
     return (
-      <span>
-        <span className="text-slate-200 text-sm font-medium">Cost ${cost.toFixed(2)}</span>
+      <span className={sizeCls}>
+        <span className="text-slate-200 font-medium">Cost ${cost.toFixed(2)}</span>
         <span className="text-slate-500 ml-1.5">· {pos.netContracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg</span>
       </span>
     );
@@ -2604,7 +2605,7 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
 
         {/* Position summary */}
         <div className="text-xs text-slate-400">
-          <PositionSummaryText pos={pos} />
+          <PositionSummaryText pos={pos} mobile />
         </div>
       </div>
 
