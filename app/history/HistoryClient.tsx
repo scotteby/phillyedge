@@ -1632,17 +1632,18 @@ function GroupHeader({
   today:      string;
   positions:  Position[];
 }) {
-  // Net P&L: realized + unrealized using position math
+  // Net P&L: realized + unrealized using position math.
+  // Skip unrealized for settled positions — the market is closed.
   const realized = positions.reduce((s, p) => s + p.realizedPnl, 0);
   const unrealized = positions.reduce((sum, p) => {
-    if (p.netContracts <= 0) return sum;
+    if (p.netContracts <= 0 || p.state === "SETTLED") return sum;
     const liveYes = livePrices.get(p.market_id);
     if (liveYes == null) return sum;
     const livePrice = p.side === "YES" ? liveYes : 1 - liveYes;
     return sum + p.netContracts * (livePrice - p.avgBuyPrice);
   }, 0);
   const netPnl = realized + unrealized;
-  const hasMtm = positions.some((p) => p.netContracts > 0 && livePrices.has(p.market_id));
+  const hasMtm = positions.some((p) => p.netContracts > 0 && p.state !== "SETTLED" && livePrices.has(p.market_id));
 
   // Count positions
   const openCount       = positions.filter((p) => p.state === "OPEN" || p.state === "PARTIALLY_CLOSED").length;
@@ -2368,7 +2369,9 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
 
-  const unrealized = (livePrice != null && pos.netContracts > 0)
+  // Settled positions have a definitive realized P&L — don't add a live-price
+  // estimate on top (market is closed, remaining price is meaningless).
+  const unrealized = (livePrice != null && pos.netContracts > 0 && pos.state !== "SETTLED")
     ? pos.netContracts * (livePrice - pos.avgBuyPrice)
     : null;
   const totalPnl   = pos.realizedPnl + (unrealized ?? 0);
@@ -2603,7 +2606,9 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
 function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
-  const unrealized = (livePrice != null && pos.netContracts > 0)
+  // Settled positions have a definitive realized P&L — don't add a live-price
+  // estimate on top (market is closed, remaining price is meaningless).
+  const unrealized = (livePrice != null && pos.netContracts > 0 && pos.state !== "SETTLED")
     ? pos.netContracts * (livePrice - pos.avgBuyPrice)
     : null;
   const totalPnl   = pos.realizedPnl + (unrealized ?? 0);
