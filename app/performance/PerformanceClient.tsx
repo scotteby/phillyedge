@@ -401,7 +401,7 @@ function SettlementPanel({
           <span className="text-slate-200 font-mono">
             {lastRunLabel}
             {lastSettledDate && (
-              <span className="text-slate-500 ml-1">(for {lastSettledDate})</span>
+              <span className="text-slate-500"> (for {lastSettledDate})</span>
             )}
           </span>
         </span>
