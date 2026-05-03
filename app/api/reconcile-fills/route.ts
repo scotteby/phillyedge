@@ -20,9 +20,11 @@ const KALSHI_BASE = DEMO_MODE
 // ── Fetch helpers ──────────────────────────────────────────────────────────────
 
 async function kalshiGet(path: string): Promise<{ ok: boolean; json: unknown; status: number }> {
+  // Strip query string before signing — Kalshi signs path only, not query params.
+  const pathOnly = path.split("?")[0];
   let headers: Record<string, string>;
   try {
-    headers = buildKalshiAuthHeaders("GET", path);
+    headers = buildKalshiAuthHeaders("GET", pathOnly);
   } catch (err) {
     return { ok: false, json: { error: String(err) }, status: 500 };
   }
@@ -94,13 +96,18 @@ export async function POST() {
   // Paginate to get all fills (Kalshi max 1000 per request)
   const allFills: Record<string, unknown>[] = [];
   let cursor: string | undefined;
+  let fillsApiError: unknown = null;
+  let fillsFirstResponse: unknown = null;
 
   for (let page = 0; page < 10; page++) {
     const qs     = new URLSearchParams({ limit: "200" });
     if (cursor) qs.set("cursor", cursor);
     const result = await kalshiGet(`/trade-api/v2/portfolio/fills?${qs.toString()}`);
 
+    if (page === 0) fillsFirstResponse = { status: result.status, json: result.json };
+
     if (!result.ok) {
+      fillsApiError = { status: result.status, body: result.json };
       console.error("[reconcile] fills API error:", result.status, JSON.stringify(result.json));
       // Don't bail — fall through to orders-based reconcile below
       break;
@@ -126,13 +133,18 @@ export async function POST() {
   // The orders API is well-tested and includes avg_yes_price / avg_fill_price.
   const allSellOrders: Record<string, unknown>[] = [];
   let orderCursor: string | undefined;
+  let ordersApiError: unknown = null;
+  let ordersFirstResponse: unknown = null;
 
   for (let page = 0; page < 10; page++) {
     const qs = new URLSearchParams({ limit: "200", action: "sell" });
     if (orderCursor) qs.set("cursor", orderCursor);
     const result = await kalshiGet(`/trade-api/v2/portfolio/orders?${qs.toString()}`);
 
+    if (page === 0) ordersFirstResponse = { status: result.status, json: result.json };
+
     if (!result.ok) {
+      ordersApiError = { status: result.status, body: result.json };
       console.error("[reconcile] orders API error:", result.status);
       break;
     }
@@ -326,7 +338,11 @@ export async function POST() {
     fills_fetched:     allFills.length,
     sell_orders_fetched: allSellOrders.length,
     debug:             debugRows,
-    first_fill_sample: allFills[0] ?? null,
-    first_order_sample: allSellOrders[0] ?? null,
+    first_fill_sample:   allFills[0]       ?? null,
+    first_order_sample:  allSellOrders[0]  ?? null,
+    fills_api_error:     fillsApiError     ?? null,
+    orders_api_error:    ordersApiError    ?? null,
+    fills_first_response:  fillsFirstResponse  ?? null,
+    orders_first_response: ordersFirstResponse ?? null,
   });
 }
