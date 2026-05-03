@@ -1055,110 +1055,42 @@ export default function HistoryClient({ initialTrades }: Props) {
                     <>
                       {/* ── Mobile ──────────────────────────────────────── */}
                       <div className="md:hidden mt-2 pl-2 space-y-2">
-                        {bracketGroups.map(({ bracket, positions: bPos }) => {
-                          const bracketGroupKey = `bg:${group.key}:${bracket}`;
-                          const isBracketExpanded = bPos.length === 1 || expandedKeys.has(bracketGroupKey);
-                          if (bPos.length === 1) {
-                            const pos = bPos[0];
+                        {bracketGroups.flatMap(({ positions: bPos }) =>
+                          bPos.map((pos) => {
                             const isSingle   = pos.fills.length === 1;
-                          const isExpanded = isSingle || expandedKeys.has(pos.key);
-                          return (
-                          <div key={pos.key}>
-                            <PositionCard
-                              pos={pos}
-                              expanded={isExpanded}
-                              onToggle={() => toggleExpand(pos.key)}
-                              hasChildren={!isSingle}
-                              livePrices={livePrices}
-                              canceling={canceling}
-                              selling={selling}
-                              boosting={boosting}
-                              onCancel={cancelOrder}
-                              onSell={(fills) => handlePositionSell(fills)}
-                              onBoost={(t) => setBoostModalTrade(t)}
-                            />
-                            {/* Multi-fill only: show fill sub-cards when expanded */}
-                            {!isSingle && isExpanded && pos.fills.map((t) => (
-                              <FillSubCard
-                                key={t.id}
-                                trade={t}
-                                liveYesPrice={livePrices.get(t.market_id)}
-                                canceling={canceling === t.id}
-                                selling={selling === t.id}
-                                boosting={boosting === t.id}
-                                onCancel={() => cancelOrder(t.id)}
-                                onSell={() => setSellModalTrades([t])}
-                                onBoost={() => setBoostModalTrade(t)}
-                              />
-                            ))}
-                          </div>
-                        );
-                          } else {
-                            // Multi-position bracket (YES + NO): collapsible summary header
-                            const isBracketExpanded = expandedKeys.has(bracketGroupKey);
-                            const totalRealizedPnl = bPos.reduce((s, p) => s + p.realizedPnl, 0);
+                            const isExpanded = isSingle || expandedKeys.has(pos.key);
                             return (
-                              <div key={bracketGroupKey}>
-                                <button
-                                  onClick={() => toggleExpand(bracketGroupKey)}
-                                  className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-800/60 border border-slate-700/40 rounded-xl mb-2 text-left"
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <span className={`text-slate-400 text-base leading-none transition-transform duration-150 ${isBracketExpanded ? "rotate-90" : ""}`}>›</span>
-                                    <span className="text-slate-200 font-medium text-sm">{bracket}</span>
-                                    <div className="flex gap-1">
-                                      {bPos.map((p) => (
-                                        <span key={p.key} className={`text-xs px-1.5 py-0.5 rounded font-semibold ${p.side === "YES" ? "bg-emerald-900/60 text-emerald-400" : "bg-red-900/60 text-red-400"}`}>{p.side}</span>
-                                      ))}
-                                    </div>
-                                    <div className="flex gap-1">
-                                      {bPos.map((p) => <StateBadge key={p.key} state={p.state} firstFill={p.fills.find((t) => t.outcome === "win" || t.outcome === "loss") ?? p.fills[0]} />)}
-                                    </div>
-                                  </div>
-                                  {totalRealizedPnl !== 0 && (
-                                    <span className={`text-sm font-semibold ${totalRealizedPnl > 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                      {totalRealizedPnl >= 0 ? "+" : ""}${totalRealizedPnl.toFixed(2)}
-                                    </span>
-                                  )}
-                                </button>
-                                {isBracketExpanded && bPos.map((pos) => {
-                                  const isSingle = pos.fills.length === 1;
-                                  const isExpanded = isSingle || expandedKeys.has(pos.key);
-                                  return (
-                                    <div key={pos.key} className="ml-2 mb-2">
-                                      <PositionCard
-                                        pos={pos}
-                                        expanded={isExpanded}
-                                        onToggle={() => toggleExpand(pos.key)}
-                                        hasChildren={!isSingle}
-                                        livePrices={livePrices}
-                                        canceling={canceling}
-                                        selling={selling}
-                                        boosting={boosting}
-                                        onCancel={cancelOrder}
-                                        onSell={(fills) => handlePositionSell(fills)}
-                                        onBoost={(t) => setBoostModalTrade(t)}
-                                      />
-                                      {!isSingle && isExpanded && pos.fills.map((t) => (
-                                        <FillSubCard
-                                          key={t.id}
-                                          trade={t}
-                                          liveYesPrice={livePrices.get(t.market_id)}
-                                          canceling={canceling === t.id}
-                                          selling={selling === t.id}
-                                          boosting={boosting === t.id}
-                                          onCancel={() => cancelOrder(t.id)}
-                                          onSell={() => setSellModalTrades([t])}
-                                          onBoost={() => setBoostModalTrade(t)}
-                                        />
-                                      ))}
-                                    </div>
-                                  );
-                                })}
+                              <div key={pos.key}>
+                                <PositionCard
+                                  pos={pos}
+                                  expanded={isExpanded}
+                                  onToggle={() => toggleExpand(pos.key)}
+                                  hasChildren={!isSingle}
+                                  livePrices={livePrices}
+                                  canceling={canceling}
+                                  selling={selling}
+                                  boosting={boosting}
+                                  onCancel={cancelOrder}
+                                  onSell={(fills) => handlePositionSell(fills)}
+                                  onBoost={(t) => setBoostModalTrade(t)}
+                                />
+                                {!isSingle && isExpanded && pos.fills.map((t) => (
+                                  <FillSubCard
+                                    key={t.id}
+                                    trade={t}
+                                    liveYesPrice={livePrices.get(t.market_id)}
+                                    canceling={canceling === t.id}
+                                    selling={selling === t.id}
+                                    boosting={boosting === t.id}
+                                    onCancel={() => cancelOrder(t.id)}
+                                    onSell={() => setSellModalTrades([t])}
+                                    onBoost={() => setBoostModalTrade(t)}
+                                  />
+                                ))}
                               </div>
                             );
-                          }
-                        })}
+                          })
+                        )}
                         {allPending.length > 0 && (
                           <div className="mt-2">
                             <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold px-1 pb-1">Pending Orders</p>
@@ -1189,10 +1121,8 @@ export default function HistoryClient({ initialTrades }: Props) {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-700/30">
-                            {bracketGroups.map(({ bracket: _bracket, positions: bPos }) => {
-                              const bracketGroupKey = `bg:${group.key}:${_bracket}`;
-                              if (bPos.length === 1) {
-                                const pos = bPos[0];
+                            {bracketGroups.flatMap(({ positions: bPos }) =>
+                              bPos.map((pos) => {
                                 const isSingle   = pos.fills.length === 1;
                                 const isExpanded = isSingle || expandedKeys.has(pos.key);
                                 return (
@@ -1225,81 +1155,8 @@ export default function HistoryClient({ initialTrades }: Props) {
                                     ))}
                                   </Fragment>
                                 );
-                              }
-                              // Multi-position bracket (YES + NO): summary row + expandable sub-rows
-                              const isBracketExpanded = expandedKeys.has(bracketGroupKey);
-                              const totalRealizedPnl = bPos.reduce((s, p) => s + p.realizedPnl, 0);
-                              return (
-                                <Fragment key={bracketGroupKey}>
-                                  <tr
-                                    className="bg-slate-800/30 hover:bg-slate-800/60 cursor-pointer transition-colors"
-                                    onClick={() => toggleExpand(bracketGroupKey)}
-                                  >
-                                    <td className="py-3 pr-4 pl-4 max-w-[220px]">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className={`text-slate-500 text-base leading-none transition-transform duration-150 shrink-0 ${isBracketExpanded ? "rotate-90" : ""}`}>›</span>
-                                        <span className="text-slate-200 font-medium">{_bracket}</span>
-                                      </div>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <div className="flex gap-1">
-                                        {bPos.map((p) => (
-                                          <span key={p.key} className={`text-xs px-1.5 py-0.5 rounded font-semibold ${p.side === "YES" ? "bg-emerald-900/60 text-emerald-400" : "bg-red-900/60 text-red-400"}`}>{p.side}</span>
-                                        ))}
-                                      </div>
-                                    </td>
-                                    <td className="py-3 pr-4">
-                                      <div className="flex gap-1 flex-wrap">
-                                        {bPos.map((p) => <StateBadge key={p.key} state={p.state} firstFill={p.fills.find((t) => t.outcome === "win" || t.outcome === "loss") ?? p.fills[0]} />)}
-                                      </div>
-                                    </td>
-                                    <td className="py-3 pr-4"></td>
-                                    <td className="py-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                      {totalRealizedPnl !== 0 && (
-                                        <span className={`font-semibold ${totalRealizedPnl > 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                          {totalRealizedPnl >= 0 ? "+" : ""}${totalRealizedPnl.toFixed(2)}
-                                        </span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                  {isBracketExpanded && bPos.map((pos) => {
-                                    const isSingle   = pos.fills.length === 1;
-                                    const isExpanded = isSingle || expandedKeys.has(pos.key);
-                                    return (
-                                      <Fragment key={pos.key}>
-                                        <PositionRow
-                                          pos={pos}
-                                          expanded={isExpanded}
-                                          onToggle={() => toggleExpand(pos.key)}
-                                          hasChildren={!isSingle}
-                                          subRow
-                                          livePrices={livePrices}
-                                          canceling={canceling}
-                                          selling={selling}
-                                          boosting={boosting}
-                                          onCancel={cancelOrder}
-                                          onSell={(fills) => handlePositionSell(fills)}
-                                          onBoost={(t) => setBoostModalTrade(t)}
-                                        />
-                                        {!isSingle && isExpanded && pos.fills.map((t) => (
-                                          <FillSubRow
-                                            key={t.id}
-                                            trade={t}
-                                            liveYesPrice={livePrices.get(t.market_id)}
-                                            canceling={canceling === t.id}
-                                            selling={selling === t.id}
-                                            boosting={boosting === t.id}
-                                            onCancel={() => cancelOrder(t.id)}
-                                            onSell={() => setSellModalTrades([t])}
-                                            onBoost={() => setBoostModalTrade(t)}
-                                          />
-                                        ))}
-                                      </Fragment>
-                                    );
-                                  })}
-                                </Fragment>
-                              );
-                            })}
+                              })
+                            )}
                             {allPending.length > 0 && (
                               <>
                                 <tr>
@@ -2664,7 +2521,9 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = fal
     : null;
   const totalPnl   = pos.realizedPnl + (unrealized ?? 0);
   const hasPnl     = pos.realizedPnl !== 0 || unrealized != null;
-  const pnlPending = !hasPnl && pos.fills.some((t) => t.outcome === "sold" && t.pnl == null);
+  const pnlPending = !hasPnl &&
+    (pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") &&
+    pos.fills.some((t) => t.outcome === "sold" && t.pnl == null);
   const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
   const isEstimate = unrealized != null;
 
@@ -2720,7 +2579,7 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = fal
             )}
             {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
               <span className="text-sm font-semibold text-sky-400 mt-1">
-                🎯 +${pos.ifCorrectPayout.toFixed(2)}
+                🎯 {pos.ifCorrectPayout >= 0 ? "+" : "–"}${Math.abs(pos.ifCorrectPayout).toFixed(2)}
                 <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
               </span>
             )}
@@ -2766,12 +2625,13 @@ function FillSubRow({ trade, canceling, selling, boosting, onBoost, onCancel, on
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
 
-  const pnlColor = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const displayEdge = trade.side === "NO" ? -trade.edge : trade.edge;
 
   return (
     <tr className="bg-slate-900/40 hover:bg-slate-900/60 transition-colors">
       {/* Bracket / time */}
-      <td className="py-2 pr-4 pl-10 text-slate-500 text-xs whitespace-nowrap">
+      <td className="py-2 pr-4 pl-6 text-slate-500 text-xs whitespace-nowrap border-l-2 border-slate-600/40">
         {timeStr}
         <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold ${isSell ? "bg-amber-500/15 text-amber-400" : "bg-slate-700 text-slate-300"}`}>
           {isSell ? "SOLD" : "BUY"}
@@ -2795,7 +2655,7 @@ function FillSubRow({ trade, canceling, selling, boosting, onBoost, onCancel, on
         <span>{contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢</span>
         {trade.signal && (
           <span className="ml-2 text-slate-600">
-            {trade.signal} {trade.edge > 0 ? "+" : ""}{trade.edge}pt
+            {trade.signal} {displayEdge > 0 ? "+" : ""}{displayEdge}pt
           </span>
         )}
       </td>
@@ -2920,7 +2780,9 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
     : null;
   const totalPnl   = pos.realizedPnl + (unrealized ?? 0);
   const hasPnl     = pos.realizedPnl !== 0 || unrealized != null;
-  const pnlPending = !hasPnl && pos.fills.some((t) => t.outcome === "sold" && t.pnl == null);
+  const pnlPending = !hasPnl &&
+    (pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") &&
+    pos.fills.some((t) => t.outcome === "sold" && t.pnl == null);
   const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
   const isEstimate = unrealized != null;
 
@@ -2960,7 +2822,7 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
             )}
             {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
               <p className="text-sm font-semibold text-sky-400 mt-1">
-                🎯 +${pos.ifCorrectPayout.toFixed(2)}
+                🎯 {pos.ifCorrectPayout >= 0 ? "+" : "–"}${Math.abs(pos.ifCorrectPayout).toFixed(2)}
                 <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
               </p>
             )}
@@ -2995,7 +2857,8 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCanc
   const showSell   = isSellable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
-  const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const pnlColor    = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
+  const displayEdge = trade.side === "NO" ? -trade.edge : trade.edge;
 
   void liveYesPrice; // available for future MTM display
 
@@ -3019,7 +2882,7 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCanc
         <div className="text-xs text-slate-400">
           {contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢
           {trade.edge !== 0 && (
-            <span className="ml-2 text-slate-600">{trade.signal} {trade.edge > 0 ? "+" : ""}{trade.edge}pt</span>
+            <span className="ml-2 text-slate-600">{trade.signal} {displayEdge > 0 ? "+" : ""}{displayEdge}pt</span>
           )}
         </div>
         {(showSell || showBoost || showCancel) && (
