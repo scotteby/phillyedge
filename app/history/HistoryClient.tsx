@@ -2638,8 +2638,8 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = fal
           )}
           {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
             <span className="text-sm font-semibold text-sky-400 mt-1">
-              🎯 {pos.ifCorrectPayout >= 0 ? "+" : "–"}${Math.abs(pos.ifCorrectPayout).toFixed(2)}
-              <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
+              🎯 ${pos.netContracts.toFixed(2)}
+              <span className="text-xs font-normal text-slate-500 ml-1">back if correct</span>
             </span>
           )}
           {liveYes != null && (pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
@@ -2892,8 +2892,8 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
           </span>
           {isOpen && (
             <span className="text-sm font-semibold text-sky-400">
-              🎯 {pos.ifCorrectPayout >= 0 ? "+" : "–"}${Math.abs(pos.ifCorrectPayout).toFixed(2)}
-              <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
+              🎯 ${pos.netContracts.toFixed(2)}
+              <span className="text-xs font-normal text-slate-500 ml-1">back if correct</span>
             </span>
           )}
           {isOpen && liveYes != null && (
