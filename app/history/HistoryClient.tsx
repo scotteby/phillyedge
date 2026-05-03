@@ -426,6 +426,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const [buyModalPosition, setBuyModalPosition] = useState<Position | null>(null);
   const [syncing, setSyncing]           = useState(false);
   const [reconciling, setReconciling]   = useState(false);
+  const [refreshing, setRefreshing]     = useState(false);
   const [viewMode, setViewMode]   = useState<"active" | "history">("active");
   const [historyDays, setHistoryDays] = useState<7 | 30 | 90 | null>(30);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -523,6 +524,26 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   useEffect(() => {
     fetchBalance();
   }, [fetchBalance]);
+
+  // ── Refresh: pull new trades from DB and merge into local state ──────────
+
+  const fetchNewTrades = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const res  = await fetch("/api/trades");
+      if (!res.ok) return;
+      const json = await res.json() as { data: Trade[] };
+      if (!Array.isArray(json.data)) return;
+      setTrades((prev) => {
+        const existingIds = new Set(prev.map((t) => t.id));
+        const incoming    = json.data.filter((t) => !existingIds.has(t.id));
+        if (incoming.length === 0) return prev;
+        return [...incoming, ...prev]; // newest first (API returns DESC)
+      });
+    } catch { /* ignore */ } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   // ── Order status polling ─────────────────────────────────────────────────
 
@@ -973,29 +994,27 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
             {reconciling ? "Reconciling…" : "$ Reconcile P&L"}
           </button>
 
-          {/* Live price + order status refresh */}
-          {pending.length > 0 && (
-            <div className="flex items-center gap-2 text-xs">
-              {pricesFetching ? (
-                <span className="flex items-center gap-1.5 text-sky-400">
-                  <span className="animate-pulse">●</span> Refreshing…
-                </span>
-              ) : lastPriceFetch ? (
-                <span className="flex items-center gap-1.5 text-slate-500">
-                  <span className="text-emerald-500">●</span>
-                  Live · updated {formatTimeAgo(lastPriceFetch)}
-                  {liveCount > 0 && ` · ${liveCount} price${liveCount !== 1 ? "s" : ""}`}
-                </span>
-              ) : null}
-              <button
-                onClick={() => { pollAll(); fetchLivePrices(); }}
-                disabled={pricesFetching}
-                title="Refresh order statuses and live prices"
-                className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-40 transition-colors">
-                ↻
-              </button>
-            </div>
-          )}
+          {/* Refresh: new trades + order statuses + live prices */}
+          <div className="flex items-center gap-2 text-xs">
+            {(pricesFetching || refreshing) ? (
+              <span className="flex items-center gap-1.5 text-sky-400">
+                <span className="animate-pulse">●</span> Refreshing…
+              </span>
+            ) : lastPriceFetch && pending.length > 0 ? (
+              <span className="flex items-center gap-1.5 text-slate-500">
+                <span className="text-emerald-500">●</span>
+                Live · updated {formatTimeAgo(lastPriceFetch)}
+                {liveCount > 0 && ` · ${liveCount} price${liveCount !== 1 ? "s" : ""}`}
+              </span>
+            ) : null}
+            <button
+              onClick={() => { void fetchNewTrades(); pollAll(); fetchLivePrices(); }}
+              disabled={pricesFetching || refreshing}
+              title="Fetch new trades, refresh order statuses and live prices"
+              className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-40 transition-colors">
+              ↻
+            </button>
+          </div>
         </div>
       </div>
 
