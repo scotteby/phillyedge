@@ -47,6 +47,65 @@ function todayET(): string {
 }
 
 /**
+ * Fetch today's min/max temperature from the Iowa Environmental Mesonet (IEM)
+ * ASOS dataset for KPHL.  IEM records observations every ~5 minutes, so it
+ * catches brief temperature peaks that the hourly obhistory page misses
+ * (e.g. a 63 °F reading at 4:40 PM that only lasted one cycle).
+ *
+ * IEM uses the 3-letter FAA code "PHL" for this station.
+ * Docs: https://mesonet.agron.iastate.edu/request/download.phtml
+ */
+async function fetchIEMTemps(): Promise<{ low: number | null; high: number | null }> {
+  const empty = { low: null, high: null };
+  try {
+    const today = todayET();                          // "YYYY-MM-DD"
+    const [year, month, day] = today.split("-");
+    const url =
+      `https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py?` +
+      `station=PHL&data=tmpf` +
+      `&year1=${year}&month1=${month}&day1=${day}` +
+      `&year2=${year}&month2=${month}&day2=${day}` +
+      `&tz=America%2FNew_York&format=onlycomma&latlon=no&missing=M&trace=T&direct=no`;
+
+    const res = await fetch(url, {
+      headers: { "User-Agent": "PhillyEdge/1.0 (scott.m.eby@gmail.com)" },
+      next: { revalidate: 300 },
+    });
+    if (!res.ok) {
+      console.warn("[nws] IEM fetch failed:", res.status);
+      return empty;
+    }
+
+    const text  = await res.text();
+    // CSV rows start with "PHL,"; header and comment lines start with "#" or "station"
+    const lines = text.split("\n").filter(l => l.startsWith("PHL,"));
+
+    let minTemp: number | null = null;
+    let maxTemp: number | null = null;
+
+    for (const line of lines) {
+      const parts = line.split(",");
+      if (parts.length < 3) continue;
+      const raw = parts[2].trim();
+      if (raw === "M" || raw === "") continue;       // missing value
+      const tmpf = parseFloat(raw);
+      if (isNaN(tmpf)) continue;
+      if (minTemp === null || tmpf < minTemp) minTemp = tmpf;
+      if (maxTemp === null || tmpf > maxTemp) maxTemp = tmpf;
+    }
+
+    console.log(`[nws] IEM PHL today: low=${minTemp}°F high=${maxTemp}°F (${lines.length} readings)`);
+    return {
+      low:  minTemp !== null ? Math.round(minTemp) : null,
+      high: maxTemp !== null ? Math.round(maxTemp) : null,
+    };
+  } catch (err) {
+    console.error("[nws] IEM error:", err);
+    return empty;
+  }
+}
+
+/**
  * Scrape the NWS observation history page (KPHL) and return today's min/max
  * air temperature in °F, rounded to the nearest integer.
  *
@@ -159,8 +218,11 @@ export async function fetchNWSObservation(): Promise<NWSObservation> {
     const start = new Date(Date.now() - 26 * 3600 * 1000).toISOString();
     const url   = `https://api.weather.gov/stations/KPHL/observations?start=${start}`;
 
-    // Fire both requests in parallel
-    const [res, obhTemps] = await Promise.all([
+    // Fire all three requests in parallel:
+    //   1. NWS JSON API — hourly, Celsius (needs cToF); gives us timestamps
+    //   2. obhistory HTML — hourly, native °F; most accurate for daily extremes
+    //   3. IEM ASOS CSV  — every ~5 min, native °F; catches brief peaks
+    const [res, obhTemps, iemTemps] = await Promise.all([
       fetch(url, {
         headers: {
           "User-Agent": "PhillyEdge/1.0 (scott.m.eby@gmail.com)",
@@ -169,13 +231,20 @@ export async function fetchNWSObservation(): Promise<NWSObservation> {
         next: { revalidate: 300 },
       }),
       fetchObHistoryTemps(),
+      fetchIEMTemps(),
     ]);
 
     if (!res.ok) {
       console.warn("[nws] Observations fetch failed:", res.status);
-      // Return obhistory temps if we at least got those
-      if (obhTemps.low !== null || obhTemps.high !== null) {
-        return { ...empty, observedLow: obhTemps.low, observedHigh: obhTemps.high };
+      // Fall back to whichever of obhistory / IEM returned data
+      const fallbackHighs = [obhTemps.high, iemTemps.high].filter((v): v is number => v !== null);
+      const fallbackLows  = [obhTemps.low,  iemTemps.low ].filter((v): v is number => v !== null);
+      if (fallbackHighs.length > 0 || fallbackLows.length > 0) {
+        return {
+          ...empty,
+          observedHigh: fallbackHighs.length > 0 ? Math.max(...fallbackHighs) : null,
+          observedLow:  fallbackLows.length  > 0 ? Math.min(...fallbackLows)  : null,
+        };
       }
       return empty;
     }
@@ -231,16 +300,20 @@ export async function fetchNWSObservation(): Promise<NWSObservation> {
       }
     }
 
-    // Prefer obhistory values (native °F, avoids C→F rounding errors).
-    // Fall back to the C→F converted values from the JSON API.
-    const finalLow  = obhTemps.low  ?? runningMin;
-    const finalHigh = obhTemps.high ?? runningMax;
+    // Take the highest value across all three sources for the daily high,
+    // and the lowest across all three for the daily low.
+    // Priority for accuracy: IEM 5-min > obhistory hourly > JSON API (C→F rounded).
+    // We still use the JSON API's highReachedAt timestamp for the stability check.
+    const highCandidates = [obhTemps.high, iemTemps.high, runningMax].filter((v): v is number => v !== null);
+    const lowCandidates  = [obhTemps.low,  iemTemps.low,  runningMin].filter((v): v is number => v !== null);
+    const finalHigh = highCandidates.length > 0 ? Math.max(...highCandidates) : null;
+    const finalLow  = lowCandidates.length  > 0 ? Math.min(...lowCandidates)  : null;
 
     console.log(
       `[nws] KPHL today (${etToday}):` +
-      `  low=${finalLow}°F (obh=${obhTemps.low}, api=${runningMin}, reached ${lowReachedAt})` +
-      `  high=${finalHigh}°F (obh=${obhTemps.high}, api=${runningMax}, reached ${highReachedAt})` +
-      `  (${readings.length} readings)`
+      `  low=${finalLow}°F (obh=${obhTemps.low}, iem=${iemTemps.low}, api=${runningMin}, reached ${lowReachedAt})` +
+      `  high=${finalHigh}°F (obh=${obhTemps.high}, iem=${iemTemps.high}, api=${runningMax}, reached ${highReachedAt})` +
+      `  (${readings.length} api readings)`
     );
 
     const result: NWSObservation = {
