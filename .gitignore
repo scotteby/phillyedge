@@ -41,3 +41,7 @@ yarn-error.log*
 next-env.d.ts
 kalshi_private_key.pem
 kalshi_public_key.pem
+
+# Claude Code local settings (may contain API keys)
+.claude/
+*.local.json
