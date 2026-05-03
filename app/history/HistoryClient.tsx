@@ -890,6 +890,13 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
 
   const projectedPnl = totalRealizedPnl + totalUnrealizedPnl;
 
+  // Cost basis currently deployed in open positions (for Balance card)
+  const inPositions = summaryPositions
+    .filter((p) => p.state === "OPEN" || p.state === "PARTIALLY_CLOSED")
+    .reduce((s, p) => s + p.avgBuyPrice * p.netContracts, 0);
+
+  const winRate = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
+
   // ── Grouped view ─────────────────────────────────────────────────────────────
   const groups = buildGroups(visibleTrades, today);
   const activeMarketCount = groups.filter(
@@ -927,21 +934,6 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-4 flex-wrap">
           <h1 className="text-2xl font-bold text-white">Trades</h1>
-          <button
-            onClick={fetchBalance}
-            disabled={balanceLoading}
-            title="Refresh balance"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-500 transition-colors disabled:opacity-50"
-          >
-            <span className="text-xs text-slate-500 uppercase tracking-wide">Balance</span>
-            {balanceLoading ? (
-              <span className="text-sm text-slate-500 animate-pulse">…</span>
-            ) : balance != null ? (
-              <span className="text-sm font-semibold text-emerald-400">${balance.toFixed(2)}</span>
-            ) : (
-              <span className="text-sm text-slate-600">—</span>
-            )}
-          </button>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -1011,16 +1003,42 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {viewMode === "active" ? (
           <>
-            <SummaryCard
-              label="Active Markets"
-              value={String(activeMarketCount)}
-              sub={pending.length > 0 ? `${pending.length} open trade${pending.length !== 1 ? "s" : ""}` : "No pending trades"}
-            />
-            <SummaryCard
-              label="Total Trades"
-              value={String(total)}
-              sub={settled.length > 0 ? `${wins}/${settled.length} settled won` : "No settled trades"}
-            />
+            {/* Balance card */}
+            <button
+              onClick={fetchBalance}
+              disabled={balanceLoading}
+              title="Refresh balance"
+              className="bg-slate-800 border border-slate-700 hover:border-slate-500 rounded-xl p-4 text-left transition-colors disabled:opacity-50"
+            >
+              <p className="text-xs text-slate-500 uppercase tracking-wider">Balance</p>
+              {balanceLoading ? (
+                <p className="text-2xl font-bold text-white mt-1 animate-pulse">…</p>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-emerald-400 mt-1">
+                    {balance != null ? `$${balance.toFixed(2)}` : "—"}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">available</p>
+                  {inPositions > 0 && (
+                    <>
+                      <div className="border-t border-slate-700 my-2" />
+                      <div className="flex justify-between text-xs text-slate-400">
+                        <span>in open positions</span>
+                        <span className="font-medium">${inPositions.toFixed(2)}</span>
+                      </div>
+                      {balance != null && (
+                        <div className="flex justify-between text-xs text-slate-300 mt-0.5">
+                          <span>total</span>
+                          <span className="font-medium">${(balance + inPositions).toFixed(2)}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </button>
+
+            {/* Net Projected P&L card */}
             <SummaryCard
               label="Net Projected P&L"
               value={pending.length > 0
@@ -1034,24 +1052,31 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                 : settled.length > 0 ? `${settled.length} settled` : undefined}
               projected={pending.length > 0}
             />
+
+            {/* Win Rate card */}
+            <SummaryCard
+              label="Win Rate"
+              value={winRate != null ? `${winRate}%` : "—"}
+              sub={settled.length > 0 ? `${wins} of ${settled.length} settled won` : "No settled trades"}
+            />
           </>
         ) : (
           <>
             <SummaryCard
-              label="Trades in Range"
-              value={String(total)}
-              sub={settled.length > 0 ? `${settled.length} settled` : "No settled trades"}
-            />
-            <SummaryCard
               label="Win Rate"
-              value={settled.length > 0 ? `${Math.round((wins / settled.length) * 100)}%` : "—"}
-              sub={settled.length > 0 ? `${wins}/${settled.length} won` : "No settled trades"}
+              value={winRate != null ? `${winRate}%` : "—"}
+              sub={settled.length > 0 ? `${wins} of ${settled.length} won` : "No settled trades"}
             />
             <SummaryCard
               label="Net P&L"
               value={settledPnl !== 0 ? `${settledPnl >= 0 ? "+" : ""}$${settledPnl.toFixed(2)}` : "—"}
               valueClass={settledPnl > 0 ? "text-emerald-400" : settledPnl < 0 ? "text-red-400" : "text-white"}
               sub={settled.length > 0 ? "realized" : undefined}
+            />
+            <SummaryCard
+              label="Trades in Range"
+              value={String(total)}
+              sub={settled.length > 0 ? `${settled.length} settled` : "No settled trades"}
             />
           </>
         )}
