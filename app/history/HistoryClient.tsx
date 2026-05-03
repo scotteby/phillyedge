@@ -424,7 +424,8 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
   const [buyModalPosition, setBuyModalPosition] = useState<Position | null>(null);
-  const [syncing, setSyncing]     = useState(false);
+  const [syncing, setSyncing]           = useState(false);
+  const [reconciling, setReconciling]   = useState(false);
   const [viewMode, setViewMode]   = useState<"active" | "history">("active");
   const [historyDays, setHistoryDays] = useState<7 | 30 | 90 | null>(30);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -752,6 +753,35 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     }
   }
 
+  // ── Reconcile P&L from Kalshi fills ──────────────────────────────────────
+  // Back-fills null pnl on sold trades by fetching actual fill prices from Kalshi.
+
+  async function reconcileFills() {
+    setReconciling(true);
+    try {
+      const res  = await fetch("/api/reconcile-fills", { method: "POST" });
+      const json = await res.json();
+      if (res.ok) {
+        if (json.pnl_fixed > 0) {
+          addToast(`✅ Reconciled P&L for ${json.pnl_fixed} sold trade${json.pnl_fixed !== 1 ? "s" : ""}`, "fill");
+          // Reload to show updated pnl values
+          window.location.reload();
+        } else {
+          addToast(`✓ All sold trades already have P&L recorded (${json.fills_total} fills checked)`, "fill");
+        }
+        if (json.missing_buys?.length > 0) {
+          addToast(`⚠️ ${json.missing_buys.length} buy fill${json.missing_buys.length !== 1 ? "s" : ""} on Kalshi not in DB — use ⟳ Sync Kalshi to recover`, "fill");
+        }
+      } else {
+        addToast(`Reconcile failed: ${json.error ?? "unknown error"}`, "error");
+      }
+    } catch (err) {
+      addToast(`Reconcile error: ${String(err)}`, "error");
+    } finally {
+      setReconciling(false);
+    }
+  }
+
   // ── Cancel order ─────────────────────────────────────────────────────────
 
   async function cancelOrder(tradeId: string) {
@@ -931,6 +961,16 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
             className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-800 border border-slate-700 hover:border-sky-500/50 hover:text-sky-400 text-slate-400 disabled:opacity-40 transition-colors"
           >
             {syncing ? "Syncing…" : "⟳ Sync Kalshi"}
+          </button>
+
+          {/* Reconcile P&L for sold trades with missing pnl */}
+          <button
+            onClick={reconcileFills}
+            disabled={reconciling}
+            title="Back-fill missing P&L for sold trades using Kalshi fill history"
+            className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-800 border border-slate-700 hover:border-emerald-500/50 hover:text-emerald-400 text-slate-400 disabled:opacity-40 transition-colors"
+          >
+            {reconciling ? "Reconciling…" : "$ Reconcile P&L"}
           </button>
 
           {/* Live price + order status refresh */}

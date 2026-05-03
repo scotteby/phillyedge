@@ -89,11 +89,14 @@ export async function POST(req: NextRequest) {
     ? Math.max(1, Math.round(sell_price_cents))
     : 1;
 
+  // Always use type:"limit" even for the 1¢ floor price — market orders on Kalshi
+  // don't return avg_yes_price in the order response, leaving pnl=null in the DB.
+  // A 1¢ limit sell still sweeps the book immediately (any buyer will accept ≥1¢).
   const orderBody = {
     ticker,
     action: "sell",
     side,
-    type:   priceForOrder > 1 ? "limit" : "market",
+    type:   "limit",
     count:  filledCount,
     ...(side === "yes" ? { yes_price: priceForOrder } : { no_price: priceForOrder }),
   };
@@ -160,31 +163,33 @@ export async function POST(req: NextRequest) {
     } catch { /* non-fatal — fall back to initial response */ }
   }
 
-  // Extract avg fill price (YES price in 0–1 decimal or integer cents)
-  // Kalshi may use different field names depending on version
+  // Extract avg fill price (YES price in 0–1 decimal or integer cents).
+  // Kalshi may use different field names depending on API version / order type.
   const rawPrice =
-    filledOrder.avg_yes_price  ??
-    filledOrder.avg_fill_price ??
-    filledOrder.yes_price      ??
-    initialOrder.avg_yes_price ??
-    initialOrder.avg_fill_price ??
+    filledOrder.avg_yes_price     ??
+    filledOrder.avg_fill_price    ??
+    filledOrder.yes_price_dollars ??   // v2 sometimes uses _dollars suffix
+    initialOrder.avg_yes_price    ??
+    initialOrder.avg_fill_price   ??
+    initialOrder.yes_price_dollars ??
     null;
 
   let avgFillYesPrice: number | null = null;
   if (rawPrice != null) {
     const n = Number(rawPrice);
-    // Kalshi can return integer cents (e.g. 45) or decimal (e.g. 0.45)
-    // Guard against the submitted 1¢ floor price leaking in as the "fill" price.
-    if (n > 1) avgFillYesPrice = n / 100;
-    else if (n > 0 && n <= 1) avgFillYesPrice = n;
+    // Kalshi can return integer cents (e.g. 45) or decimal (e.g. 0.45).
+    // A value of exactly 1 (integer) is ambiguous — skip it to avoid treating
+    // the submitted 1¢ limit price as a $1.00 fill price.
+    if (n > 1)            avgFillYesPrice = n / 100;
+    else if (n > 0.01)    avgFillYesPrice = n;     // decimal 0.02–1.00 range
   }
-  // Fallback: use the confirmed sell price from the UI (what the user saw).
-  // sell_price_cents is the side-specific bid (YES cents for YES, NO cents for NO).
-  // Convert to a YES-side price for the pnl calc below.
-  if (avgFillYesPrice == null && sell_price_cents != null && sell_price_cents > 1) {
+  // Fallback 1: bid price from the UI — the real-time bid the user saw in the modal.
+  // Works for any priceForOrder, including the 1¢ floor (bid ≥ 1¢ is still useful).
+  if (avgFillYesPrice == null && sell_price_cents != null && sell_price_cents >= 1) {
     avgFillYesPrice = side === "yes"
       ? sell_price_cents / 100
       : 1 - sell_price_cents / 100;
+    console.log(`[sell-position] using UI bid price as fallback: ${sell_price_cents}¢ → avgFillYesPrice=${avgFillYesPrice}`);
   }
 
   // ── Did the sell order actually fill? ────────────────────────────────────
