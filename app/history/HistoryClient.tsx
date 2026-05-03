@@ -150,15 +150,19 @@ function isLivePriceEligible(trade: Trade, today: string): boolean {
 
 /** Can the user manually sell this position right now? */
 function isSellable(trade: Trade): boolean {
-  // filled_count may be null if order-status polling hasn't run yet;
-  // fall back to order_status as the signal that contracts exist.
-  // kalshi_order_id is NOT required — the sell-position API uses trade_id
-  // and can estimate fill count from amount_usdc if needed.
+  // "Partial" badge shows for canceled orders that had partial fills — those
+  // are real contracts we can still sell even though order_status = "canceled".
+  // Check "not settled" rather than "== pending" to handle null outcome edge case.
+  const notSettled =
+    trade.outcome !== "win" &&
+    trade.outcome !== "loss" &&
+    trade.outcome !== "sold" &&
+    trade.outcome !== "boosted";
   const hasFills =
     (trade.filled_count ?? 0) > 0 ||
     trade.order_status === "filled" ||
     trade.order_status === "partially_filled";
-  return trade.outcome === "pending" && hasFills;
+  return notSettled && hasFills;
 }
 
 // ── Order status helpers ──────────────────────────────────────────────────────
@@ -1268,6 +1272,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                           expanded={isExpanded}
                                           onToggle={() => toggleExpand(pos.key)}
                                           hasChildren={!isSingle}
+                                          subRow
                                           livePrices={livePrices}
                                           canceling={canceling}
                                           selling={selling}
@@ -2598,17 +2603,18 @@ function PositionGroupCard({
 // ── Position-based components ─────────────────────────────────────────────────
 
 interface PositionRowProps {
-  pos:         Position;
-  expanded:    boolean;
-  onToggle:    () => void;
+  pos:          Position;
+  expanded:     boolean;
+  onToggle:     () => void;
   hasChildren?: boolean;  // false → hide chevron and make row non-interactive
-  livePrices:  Map<string, number>;
-  canceling:   string | null;
-  selling:     string | null;
-  boosting:    string | null;
-  onCancel:    (id: string) => void;
-  onSell:      (fills: Trade[]) => void;  // all sellable fills for this position
-  onBoost:     (t: Trade) => void;
+  subRow?:      boolean;  // true → inside a bracket group, hide bracket label
+  livePrices:   Map<string, number>;
+  canceling:    string | null;
+  selling:      string | null;
+  boosting:     string | null;
+  onCancel:     (id: string) => void;
+  onSell:       (fills: Trade[]) => void;  // all sellable fills for this position
+  onBoost:      (t: Trade) => void;
 }
 
 function StateBadge({ state, firstFill }: { state: PositionState; firstFill?: Trade }) {
@@ -2647,7 +2653,7 @@ function PositionSummaryText({ pos, mobile = false }: { pos: Position; mobile?: 
 
 // ── Desktop position row ──────────────────────────────────────────────────────
 
-function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
+function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = false, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
 
@@ -2678,7 +2684,7 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, livePrices, 
               ›
             </span>
           )}
-          <span className="text-slate-200 line-clamp-2 leading-snug">{pos.bracket}</span>
+          {!subRow && <span className="text-slate-200 line-clamp-2 leading-snug">{pos.bracket}</span>}
         </div>
       </td>
 
