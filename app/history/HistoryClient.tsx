@@ -2749,13 +2749,14 @@ interface FillSubRowProps {
   onBoost:      () => void;
 }
 
-function FillSubRow({ trade, canceling, boosting, onBoost, onCancel }: FillSubRowProps) {
+function FillSubRow({ trade, canceling, selling, boosting, onBoost, onCancel, onSell }: FillSubRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const isSell     = trade.outcome === "sold";
   const showBoost  = isBoostable(trade);
+  const showSell   = isSellable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
 
@@ -2802,6 +2803,10 @@ function FillSubRow({ trade, canceling, boosting, onBoost, onCancel }: FillSubRo
             </span>
           ) : null}
           <div className="flex gap-1 flex-wrap">
+            {showSell && (
+              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
+                loading={selling} label="Sell" loadingLabel="Selling…" />
+            )}
             {showBoost && (
               <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
                 loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
@@ -2974,13 +2979,14 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
 
 // ── Mobile fill sub-card ─────────────────────────────────────────────────────
 
-function FillSubCard({ trade, liveYesPrice, canceling, boosting, onCancel, onBoost }: FillSubRowProps) {
+function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCancel, onSell, onBoost }: FillSubRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const isSell     = trade.outcome === "sold";
   const showBoost  = isBoostable(trade);
+  const showSell   = isSellable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
   const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
@@ -3010,8 +3016,12 @@ function FillSubCard({ trade, liveYesPrice, canceling, boosting, onCancel, onBoo
             <span className="ml-2 text-slate-600">{trade.signal} {trade.edge > 0 ? "+" : ""}{trade.edge}pt</span>
           )}
         </div>
-        {(showBoost || showCancel) && (
+        {(showSell || showBoost || showCancel) && (
           <div className="flex gap-1 flex-wrap">
+            {showSell && (
+              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
+                loading={selling} label="Sell" loadingLabel="Selling…" />
+            )}
             {showBoost && (
               <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
                 loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
