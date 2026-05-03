@@ -150,14 +150,14 @@ function isLivePriceEligible(trade: Trade, today: string): boolean {
 
 /** Can the user manually sell this position right now? */
 function isSellable(trade: Trade): boolean {
-  // "Partial" badge shows for canceled orders that had partial fills — those
-  // are real contracts we can still sell even though order_status = "canceled".
-  // Check "not settled" rather than "== pending" to handle null outcome edge case.
+  // "Partial" badge shows for canceled/boosted orders that had partial fills —
+  // those are real contracts we can still sell.
+  // "boosted" is intentionally NOT excluded: a boosted order that partially
+  // filled before being replaced still holds contracts that need to be sold.
   const notSettled =
     trade.outcome !== "win" &&
     trade.outcome !== "loss" &&
-    trade.outcome !== "sold" &&
-    trade.outcome !== "boosted";
+    trade.outcome !== "sold";
   const hasFills =
     (trade.filled_count ?? 0) > 0 ||
     trade.order_status === "filled" ||
