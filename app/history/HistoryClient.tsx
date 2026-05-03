@@ -2639,7 +2639,7 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = fal
           {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
             <span className="text-sm font-semibold text-sky-400 mt-1">
               🎯 ${pos.netContracts.toFixed(2)}
-              <span className="text-xs font-normal text-slate-500 ml-1">back if correct</span>
+              <span className="text-xs font-normal text-slate-500 ml-1">total payout</span>
             </span>
           )}
           {liveYes != null && (pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
@@ -2893,7 +2893,7 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
           {isOpen && (
             <span className="text-sm font-semibold text-sky-400">
               🎯 ${pos.netContracts.toFixed(2)}
-              <span className="text-xs font-normal text-slate-500 ml-1">back if correct</span>
+              <span className="text-xs font-normal text-slate-500 ml-1">total payout</span>
             </span>
           )}
           {isOpen && liveYes != null && (
