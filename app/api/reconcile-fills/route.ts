@@ -77,10 +77,13 @@ export async function POST() {
   };
 
   const soldTrades = (rawTrades ?? []) as DbTrade[];
-  // Only reconcile trades where pnl is null (zero is valid — market at fair value)
-  const needsReconcile = soldTrades.filter((t) => t.pnl === null);
+  // Reconcile trades where pnl is null OR exactly 0.
+  // pnl=0 on a sold position is almost always a stale wrong value from an
+  // earlier broken reconcile run (the 1¢ floor sell always produces a loss
+  // unless the entry cost was exactly 1¢, which is vanishingly rare).
+  const needsReconcile = soldTrades.filter((t) => t.pnl === null || t.pnl === 0);
 
-  console.log(`[reconcile] ${soldTrades.length} sold trades total, ${needsReconcile.length} with pnl=null`);
+  console.log(`[reconcile] ${soldTrades.length} sold trades total, ${needsReconcile.length} with pnl=null/0`);
 
   if (needsReconcile.length === 0) {
     return NextResponse.json({
