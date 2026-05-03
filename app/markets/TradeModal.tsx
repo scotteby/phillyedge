@@ -5,9 +5,10 @@ import type { MarketWithEdge } from "@/lib/types";
 import SignalBadge from "@/components/SignalBadge";
 
 interface Props {
-  market: MarketWithEdge;
-  onClose: () => void;
-  onConfirm: () => void;
+  market:       MarketWithEdge;
+  initialSide?: "YES" | "NO";
+  onClose:      () => void;
+  onConfirm:    () => void;
 }
 
 type Status = "idle" | "placing" | "success" | "error";
@@ -24,8 +25,8 @@ function buildKalshiUrl(marketId: string): string {
   return `https://kalshi.com/markets/${series}/${slug}/${marketId.toLowerCase()}`;
 }
 
-export default function TradeModal({ market, onClose, onConfirm }: Props) {
-  const [side, setSide]     = useState<"YES" | "NO">("YES");
+export default function TradeModal({ market, initialSide = "YES", onClose, onConfirm }: Props) {
+  const [side, setSide]     = useState<"YES" | "NO">(initialSide);
   const [amount, setAmount] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError]   = useState<string | null>(null);

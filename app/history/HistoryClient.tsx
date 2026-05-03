@@ -5,6 +5,8 @@ import type { Trade, OrderStatus } from "@/lib/types";
 import SignalBadge from "@/components/SignalBadge";
 import { deriveTradeSignal, signalTooltip } from "@/lib/signal";
 import { buildPositions, type Position, type PositionState, getEntryYesPrice as modelGetEntryYesPrice, getContractsForFill, getBracketLabel as modelGetBracketLabel } from "@/lib/position-model";
+import type { MarketWithEdge } from "@/lib/types";
+import TradeModal from "@/app/markets/TradeModal";
 
 interface Props {
   initialTrades: Trade[];
@@ -204,10 +206,11 @@ function OrderStatusBadge({ status, filledCount }: { status: OrderStatus; filled
 // ── Action button ─────────────────────────────────────────────────────────────
 
 const ACTION_STYLES = {
-  cancel:    "border-red-500/40    text-red-400    hover:bg-red-500/15    hover:border-red-400",
-  sell:      "border-amber-500/40  text-amber-400  hover:bg-amber-500/15  hover:border-amber-400",
-  boost:     "border-sky-500/40    text-sky-400    hover:bg-sky-500/15    hover:border-sky-400",
-  reconcile: "border-slate-500/40  text-slate-400  hover:bg-slate-500/15  hover:border-slate-400",
+  cancel:    "border-red-500/40     text-red-400     hover:bg-red-500/15     hover:border-red-400",
+  sell:      "border-amber-500/40   text-amber-400   hover:bg-amber-500/15   hover:border-amber-400",
+  boost:     "border-sky-500/40     text-sky-400     hover:bg-sky-500/15     hover:border-sky-400",
+  reconcile: "border-slate-500/40   text-slate-400   hover:bg-slate-500/15   hover:border-slate-400",
+  buy:       "border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 hover:border-emerald-400",
 } as const;
 
 function ActionButton({
@@ -302,6 +305,46 @@ function bracketSortKey(question: string): number {
   return (label.startsWith("<") || label.startsWith("≤")) ? n - 0.5 : n;
 }
 
+/** Same as bracketSortKey but accepts an already-extracted bracket label. */
+function bracketLabelSortKey(label: string): number {
+  const m = label.match(/(\d+(?:\.\d+)?)/);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  return (label.startsWith("<") || label.startsWith("≤")) ? n - 0.5 : n;
+}
+
+/**
+ * Build a synthetic MarketWithEdge from a Position so the existing
+ * TradeModal can be re-used for adding to an open position.
+ * Uses the current live YES price if available; falls back to avgBuyPrice.
+ */
+function positionToMarket(pos: Position, livePrices: Map<string, number>): MarketWithEdge {
+  const lastFill = pos.fills[pos.fills.length - 1];
+  const liveYes  = livePrices.get(pos.market_id) ?? pos.avgBuyPrice;
+  const mktPct   = Math.round(liveYes * 100);
+  const myPct    = lastFill.my_pct;
+  // Edge from the position's side perspective
+  const sideEdge = pos.side === "YES"
+    ? myPct - mktPct                          // YES underpriced by this much
+    : (100 - myPct) - (100 - mktPct);        // = mktPct - myPct (NO edge)
+  const sig = deriveTradeSignal(pos.side, sideEdge);
+  return {
+    id:          pos.market_id,
+    fetched_at:  new Date().toISOString(),
+    market_id:   pos.market_id,
+    question:    lastFill.market_question,
+    end_date:    pos.targetDate,
+    yes_price:   liveYes,
+    volume:      0,
+    active:      true,
+    market_type: "unknown" as MarketWithEdge["market_type"],
+    my_pct:      myPct,
+    market_pct:  mktPct,
+    edge:        sideEdge,
+    signal:      sig,
+  };
+}
+
 interface TradeGroup {
   key:        string;   // "KXHIGHPHIL__2026-04-30"
   series:     string;
@@ -379,6 +422,7 @@ export default function HistoryClient({ initialTrades }: Props) {
   const [sellModalTrades, setSellModalTrades] = useState<Trade[] | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
+  const [buyModalPosition, setBuyModalPosition] = useState<Position | null>(null);
   const [syncing, setSyncing]     = useState(false);
   const [viewMode, setViewMode]   = useState<"active" | "history">("active");
   const [historyDays, setHistoryDays] = useState<7 | 30 | 90 | null>(30);
@@ -1050,6 +1094,8 @@ export default function HistoryClient({ initialTrades }: Props) {
                       bracketGroups.push({ bracket: pos.bracket, positions: [pos] });
                     }
                   }
+                  // Sort brackets low → high temperature
+                  bracketGroups.sort((a, b) => bracketLabelSortKey(a.bracket) - bracketLabelSortKey(b.bracket));
 
                   return (
                     <>
@@ -1073,6 +1119,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                   onCancel={cancelOrder}
                                   onSell={(fills) => handlePositionSell(fills)}
                                   onBoost={(t) => setBoostModalTrade(t)}
+                                  onBuy={(p) => setBuyModalPosition(p)}
                                 />
                                 {!isSingle && isExpanded && pos.fills.map((t) => (
                                   <FillSubCard
@@ -1140,6 +1187,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                       onCancel={cancelOrder}
                                       onSell={(fills) => handlePositionSell(fills)}
                                       onBoost={(t) => setBoostModalTrade(t)}
+                                      onBuy={(p) => setBuyModalPosition(p)}
                                     />
                                     {!isSingle && isExpanded && pos.fills.map((t) => (
                                       <FillSubRow
@@ -1188,6 +1236,16 @@ export default function HistoryClient({ initialTrades }: Props) {
           })}
         </div>
       )}
+      {/* Buy modal — reuses TradeModal from markets page */}
+      {buyModalPosition && (
+        <TradeModal
+          market={positionToMarket(buyModalPosition, livePrices)}
+          initialSide={buyModalPosition.side}
+          onClose={() => setBuyModalPosition(null)}
+          onConfirm={() => { setBuyModalPosition(null); window.location.reload(); }}
+        />
+      )}
+
       {/* Boost modal */}
       {boostModalTrade && (
         <BoostModal
@@ -2473,6 +2531,7 @@ interface PositionRowProps {
   onCancel:     (id: string) => void;
   onSell:       (fills: Trade[]) => void;  // all sellable fills for this position
   onBoost:      (t: Trade) => void;
+  onBuy:        (pos: Position) => void;   // open buy modal for this position
 }
 
 function StateBadge({ state, firstFill }: { state: PositionState; firstFill?: Trade }) {
@@ -2511,7 +2570,7 @@ function PositionSummaryText({ pos, mobile = false }: { pos: Position; mobile?: 
 
 // ── Desktop position row ──────────────────────────────────────────────────────
 
-function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = false, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
+function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = false, livePrices, selling, onSell, onBuy }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
 
@@ -2583,19 +2642,35 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = fal
               <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
             </span>
           )}
+          {liveYes != null && (pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
+            <span className="text-xs text-slate-500 mt-0.5">
+              {Math.round(liveYes * 100)}% YES now
+            </span>
+          )}
         </div>
       </td>
 
-      {/* Action — only for open positions */}
-      <td className="py-3 pr-4 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
-        {sellableFills.length > 0 && (
-          <ActionButton
-            variant="sell"
-            onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
-            loading={sellableFills.some((t) => selling === t.id)}
-            label="Sell"
-            loadingLabel="Selling…"
-          />
+      {/* Action — Buy + Sell for open positions only */}
+      <td className="py-3 pr-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+        {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
+          <div className="flex gap-1 items-center justify-end">
+            <ActionButton
+              variant="buy"
+              onClick={(e) => { e.stopPropagation(); onBuy(pos); }}
+              loading={false}
+              label="Buy"
+              loadingLabel="…"
+            />
+            {sellableFills.length > 0 && (
+              <ActionButton
+                variant="sell"
+                onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
+                loading={sellableFills.some((t) => selling === t.id)}
+                label="Sell"
+                loadingLabel="Selling…"
+              />
+            )}
+          </div>
         )}
       </td>
     </tr>
@@ -2758,7 +2833,7 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
 
 // ── Mobile position card ─────────────────────────────────────────────────────
 
-function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, selling, onSell }: PositionRowProps) {
+function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, selling, onSell, onBuy }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
   // Settled positions have a definitive realized P&L — don't add a live-price
@@ -2802,7 +2877,7 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
           <PositionSummaryText pos={pos} mobile />
         </div>
 
-        {/* Line 3: current P&L · if correct */}
+        {/* Line 3: current P&L · if correct · market % */}
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
           <span className="text-sm font-semibold">
             {hasPnl ? (
@@ -2821,15 +2896,25 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
               <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
             </span>
           )}
+          {isOpen && liveYes != null && (
+            <span className="text-xs text-slate-500">
+              {Math.round(liveYes * 100)}% YES now
+            </span>
+          )}
         </div>
 
         {/* Line 4: action buttons — only for open positions */}
-        {sellableFills.length > 0 && (
+        {isOpen && (
           <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
-            <ActionButton variant="sell"
-              onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
-              loading={sellableFills.some((t) => selling === t.id)}
-              label="Sell" loadingLabel="Selling…" />
+            <ActionButton variant="buy"
+              onClick={(e) => { e.stopPropagation(); onBuy(pos); }}
+              loading={false} label="Buy" loadingLabel="…" />
+            {sellableFills.length > 0 && (
+              <ActionButton variant="sell"
+                onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
+                loading={sellableFills.some((t) => selling === t.id)}
+                label="Sell" loadingLabel="Selling…" />
+            )}
           </div>
         )}
       </div>
