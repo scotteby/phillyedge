@@ -896,6 +896,14 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     (g) => g.targetDate >= today && g.trades.some((t) => t.outcome === "pending")
   ).length;
 
+  // Split groups into active (any OPEN/PARTIALLY_CLOSED position) vs settled
+  const isGroupActive = (g: TradeGroup) =>
+    buildPositions(g.trades).some(
+      (p) => p.state === "OPEN" || p.state === "PARTIALLY_CLOSED"
+    );
+  const activeGroups  = groups.filter(isGroupActive);
+  const settledGroups = groups.filter((g) => !isGroupActive(g));
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -1098,16 +1106,24 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
         </div>
       ) : (
         <div className="space-y-4">
-          {groups.map((group) => {
-            const isCollapsed = collapsed.has(group.key);
-            const sharedProps = {
-              livePrices, today, canceling, selling, boosting,
-              onCancel: (id: string) => cancelOrder(id),
-              onSell:   (t: Trade)   => setSellModalTrades([t]),
-              onBoost:  (t: Trade)   => setBoostModalTrade(t),
-            };
-            return (
-              <div key={group.key}>
+          {[
+            { label: "Active",  list: activeGroups,  dim: false },
+            { label: "Settled", list: settledGroups, dim: true  },
+          ].flatMap(({ label, list, dim }) =>
+            list.length === 0 ? [] : [
+              <p key={`sec-${label}`} className="text-[11px] font-semibold tracking-[0.12em] text-slate-500 uppercase pt-1">
+                {label}
+              </p>,
+              ...list.map((group) => {
+              const isCollapsed = collapsed.has(group.key);
+              const sharedProps = {
+                livePrices, today, canceling, selling, boosting,
+                onCancel: (id: string) => cancelOrder(id),
+                onSell:   (t: Trade)   => setSellModalTrades([t]),
+                onBoost:  (t: Trade)   => setBoostModalTrade(t),
+              };
+              return (
+                <div key={group.key} className={dim ? "opacity-[0.65]" : ""}>
                 {/* Group header */}
                 <GroupHeader
                   group={group}
@@ -1275,8 +1291,9 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                   );
                 })()}
               </div>
-            );
-          })}
+              );
+            }),
+          ])}
         </div>
       )}
       {/* Buy modal — reuses TradeModal from markets page */}
