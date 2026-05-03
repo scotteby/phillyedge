@@ -216,22 +216,24 @@ export async function POST() {
     let totalW = 0, totalC = 0;
     for (const f of fills) {
       const c   = toCount(f);
-      // Fills may store YES price or side-specific price
+      // Kalshi v2 returns yes_price_dollars / no_price_dollars (decimal strings).
+      // Older snapshots may use yes_price / no_price / price.
       const yp  =
-        toYesPrice(f.yes_price, "yes")  ??
-        toYesPrice(f.no_price,  "no")   ??
-        toYesPrice(f.price,     side);
+        toYesPrice(f.yes_price ?? f.yes_price_dollars, "yes") ??
+        toYesPrice(f.no_price  ?? f.no_price_dollars,  "no")  ??
+        toYesPrice(f.price,                            side);
       if (c > 0 && yp != null) { totalW += c * yp; totalC += c; }
     }
     return totalC > 0 ? totalW / totalC : null;
   }
 
   function getAvgYesPriceFromOrder(order: Record<string, unknown>, side: string): number | null {
-    // avg_yes_price is the definitive field when available
+    // Kalshi v2 uses yes_price_dollars / no_price_dollars; older fields kept as fallback.
     return (
-      toYesPrice(order.avg_yes_price,  "yes") ??
-      toYesPrice(order.avg_fill_price, side)  ??
-      toYesPrice(order.yes_price,      "yes") ??
+      toYesPrice(order.avg_yes_price,                          "yes") ??
+      toYesPrice(order.avg_fill_price,                         side)  ??
+      toYesPrice(order.yes_price ?? order.yes_price_dollars,   "yes") ??
+      toYesPrice(order.no_price  ?? order.no_price_dollars,    "no")  ??
       null
     );
   }
