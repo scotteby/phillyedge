@@ -1117,7 +1117,8 @@ export default function HistoryClient({ initialTrades }: Props) {
                               <th className="py-2 pr-4">Side</th>
                               <th className="py-2 pr-4">State</th>
                               <th className="py-2 pr-4">Position</th>
-                              <th className="py-2">P&amp;L</th>
+                              <th className="py-2 pr-4">P&amp;L</th>
+                              <th className="py-2">{/* Actions */}</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-700/30">
@@ -1160,7 +1161,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                             {allPending.length > 0 && (
                               <>
                                 <tr>
-                                  <td colSpan={5} className="pt-4 pb-1 pl-4">
+                                  <td colSpan={6} className="pt-4 pb-1 pl-4">
                                     <span className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Pending Orders</span>
                                   </td>
                                 </tr>
@@ -2564,38 +2565,38 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = fal
         <PositionSummaryText pos={pos} />
       </td>
 
-      {/* P&L */}
-      <td className="py-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2">
-          <div className="flex flex-col">
-            {hasPnl ? (
-              <span className={`font-semibold ${pnlColor}`}>
-                {isEstimate && "~"}{totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
-              </span>
-            ) : pnlPending ? (
-              <span className="text-slate-500 text-sm">updating…</span>
-            ) : (
-              <span className="text-slate-600">—</span>
-            )}
-            {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
-              <span className="text-sm font-semibold text-sky-400 mt-1">
-                🎯 {pos.ifCorrectPayout >= 0 ? "+" : "–"}${Math.abs(pos.ifCorrectPayout).toFixed(2)}
-                <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
-              </span>
-            )}
-            {sellableFills.length > 0 && (
-              <div className="mt-1">
-                <ActionButton
-                  variant="sell"
-                  onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
-                  loading={sellableFills.some((t) => selling === t.id)}
-                  label="Sell"
-                  loadingLabel="Selling…"
-                />
-              </div>
-            )}
-          </div>
+      {/* P&L — data only, no action buttons */}
+      <td className="py-3 pr-4 whitespace-nowrap">
+        <div className="flex flex-col">
+          {hasPnl ? (
+            <span className={`font-semibold ${pnlColor}`}>
+              {isEstimate && "~"}{totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+            </span>
+          ) : pnlPending ? (
+            <span className="text-slate-500 text-sm">updating…</span>
+          ) : (
+            <span className="text-slate-600">—</span>
+          )}
+          {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
+            <span className="text-sm font-semibold text-sky-400 mt-1">
+              🎯 {pos.ifCorrectPayout >= 0 ? "+" : "–"}${Math.abs(pos.ifCorrectPayout).toFixed(2)}
+              <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
+            </span>
+          )}
         </div>
+      </td>
+
+      {/* Action — only for open positions */}
+      <td className="py-3 pr-4 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+        {sellableFills.length > 0 && (
+          <ActionButton
+            variant="sell"
+            onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
+            loading={sellableFills.some((t) => selling === t.id)}
+            label="Sell"
+            loadingLabel="Selling…"
+          />
+        )}
       </td>
     </tr>
   );
@@ -2614,23 +2615,20 @@ interface FillSubRowProps {
   onBoost:      () => void;
 }
 
-function FillSubRow({ trade, canceling, boosting, onBoost, onCancel, onSell: _onSell }: FillSubRowProps) {
-  void _onSell; // sell lives on the position header row, not individual fills
+function FillSubRow({ trade, onSell: _onSell, onBoost: _onBoost, onCancel: _onCancel }: FillSubRowProps) {
+  // Fill rows are read-only audit trail — no action buttons
+  void _onSell; void _onBoost; void _onCancel;
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const isSell     = trade.outcome === "sold";
-  const showBoost  = isBoostable(trade);
-  const showCancel = trade.kalshi_order_id != null &&
-    (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
-
   const pnlColor   = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
   const displayEdge = trade.side === "NO" ? -trade.edge : trade.edge;
 
   return (
     <tr className="bg-slate-900/40 hover:bg-slate-900/60 transition-colors">
-      {/* Bracket / time */}
+      {/* Time + BUY/SOLD badge */}
       <td className="py-2 pr-4 pl-6 text-slate-500 text-xs whitespace-nowrap border-l-2 border-slate-600/40">
         {timeStr}
         <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold ${isSell ? "bg-amber-500/15 text-amber-400" : "bg-slate-700 text-slate-300"}`}>
@@ -2660,28 +2658,17 @@ function FillSubRow({ trade, canceling, boosting, onBoost, onCancel, onSell: _on
         )}
       </td>
 
-      {/* P&L + actions */}
-      <td className="py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-        <div className="flex flex-col gap-1 items-start">
-          {trade.pnl != null ? (
-            <span className={`text-xs font-semibold ${pnlColor}`}>
-              {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
-            </span>
-          ) : null}
-          {(showBoost || showCancel) && (
-            <div className="flex gap-1 flex-wrap">
-              {showBoost && (
-                <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
-                  loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
-              )}
-              {showCancel && (
-                <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
-                  loading={canceling} label="Cancel" loadingLabel="Canceling…" />
-              )}
-            </div>
-          )}
-        </div>
+      {/* P&L */}
+      <td className="py-2 pr-4 whitespace-nowrap">
+        {trade.pnl != null && (
+          <span className={`text-xs font-semibold ${pnlColor}`}>
+            {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
+          </span>
+        )}
       </td>
+
+      {/* Action — fill rows are read-only, no buttons */}
+      <td className="py-2" />
     </tr>
   );
 }
@@ -2749,9 +2736,12 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
         )}
       </td>
 
+      {/* P&L — empty for pending orders */}
+      <td className="py-2 pr-4" />
+
       {/* Actions */}
-      <td className="py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-        <div className="flex gap-1 flex-wrap">
+      <td className="py-2 pr-4 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+        <div className="flex gap-1 flex-wrap justify-end">
           {showBoost && (
             <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
               loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
@@ -2768,7 +2758,7 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
 
 // ── Mobile position card ─────────────────────────────────────────────────────
 
-function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, canceling, selling, boosting, onCancel, onSell, onBoost }: PositionRowProps) {
+function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, selling, onSell }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
   // Settled positions have a definitive realized P&L — don't add a live-price
@@ -2783,6 +2773,7 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
     pos.fills.some((t) => t.outcome === "sold" && t.pnl == null);
   const pnlColor   = totalPnl >= 0 ? "text-emerald-400" : "text-red-400";
   const isEstimate = unrealized != null;
+  const isOpen     = pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED";
 
   const sellableFills = pos.fills.filter((t) => isSellable(t));
 
@@ -2791,74 +2782,73 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
       className={`bg-slate-800 border border-slate-700 rounded-xl overflow-hidden select-none ${hasChildren ? "cursor-pointer" : ""}`}
       onClick={hasChildren ? onToggle : undefined}
     >
-      <div className="p-4 space-y-3">
-        {/* Row 1: bracket + chevron */}
+      <div className="p-4 space-y-2">
+        {/* Line 1: bracket · side · state + chevron */}
         <div className="flex items-start gap-2">
-          <span className="flex-1 text-slate-200 text-sm leading-snug font-medium">{pos.bracket}</span>
+          <div className="flex-1 flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+            <span className="text-slate-200 text-sm font-medium leading-snug">{pos.bracket}</span>
+            <span className={`font-semibold text-sm ${pos.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
+              {pos.side}
+            </span>
+            <StateBadge state={pos.state} firstFill={pos.fills.find((t) => t.outcome === "win" || t.outcome === "loss") ?? pos.fills[0]} />
+          </div>
           {hasChildren && (
             <span className={`shrink-0 text-slate-500 text-base leading-none transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>›</span>
           )}
         </div>
 
-        {/* Row 2: badges + P&L */}
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
-            <span className={`font-semibold ${pos.side === "YES" ? "text-emerald-400" : "text-red-400"}`}>
-              {pos.side}
-            </span>
-            <StateBadge state={pos.state} firstFill={pos.fills.find((t) => t.outcome === "win" || t.outcome === "loss") ?? pos.fills[0]} />
-          </div>
-          <div className="shrink-0 text-right">
-            {hasPnl ? (
-              <span className={`font-medium ${pnlColor}`}>
-                {isEstimate && "~"}{totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
-              </span>
-            ) : pnlPending ? (
-              <span className="text-slate-500 text-xs">updating…</span>
-            ) : (
-              <span className="text-slate-600 text-sm">—</span>
-            )}
-            {(pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
-              <p className="text-sm font-semibold text-sky-400 mt-1">
-                🎯 {pos.ifCorrectPayout >= 0 ? "+" : "–"}${Math.abs(pos.ifCorrectPayout).toFixed(2)}
-                <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Position summary */}
+        {/* Line 2: cost + contracts */}
         <div className="text-xs text-slate-400">
           <PositionSummaryText pos={pos} mobile />
         </div>
-      </div>
 
-      {sellableFills.length > 0 && (
-        <div className="px-4 pb-3" onClick={(e) => e.stopPropagation()}>
-          <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
-            loading={sellableFills.some((t) => selling === t.id)} label="Sell" loadingLabel="Selling…" />
+        {/* Line 3: current P&L · if correct */}
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          <span className="text-sm font-semibold">
+            {hasPnl ? (
+              <span className={pnlColor}>
+                {isEstimate && "~"}{totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
+              </span>
+            ) : pnlPending ? (
+              <span className="text-slate-500">updating…</span>
+            ) : (
+              <span className="text-slate-600">—</span>
+            )}
+          </span>
+          {isOpen && (
+            <span className="text-sm font-semibold text-sky-400">
+              🎯 {pos.ifCorrectPayout >= 0 ? "+" : "–"}${Math.abs(pos.ifCorrectPayout).toFixed(2)}
+              <span className="text-xs font-normal text-slate-500 ml-1">if correct</span>
+            </span>
+          )}
         </div>
-      )}
+
+        {/* Line 4: action buttons — only for open positions */}
+        {sellableFills.length > 0 && (
+          <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+            <ActionButton variant="sell"
+              onClick={(e) => { e.stopPropagation(); onSell(sellableFills); }}
+              loading={sellableFills.some((t) => selling === t.id)}
+              label="Sell" loadingLabel="Selling…" />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 // ── Mobile fill sub-card ─────────────────────────────────────────────────────
 
-function FillSubCard({ trade, liveYesPrice, canceling, boosting, onCancel, onSell: _onSell, onBoost }: FillSubRowProps) {
-  void _onSell; // sell lives on the position header row, not individual fills
+function FillSubCard({ trade, onSell: _onSell, onBoost: _onBoost, onCancel: _onCancel }: FillSubRowProps) {
+  // Fill rows are read-only audit trail — no action buttons
+  void _onSell; void _onBoost; void _onCancel;
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const isSell     = trade.outcome === "sold";
-  const showBoost  = isBoostable(trade);
-  const showCancel = trade.kalshi_order_id != null &&
-    (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
   const pnlColor    = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
   const displayEdge = trade.side === "NO" ? -trade.edge : trade.edge;
-
-  void liveYesPrice; // available for future MTM display
 
   return (
     <div className="ml-3 border-l-2 border-slate-700/50">
@@ -2883,18 +2873,7 @@ function FillSubCard({ trade, liveYesPrice, canceling, boosting, onCancel, onSel
             <span className="ml-2 text-slate-600">{trade.signal} {displayEdge > 0 ? "+" : ""}{displayEdge}pt</span>
           )}
         </div>
-        {(showBoost || showCancel) && (
-          <div className="flex gap-1 flex-wrap">
-            {showBoost && (
-              <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
-                loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
-            )}
-            {showCancel && (
-              <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
-                loading={canceling} label="Cancel" loadingLabel="Canceling…" />
-            )}
-          </div>
-        )}
+        {/* no action buttons — fill rows are read-only audit trail */}
       </div>
     </div>
   );
