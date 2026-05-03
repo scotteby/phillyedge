@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { BracketGroup, BracketMarket, BracketRange } from "@/lib/brackets";
 import type { Signal } from "@/lib/types";
 import type { MarketTimeStatus, DailyHighStatus } from "@/lib/nws";
@@ -761,9 +761,31 @@ function BracketTradeModal({
     demo:     boolean;
   } | null>(null);
 
+  // Live ask price from orderbook — fetched fresh on open and when side changes.
+  // Placing at the ask fills immediately; placing at mid-price causes the order
+  // to rest and require a boost.
+  const [askCents,   setAskCents]   = useState<number | null>(null);
+  const [askLoading, setAskLoading] = useState(true);
+
+  useEffect(() => {
+    setAskLoading(true);
+    setAskCents(null);
+    fetch(`/api/orderbook?ticker=${encodeURIComponent(bracket.market_id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j) return;
+        const ask = side === "YES" ? j.yes_ask_cents : j.no_ask_cents;
+        setAskCents(typeof ask === "number" ? ask : null);
+      })
+      .catch(() => {})
+      .finally(() => setAskLoading(false));
+  }, [bracket.market_id, side]);
+
   const kalshiUrl  = buildKalshiUrl(bracket.market_id);
   const usdc       = parseFloat(amount) || 0;
-  const price      = side === "YES" ? bracket.yes_price : 1 - bracket.yes_price;
+  // Use live ask price when available; fall back to cached mid-price.
+  const midPrice   = side === "YES" ? bracket.yes_price : 1 - bracket.yes_price;
+  const price      = askCents != null ? askCents / 100 : midPrice;
   const shares     = price > 0 ? usdc / price : 0;
   const maxProfit  = shares - usdc;
 
@@ -900,8 +922,12 @@ function BracketTradeModal({
 
           {/* Stats */}
           <div className="bg-slate-700/50 rounded-xl p-4 space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Price ({side})</span>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400 flex items-center gap-1.5">
+                Ask ({side})
+                {askLoading && <span className="text-[10px] text-slate-500 animate-pulse">fetching…</span>}
+                {!askLoading && askCents == null && <span className="text-[10px] text-slate-500">(using mid)</span>}
+              </span>
               <span className="text-white">{(price * 100).toFixed(1)}¢</span>
             </div>
             <div className="flex justify-between">
