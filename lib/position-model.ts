@@ -57,6 +57,7 @@ export function hasFills(t: Trade): boolean {
   return (
     (t.filled_count ?? 0) > 0 ||
     t.order_status === "filled" ||
+    t.order_status === "partially_filled" ||
     t.outcome === "sold" ||
     t.outcome === "win" ||
     t.outcome === "loss"
