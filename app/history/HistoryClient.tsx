@@ -2614,14 +2614,14 @@ interface FillSubRowProps {
   onBoost:      () => void;
 }
 
-function FillSubRow({ trade, canceling, selling, boosting, onBoost, onCancel, onSell }: FillSubRowProps) {
+function FillSubRow({ trade, canceling, boosting, onBoost, onCancel, onSell: _onSell }: FillSubRowProps) {
+  void _onSell; // sell lives on the position header row, not individual fills
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const isSell     = trade.outcome === "sold";
   const showBoost  = isBoostable(trade);
-  const showSell   = isSellable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
 
@@ -2668,20 +2668,18 @@ function FillSubRow({ trade, canceling, selling, boosting, onBoost, onCancel, on
               {trade.pnl >= 0 ? "+" : ""}${trade.pnl.toFixed(2)}
             </span>
           ) : null}
-          <div className="flex gap-1 flex-wrap">
-            {showSell && (
-              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
-                loading={selling} label="Sell" loadingLabel="Selling…" />
-            )}
-            {showBoost && (
-              <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
-                loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
-            )}
-            {showCancel && (
-              <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
-                loading={canceling} label="Cancel" loadingLabel="Canceling…" />
-            )}
-          </div>
+          {(showBoost || showCancel) && (
+            <div className="flex gap-1 flex-wrap">
+              {showBoost && (
+                <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
+                  loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
+              )}
+              {showCancel && (
+                <ActionButton variant="cancel" onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                  loading={canceling} label="Cancel" loadingLabel="Canceling…" />
+              )}
+            </div>
+          )}
         </div>
       </td>
     </tr>
@@ -2847,14 +2845,14 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
 
 // ── Mobile fill sub-card ─────────────────────────────────────────────────────
 
-function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCancel, onSell, onBoost }: FillSubRowProps) {
+function FillSubCard({ trade, liveYesPrice, canceling, boosting, onCancel, onSell: _onSell, onBoost }: FillSubRowProps) {
+  void _onSell; // sell lives on the position header row, not individual fills
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const timeStr    = new Date(trade.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const isSell     = trade.outcome === "sold";
   const showBoost  = isBoostable(trade);
-  const showSell   = isSellable(trade);
   const showCancel = trade.kalshi_order_id != null &&
     (trade.order_status === "resting" || trade.order_status === "partially_filled" || trade.order_status === null);
   const pnlColor    = trade.pnl == null ? "" : trade.pnl >= 0 ? "text-emerald-400" : "text-red-400";
@@ -2885,12 +2883,8 @@ function FillSubCard({ trade, liveYesPrice, canceling, selling, boosting, onCanc
             <span className="ml-2 text-slate-600">{trade.signal} {displayEdge > 0 ? "+" : ""}{displayEdge}pt</span>
           )}
         </div>
-        {(showSell || showBoost || showCancel) && (
+        {(showBoost || showCancel) && (
           <div className="flex gap-1 flex-wrap">
-            {showSell && (
-              <ActionButton variant="sell" onClick={(e) => { e.stopPropagation(); onSell(); }}
-                loading={selling} label="Sell" loadingLabel="Selling…" />
-            )}
             {showBoost && (
               <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
                 loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
