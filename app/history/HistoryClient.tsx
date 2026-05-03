@@ -10,6 +10,7 @@ import TradeModal from "@/app/markets/TradeModal";
 
 interface Props {
   initialTrades: Trade[];
+  forecastPcts?: Record<string, number>; // market_id → our model's YES probability (0–100)
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -415,7 +416,7 @@ function useCollapsedGroups() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function HistoryClient({ initialTrades }: Props) {
+export default function HistoryClient({ initialTrades, forecastPcts = {} }: Props) {
   const [trades, setTrades]       = useState<Trade[]>(initialTrades);
   const [canceling, setCanceling] = useState<string | null>(null);
   const [selling, setSelling]     = useState<string | null>(null);
@@ -1113,6 +1114,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                   onToggle={() => toggleExpand(pos.key)}
                                   hasChildren={!isSingle}
                                   livePrices={livePrices}
+                                  forecastPct={forecastPcts[pos.market_id] ?? null}
                                   canceling={canceling}
                                   selling={selling}
                                   boosting={boosting}
@@ -1181,6 +1183,7 @@ export default function HistoryClient({ initialTrades }: Props) {
                                       onToggle={() => toggleExpand(pos.key)}
                                       hasChildren={!isSingle}
                                       livePrices={livePrices}
+                                      forecastPct={forecastPcts[pos.market_id] ?? null}
                                       canceling={canceling}
                                       selling={selling}
                                       boosting={boosting}
@@ -2525,6 +2528,7 @@ interface PositionRowProps {
   hasChildren?: boolean;  // false → hide chevron and make row non-interactive
   subRow?:      boolean;  // true → inside a bracket group, hide bracket label
   livePrices:   Map<string, number>;
+  forecastPct?: number | null;             // our model's YES probability (0–100)
   canceling:    string | null;
   selling:      string | null;
   boosting:     string | null;
@@ -2570,7 +2574,7 @@ function PositionSummaryText({ pos, mobile = false }: { pos: Position; mobile?: 
 
 // ── Desktop position row ──────────────────────────────────────────────────────
 
-function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = false, livePrices, selling, onSell, onBuy }: PositionRowProps) {
+function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = false, livePrices, forecastPct, selling, onSell, onBuy }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
 
@@ -2642,11 +2646,20 @@ function PositionRow({ pos, expanded, onToggle, hasChildren = true, subRow = fal
               <span className="text-xs font-normal text-slate-500 ml-1">total payout</span>
             </span>
           )}
-          {liveYes != null && (pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (
-            <span className="text-xs text-slate-500 mt-0.5">
-              {Math.round(liveYes * 100)}% YES now
-            </span>
-          )}
+          {liveYes != null && (pos.state === "OPEN" || pos.state === "PARTIALLY_CLOSED") && (() => {
+            const liveYesPct = Math.round(liveYes * 100);
+            const edge = forecastPct != null ? forecastPct - liveYesPct : null;
+            return (
+              <span className="text-xs text-slate-500 mt-0.5 flex items-baseline gap-1.5 flex-wrap">
+                <span>{liveYesPct}% YES now</span>
+                {forecastPct != null && edge != null && (
+                  <span className={edge > 3 ? "text-teal-400" : edge < -3 ? "text-amber-400" : "text-slate-500"}>
+                    · our ~{forecastPct}% {edge > 3 ? "↑" : edge < -3 ? "↓" : "→"}
+                  </span>
+                )}
+              </span>
+            );
+          })()}
         </div>
       </td>
 
@@ -2833,7 +2846,7 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
 
 // ── Mobile position card ─────────────────────────────────────────────────────
 
-function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, selling, onSell, onBuy }: PositionRowProps) {
+function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices, forecastPct, selling, onSell, onBuy }: PositionRowProps) {
   const liveYes    = livePrices.get(pos.market_id);
   const livePrice  = liveYes != null ? (pos.side === "YES" ? liveYes : 1 - liveYes) : null;
   // Settled positions have a definitive realized P&L — don't add a live-price
@@ -2896,11 +2909,20 @@ function PositionCard({ pos, expanded, onToggle, hasChildren = true, livePrices,
               <span className="text-xs font-normal text-slate-500 ml-1">total payout</span>
             </span>
           )}
-          {isOpen && liveYes != null && (
-            <span className="text-xs text-slate-500">
-              {Math.round(liveYes * 100)}% YES now
-            </span>
-          )}
+          {isOpen && liveYes != null && (() => {
+            const liveYesPct = Math.round(liveYes * 100);
+            const edge = forecastPct != null ? forecastPct - liveYesPct : null;
+            return (
+              <span className="text-xs text-slate-500 flex items-baseline gap-1">
+                <span>{liveYesPct}% YES now</span>
+                {forecastPct != null && edge != null && (
+                  <span className={edge > 3 ? "text-teal-400" : edge < -3 ? "text-amber-400" : "text-slate-500"}>
+                    · our ~{forecastPct}% {edge > 3 ? "↑" : edge < -3 ? "↓" : "→"}
+                  </span>
+                )}
+              </span>
+            );
+          })()}
         </div>
 
         {/* Line 4: action buttons — only for open positions */}

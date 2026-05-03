@@ -235,6 +235,50 @@ function groupTitle(series: string, eventKey: string): string {
   return `${base} · ${dateLabel}`;
 }
 
+// ── Forecast probability for a single market ──────────────────────────────────
+
+/**
+ * Returns our forecast probability (0–100 integer) for a given Kalshi market,
+ * using the same normal-distribution model as groupBracketMarkets.
+ *
+ * Returns null when:
+ *   - the market is not a bracket series (KXHIGHPHIL / KXLOWTPHIL)
+ *   - no forecast exists for the observation date
+ *   - the bracket range could not be parsed
+ */
+export function forecastPctForMarket(
+  marketId:  string,
+  question:  string,
+  forecasts: Forecast[],
+): number | null {
+  const parts  = marketId.toUpperCase().split("-");
+  if (parts.length < 2) return null;
+  const series = parts[0];
+  const cfg    = BRACKET_SERIES[series];
+  if (!cfg)    return null;
+
+  // Build the event key from the first two hyphen segments: "KXHIGHPHIL-26MAY03"
+  const eventKey = `${parts[0]}-${parts[1]}`;
+  const obsDate  = observationDate(eventKey);
+  if (!obsDate)  return null;
+
+  const forecast = forecasts.find((f) => f.target_date === obsDate);
+  if (!forecast) return null;
+
+  const fVal = forecast[cfg.forecastKey] as number | undefined;
+  if (fVal == null) return null;
+
+  const std   = CONFIDENCE_STD[forecast.forecast_confidence ?? "confident"] ?? 2.0;
+  const range = parseBracketRange(question);
+
+  // Snap mean to midpoint of the bracket the forecast falls in, matching
+  // the same effectiveMean logic used in groupBracketMarkets.
+  let mean = fVal;
+  if (inRange(fVal, range)) mean = bracketMidpoint(range, fVal);
+
+  return bracketProb(range, mean, std);
+}
+
 // ── Main grouping function ────────────────────────────────────────────────────
 
 export function groupBracketMarkets(
