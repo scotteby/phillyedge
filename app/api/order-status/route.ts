@@ -23,6 +23,91 @@ function normaliseStatus(raw: string): OrderStatus {
   }
 }
 
+// ── Shared market-resolution helper ──────────────────────────────────────────
+// Used when a trade has no kalshi_order_id (e.g. manually imported or the
+// order ID was never stored) but we still know its filled_count.
+
+type DbTrade = {
+  id: string;
+  market_id: string;
+  side: string;
+  entry_yes_price: number | null;
+  market_pct: number;
+  outcome: string;
+  filled_count: number | null;
+};
+
+async function checkMarketResolutionOnly(
+  trade: DbTrade,
+  filledCount: number,
+  supabase: ReturnType<typeof createServiceClient>,
+): Promise<NextResponse> {
+  const outcome = trade.outcome;
+  const tradeSide = String(trade.side ?? "").toLowerCase();
+
+  if (outcome !== "pending" && outcome !== "boosted") {
+    return NextResponse.json({
+      trade_id:    trade.id,
+      order_status: trade.outcome,
+      filled_count: filledCount,
+      outcome,
+      pnl: null,
+      resolved: false,
+    });
+  }
+
+  try {
+    const mktRes = await fetch(
+      `${KALSHI_BASE}/markets/${encodeURIComponent(trade.market_id)}`,
+      { headers: { Accept: "application/json" }, cache: "no-store" }
+    );
+    if (!mktRes.ok) throw new Error(`HTTP ${mktRes.status}`);
+    const mktJson = await mktRes.json();
+    const mkt     = (mktJson.market ?? mktJson) as Record<string, unknown>;
+    const mktStatus = String(mkt.status ?? "").toLowerCase();
+    const result    = String(mkt.result  ?? "").toLowerCase();
+
+    if (mktStatus === "finalized" && (result === "yes" || result === "no")) {
+      const won = result === tradeSide;
+      const entryYes: number =
+        (trade.entry_yes_price as number | null) ??
+        (tradeSide === "yes" ? trade.market_pct / 100 : 1 - trade.market_pct / 100);
+      const sidePrice = tradeSide === "yes" ? entryYes : 1 - entryYes;
+      const pnl = won
+        ? parseFloat((filledCount * (1 - sidePrice)).toFixed(2))
+        : parseFloat((-(filledCount * sidePrice)).toFixed(2));
+      const newOutcome = won ? "win" : "loss";
+
+      await supabase
+        .from("trades")
+        .update({ outcome: newOutcome, pnl })
+        .eq("id", trade.id);
+
+      console.log(`[order-status] Market ${trade.market_id} finalized (no order_id) → ${newOutcome}, pnl=${pnl}`);
+
+      return NextResponse.json({
+        trade_id:    trade.id,
+        order_status: "filled",
+        filled_count: filledCount,
+        outcome:     newOutcome,
+        pnl,
+        resolved:    true,
+      });
+    }
+  } catch (err) {
+    console.error("[order-status] Market resolution check (no order_id) failed:", err);
+  }
+
+  return NextResponse.json({
+    trade_id:    trade.id,
+    order_status: trade.outcome,
+    filled_count: filledCount,
+    outcome,
+    pnl: null,
+    resolved: false,
+  });
+}
+
 export async function GET(req: NextRequest) {
   const tradeId = req.nextUrl.searchParams.get("trade_id");
   if (!tradeId) {
@@ -34,7 +119,7 @@ export async function GET(req: NextRequest) {
   // Fetch trade — include fields needed for resolution calc
   const { data: trade, error: dbErr } = await supabase
     .from("trades")
-    .select("id, kalshi_order_id, order_status, market_id, side, entry_yes_price, market_pct, outcome")
+    .select("id, kalshi_order_id, order_status, market_id, side, entry_yes_price, market_pct, outcome, filled_count")
     .eq("id", tradeId)
     .single();
 
@@ -42,8 +127,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Trade not found" }, { status: 404 });
   }
 
+  // If there's no kalshi_order_id we can't fetch order details, but we can
+  // still check whether the market itself has resolved and settle the trade.
   if (!trade.kalshi_order_id) {
-    return NextResponse.json({ error: "No Kalshi order ID for this trade" }, { status: 422 });
+    const storedFilled = (trade.filled_count as number | null) ?? 0;
+    if (storedFilled === 0) {
+      return NextResponse.json({ error: "No Kalshi order ID for this trade" }, { status: 422 });
+    }
+    // Fall through to market resolution check below using stored filled_count.
+    return await checkMarketResolutionOnly(trade, storedFilled, supabase);
   }
 
   const orderId = trade.kalshi_order_id as string;
@@ -215,7 +307,7 @@ export async function GET(req: NextRequest) {
     console.log(`[order-status] Sell order ${orderId} filled → outcome=sold, pnl=${pnl}`);
   }
 
-  if (outcome === "pending" && trade.market_id) {
+  if ((outcome === "pending" || outcome === "boosted") && trade.market_id) {
     try {
       const mktRes = await fetch(
         `${KALSHI_BASE}/markets/${encodeURIComponent(trade.market_id as string)}`,
