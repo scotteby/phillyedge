@@ -870,6 +870,11 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const activeVisibleTrades = nonVoidTrades.filter((t) => {
     if (t.outcome === "pending") return true;                   // all open positions
     if (dateInLocalTZ(t.created_at) === today) return true;    // placed today
+    // Boosted trades from prior days that have actual fills: capital was deployed,
+    // so they must be counted in the position even if the order was re-placed.
+    if (t.outcome === "boosted" && (t.filled_count ?? 0) > 0) {
+      return t.target_date != null && t.target_date >= yesterday;
+    }
     // Show settled/sold/closed trades whose market resolved today or yesterday
     if (t.outcome === "win" || t.outcome === "loss" || t.outcome === "sold") {
       return t.target_date != null && t.target_date >= yesterday;
