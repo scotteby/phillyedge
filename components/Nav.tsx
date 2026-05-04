@@ -19,26 +19,45 @@ export default function Nav() {
         <Link href="/" className="font-bold text-lg text-sky-400 tracking-tight shrink-0">
           PhillyEdge
         </Link>
-        {/* flex-1 on mobile so tabs fill remaining space; flex-none on desktop */}
-        <nav className="flex flex-1 md:flex-none gap-1">
-          {tabs.map((tab) => {
-            const active = pathname.startsWith(tab.href);
-            return (
-              <Link
-                key={tab.href}
-                href={tab.href}
-                className={`flex-1 md:flex-none text-center md:text-left px-2 md:px-4 py-2 md:py-1.5 rounded-md text-sm font-medium transition-colors min-h-[44px] flex items-center justify-center md:inline-flex ${
-                  active
-                    ? "bg-slate-700 text-white"
-                    : "text-slate-400 hover:text-slate-100 hover:bg-slate-800"
-                }`}
-              >
-                {tab.label}
-              </Link>
-            );
-          })}
-        </nav>
-        <span className="ml-auto text-xs text-slate-500 hidden sm:block">
+
+        {/*
+          Mobile: wrapper takes remaining space, clips the nav's overflow, and
+          hosts the fade-hint overlay on the right edge.
+          Desktop: wrapper shrinks to fit, no clipping needed.
+        */}
+        <div className="relative flex-1 md:flex-none overflow-hidden md:overflow-visible">
+          <nav className={[
+            "flex gap-1",
+            // Mobile: scroll horizontally; hide the scrollbar track
+            "overflow-x-auto md:overflow-x-visible",
+            "[&::-webkit-scrollbar]:hidden [scrollbar-width:none]",
+          ].join(" ")}>
+            {tabs.map((tab) => {
+              const active = pathname.startsWith(tab.href);
+              return (
+                <Link
+                  key={tab.href}
+                  href={tab.href}
+                  className={`shrink-0 px-3 md:px-4 py-2 md:py-1.5 rounded-md text-sm font-medium transition-colors min-h-[44px] flex items-center justify-center ${
+                    active
+                      ? "bg-slate-700 text-white"
+                      : "text-slate-400 hover:text-slate-100 hover:bg-slate-800"
+                  }`}
+                >
+                  {tab.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          {/* Right-edge fade hint — mobile only, pointer-events off so taps pass through */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-r from-transparent to-slate-900 md:hidden"
+          />
+        </div>
+
+        <span className="ml-auto text-xs text-slate-500 hidden sm:block shrink-0">
           Philadelphia Weather Trading
         </span>
       </div>
