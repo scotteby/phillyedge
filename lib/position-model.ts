@@ -14,7 +14,7 @@ export interface Position {
   fills:            Trade[];     // trades with actual contracts (sorted by created_at asc)
   pendingOrders:    Trade[];     // resting/void-cancelled — no contracts yet
 
-  contractsBought:  number;      // sum of contracts from non-sold fills
+  contractsBought:  number;      // sum of contracts across all fills (incl. sold — they were bought first)
   contractsSold:    number;      // sum of contracts from "sold" fills
   netContracts:     number;      // = max(0, bought - sold)
 
@@ -119,10 +119,13 @@ export function buildPositions(trades: Trade[]): Position[] {
     const bracket    = getBracketLabel(firstTrade.market_question);
 
     // 5. Contract math
+    // A "sold" fill represents a trade that was bought AND subsequently sold.
+    // Its filled_count is the number of contracts bought (and later sold), so it
+    // must count toward contractsBought as well as contractsSold.
+    // e.g. buy 26, sell 19 → contractsBought=45, contractsSold=19, net=26 ✓
     const soldFills = fills.filter((t) => t.outcome === "sold");
-    const buyFills  = fills.filter((t) => t.outcome !== "sold");
 
-    const contractsBought = buyFills.reduce((s, t) => s + getContractsForFill(t), 0);
+    const contractsBought = fills.reduce((s, t) => s + getContractsForFill(t), 0);
     const contractsSold   = soldFills.reduce((s, t) => s + getContractsForFill(t), 0);
 
     if (contractsSold > contractsBought) {
