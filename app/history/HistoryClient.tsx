@@ -148,7 +148,11 @@ function hasNoPosition(trade: Trade): boolean {
 
 /** Is this trade eligible for live-price polling? */
 function isLivePriceEligible(trade: Trade, today: string): boolean {
-  return trade.outcome === "pending" && trade.target_date >= today;
+  if (trade.target_date < today) return false;
+  if (trade.outcome === "pending") return true;
+  // Boosted fills have real open contracts — include for mark-to-market pricing
+  if (trade.outcome === "boosted" && (trade.filled_count ?? 0) > 0) return true;
+  return false;
 }
 
 /** Can the user manually sell this position right now? */
