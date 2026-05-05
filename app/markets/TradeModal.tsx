@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { MarketWithEdge } from "@/lib/types";
 import SignalBadge from "@/components/SignalBadge";
 
@@ -37,14 +37,62 @@ export default function TradeModal({ market, initialSide = "YES", onClose, onCon
     demo:     boolean;
   } | null>(null);
 
-  const kalshiUrl  = buildKalshiUrl(market.market_id);
-  const usdc       = parseFloat(amount) || 0;
-  const price      = side === "YES" ? market.yes_price : 1 - market.yes_price;
-  const shares     = price > 0 ? usdc / price : 0;
-  const maxProfit  = shares - usdc;
+  // ── Live orderbook ─────────────────────────────────────────────────────────
+  const [bidCents,     setBidCents]     = useState<number | null>(null);
+  const [askCents,     setAskCents]     = useState<number | null>(null);
+  const [obLoading,    setObLoading]    = useState(true);
+  const [priceInput,   setPriceInput]   = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchOb() {
+      setObLoading(true);
+      try {
+        const res  = await fetch(`/api/orderbook?ticker=${encodeURIComponent(market.market_id)}`, { cache: "no-store" });
+        const json = await res.json();
+        if (cancelled) return;
+        const bid = side === "YES" ? json.yes_bid_cents : json.no_bid_cents;
+        const ask = side === "YES" ? json.yes_ask_cents : json.no_ask_cents;
+        setBidCents(typeof bid === "number" ? bid : null);
+        setAskCents(typeof ask === "number" ? ask : null);
+        // Default to ask so the order fills immediately
+        if (ask != null && priceInput === "") setPriceInput(String(ask));
+      } catch { /* non-fatal */ }
+      finally { if (!cancelled) setObLoading(false); }
+    }
+    void fetchOb();
+    return () => { cancelled = true; };
+  // Re-fetch when side changes; reset price input so it picks up new ask
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [market.market_id, side]);
+
+  // Reset price when side changes so the new ask is used as default
+  useEffect(() => { setPriceInput(""); }, [side]);
+
+  const parsedCents  = parseInt(priceInput, 10);
+  const validPrice   = !isNaN(parsedCents) && parsedCents >= 1 && parsedCents <= 99;
+  const limitPrice   = validPrice ? parsedCents / 100 : (side === "YES" ? market.yes_price : 1 - market.yes_price);
+
+  const usdc      = parseFloat(amount) || 0;
+  const shares    = limitPrice > 0 ? usdc / limitPrice : 0;
+  const maxProfit = shares - usdc;
+
+  // Fill hint: order fills immediately when price >= ask
+  const fillsNow = askCents != null && validPrice && parsedCents >= askCents;
+  const rests    = askCents != null && validPrice && parsedCents < askCents;
+
+  function nudgePrice(delta: number) {
+    const current = parseInt(priceInput, 10);
+    const base = isNaN(current) ? (askCents ?? Math.round(limitPrice * 100)) : current;
+    const next = Math.min(99, Math.max(1, base + delta));
+    setPriceInput(String(next));
+  }
+
+  const kalshiUrl = buildKalshiUrl(market.market_id);
 
   async function handlePlace() {
     if (!usdc || usdc <= 0) { setError("Enter a valid USDC amount."); return; }
+    if (!validPrice)        { setError("Enter a valid price (1–99¢)."); return; }
     setStatus("placing");
     setError(null);
 
@@ -56,7 +104,7 @@ export default function TradeModal({ market, initialSide = "YES", onClose, onCon
           ticker:          market.market_id,
           side,
           amount_dollars:  usdc,
-          limit_price:     price,
+          limit_price:     limitPrice,
           market_question: market.question,
           target_date:     market.end_date,
           market_pct:      market.market_pct,
@@ -75,8 +123,6 @@ export default function TradeModal({ market, initialSide = "YES", onClose, onCon
 
       setResult({ order_id: json.order_id, count: json.count, price: json.price_dollars, demo: !!json.demo });
       setStatus("success");
-      // Don't call onConfirm() here — that would unmount the modal immediately,
-      // swallowing the success screen. The user dismisses it with "Done".
     } catch (err) {
       setError(String(err));
       setStatus("error");
@@ -172,12 +218,75 @@ export default function TradeModal({ market, initialSide = "YES", onClose, onCon
           </div>
         </div>
 
+        {/* Limit price */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-sm font-medium text-slate-300">
+              Limit Price ({side})
+            </label>
+            {!obLoading && bidCents != null && askCents != null && (
+              <span className="text-xs text-slate-500">
+                Bid <span className="text-slate-400">{bidCents}¢</span>
+                <span className="mx-1.5 text-slate-600">/</span>
+                Ask <span className="text-slate-400">{askCents}¢</span>
+              </span>
+            )}
+            {obLoading && (
+              <span className="text-xs text-slate-500 animate-pulse">loading orderbook…</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => nudgePrice(-1)}
+              disabled={obLoading || status === "placing"}
+              className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-600 text-slate-300 hover:border-slate-400 hover:text-white transition-colors disabled:opacity-40 text-lg font-medium"
+            >
+              −
+            </button>
+            <div className="relative flex-1">
+              <input
+                type="number"
+                min={1}
+                max={99}
+                value={priceInput}
+                onChange={(e) => setPriceInput(e.target.value)}
+                disabled={obLoading || status === "placing"}
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm text-center font-semibold focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent disabled:opacity-50"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">¢</span>
+            </div>
+            <button
+              onClick={() => nudgePrice(1)}
+              disabled={obLoading || status === "placing"}
+              className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-600 text-slate-300 hover:border-slate-400 hover:text-white transition-colors disabled:opacity-40 text-lg font-medium"
+            >
+              +
+            </button>
+            {askCents != null && (
+              <button
+                onClick={() => setPriceInput(String(askCents))}
+                disabled={status === "placing"}
+                className="px-2.5 py-2 rounded-lg border border-slate-600 text-slate-400 hover:text-white hover:border-slate-500 text-xs transition-colors disabled:opacity-40 whitespace-nowrap"
+              >
+                Ask
+              </button>
+            )}
+          </div>
+          {/* Fill hint */}
+          {fillsNow && (
+            <p className="mt-1.5 text-xs text-emerald-400">
+              ✓ At or above ask — order should fill immediately.
+            </p>
+          )}
+          {rests && (
+            <p className="mt-1.5 text-xs text-amber-400">
+              ⏳ Below ask — order will rest until a seller matches it.
+            </p>
+          )}
+        </div>
+
         {/* Stats */}
         <div className="bg-slate-700/50 rounded-xl p-4 space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-slate-400">Price ({side})</span>
-            <span className="text-white">{(price * 100).toFixed(1)}¢</span>
-          </div>
           <div className="flex justify-between">
             <span className="text-slate-400">Contracts</span>
             <span className="text-white">{shares > 0 ? Math.floor(shares).toLocaleString() : "—"}</span>
@@ -216,9 +325,9 @@ export default function TradeModal({ market, initialSide = "YES", onClose, onCon
           className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-300 text-sm font-medium hover:bg-slate-700 transition-colors">
           Cancel
         </button>
-        <button onClick={handlePlace} disabled={status === "placing"}
+        <button onClick={handlePlace} disabled={status === "placing" || obLoading || !validPrice}
           className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors">
-          {status === "placing" ? "Placing…" : "Place Trade"}
+          {status === "placing" ? "Placing…" : obLoading ? "Loading…" : `Buy ${Math.floor(shares) || "?"} @ ${validPrice ? parsedCents : "?"}¢`}
         </button>
       </div>
     </ModalShell>
