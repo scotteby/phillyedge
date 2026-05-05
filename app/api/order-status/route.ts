@@ -127,6 +127,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Trade not found" }, { status: 404 });
   }
 
+  // Boosted+canceled trades have a fixed, known fill count — the order was
+  // cancelled when the user re-placed it at a higher price.  Re-querying the
+  // Kalshi order would overwrite our stored filled_count with 0 (Kalshi returns
+  // 0 for fill_count_fp on cancelled-partial orders in some API versions).
+  // Instead just check whether the market has resolved and settle if so.
+  if (trade.outcome === "boosted" && trade.order_status === "canceled") {
+    const storedFilled = (trade.filled_count as number | null) ?? 0;
+    if (storedFilled === 0) {
+      return NextResponse.json({
+        trade_id:     trade.id,
+        order_status: "canceled",
+        filled_count: 0,
+        outcome:      "boosted",
+        pnl:          null,
+        resolved:     false,
+      });
+    }
+    return await checkMarketResolutionOnly(trade as DbTrade, storedFilled, supabase);
+  }
+
   // If there's no kalshi_order_id we can't fetch order details, but we can
   // still check whether the market itself has resolved and settle the trade.
   if (!trade.kalshi_order_id) {
