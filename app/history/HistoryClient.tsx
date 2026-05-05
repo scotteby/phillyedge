@@ -2680,13 +2680,23 @@ function PositionSummaryText({ pos, mobile = false }: { pos: Position; mobile?: 
   const contracts = pos.netContracts > 0 ? pos.netContracts : (pos.contractsSold || pos.contractsBought);
   const cost      = contracts * pos.avgBuyPrice;
 
-  // All states show Cost + contracts — matches open-trade display
+  // For partially-closed positions, compute avg sell price from sellProceeds.
+  const avgSellCents =
+    pos.state === "PARTIALLY_CLOSED" && pos.contractsSold > 0 && pos.sellProceeds > 0
+      ? (pos.sellProceeds / pos.contractsSold) * 100
+      : null;
+
   return (
-    <span className={sizeCls}>
-      <span className="text-slate-200 font-medium">Cost ${cost.toFixed(2)}</span>
-      <span className="text-slate-500 ml-1.5">· {contracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg</span>
+    <span className={`${sizeCls} flex flex-col gap-0.5`}>
+      <span>
+        <span className="text-slate-200 font-medium">Cost ${cost.toFixed(2)}</span>
+        <span className="text-slate-500 ml-1.5">· {contracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg</span>
+      </span>
       {pos.state === "PARTIALLY_CLOSED" && pos.contractsSold > 0 && (
-        <span className="text-amber-500/80 ml-1.5">· {pos.contractsSold} sold</span>
+        <span className="text-amber-400/80">
+          {pos.contractsSold} sold
+          {avgSellCents != null && ` @ ${avgSellCents.toFixed(1)}¢`}
+        </span>
       )}
     </span>
   );

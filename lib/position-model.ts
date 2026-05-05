@@ -135,10 +135,13 @@ export function buildPositions(trades: Trade[]): Position[] {
     }
     const netContracts = Math.max(0, contractsBought - contractsSold);
 
-    // 6. Weighted avg buy price across ALL fills (sold + non-sold)
+    // 6. Weighted avg buy price — use only non-sold fills.
+    // Sold fills' entry_yes_price reflects the sell price, not the acquisition
+    // cost, so including them would skew avgBuyPrice downward.
+    const buyOnlyFills = fills.filter((t) => t.outcome !== "sold");
     let totalWeightedPrice = 0;
     let totalContracts     = 0;
-    for (const t of fills) {
+    for (const t of buyOnlyFills) {
       const c = getContractsForFill(t);
       const entryYes   = getEntryYesPrice(t);
       const entryPrice = t.side === "YES" ? entryYes : 1 - entryYes;
