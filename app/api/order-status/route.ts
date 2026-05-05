@@ -34,6 +34,7 @@ type DbTrade = {
   entry_yes_price: number | null;
   market_pct: number;
   outcome: string;
+  order_status: string | null;
   filled_count: number | null;
 };
 
@@ -48,7 +49,7 @@ async function checkMarketResolutionOnly(
   if (outcome !== "pending" && outcome !== "boosted") {
     return NextResponse.json({
       trade_id:    trade.id,
-      order_status: trade.outcome,
+      order_status: trade.order_status ?? "canceled",
       filled_count: filledCount,
       outcome,
       pnl: null,
@@ -100,7 +101,7 @@ async function checkMarketResolutionOnly(
 
   return NextResponse.json({
     trade_id:    trade.id,
-    order_status: trade.outcome,
+    order_status: trade.order_status ?? "canceled",
     filled_count: filledCount,
     outcome,
     pnl: null,
