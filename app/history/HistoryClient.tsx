@@ -2685,6 +2685,9 @@ function PositionSummaryText({ pos, mobile = false }: { pos: Position; mobile?: 
     <span className={sizeCls}>
       <span className="text-slate-200 font-medium">Cost ${cost.toFixed(2)}</span>
       <span className="text-slate-500 ml-1.5">· {contracts} contracts @ {(pos.avgBuyPrice * 100).toFixed(1)}¢ avg</span>
+      {pos.state === "PARTIALLY_CLOSED" && pos.contractsSold > 0 && (
+        <span className="text-amber-500/80 ml-1.5">· {pos.contractsSold} sold</span>
+      )}
     </span>
   );
 }
