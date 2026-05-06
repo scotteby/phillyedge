@@ -171,21 +171,11 @@ async function fetchObHistoryTemps(): Promise<{ low: number | null; high: number
         if (maxTemp === null || temp > maxTemp) maxTemp = temp;
       }
 
-      // Column 8 = 6-hour max temp — only populated every 6 hours but more
-      // accurate for the daily high (matches official climate report values).
-      // Column 9 = 6-hour min temp — same cadence, better for daily low.
-      if (cells.length > 8) {
-        const sixHrMax = parseFloat(cells[8]);
-        if (!isNaN(sixHrMax)) {
-          if (maxTemp === null || sixHrMax > maxTemp) maxTemp = sixHrMax;
-        }
-      }
-      if (cells.length > 9) {
-        const sixHrMin = parseFloat(cells[9]);
-        if (!isNaN(sixHrMin)) {
-          if (minTemp === null || sixHrMin < minTemp) minTemp = sixHrMin;
-        }
-      }
+      // NOTE: We intentionally skip the 6-hour max/min columns (8 and 9).
+      // The 6Z reading (2 AM ET) covers the window 8 PM–2 AM ET, which includes
+      // the previous afternoon's high — causing yesterday's peak to appear as
+      // today's running max.  IEM 5-minute data (fetchIEMTemps) is a better
+      // source for intraday peaks and does not have this bleed-through problem.
     }
 
     console.log(`[nws] obhistory KPHL day=${todayDay}: low=${minTemp}°F high=${maxTemp}°F`);
