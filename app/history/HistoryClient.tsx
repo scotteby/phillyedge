@@ -615,11 +615,14 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   // One-time on mount: refresh fill prices for already-filled pending trades.
   // isActiveOrder skips these (filled_count > 0) but their entry_yes_price may
   // be the original limit price rather than the actual average fill price.
+  // Also covers orphaned fills where kalshi_order_id is null (sell order ID was
+  // never stored): the order-status route falls back to checkMarketResolutionOnly
+  // for those, which uses stored filled_count and settles once the market finalizes.
   useEffect(() => {
     const filledPending = tradesRef.current.filter(
       (t) => t.outcome === "pending" &&
               t.order_status === "filled" &&
-              t.kalshi_order_id != null
+              (t.kalshi_order_id != null || (t.filled_count ?? 0) > 0)
     );
     filledPending.forEach((t) => pollOrder(t.id));
   // eslint-disable-next-line react-hooks/exhaustive-deps
