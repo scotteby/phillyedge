@@ -975,10 +975,16 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
 
   const projectedPnl = totalRealizedPnl + totalUnrealizedPnl;
 
-  // Cost basis currently deployed in open positions (for Balance card)
+  // Current market value of open positions (for Balance card).
+  // Use live price × netContracts, matching Kalshi's portfolio view.
+  // Fall back to cost basis (avgBuyPrice) when no live price is available.
   const inPositions = summaryPositions
     .filter((p) => p.state === "OPEN" || p.state === "PARTIALLY_CLOSED")
-    .reduce((s, p) => s + p.avgBuyPrice * p.netContracts, 0);
+    .reduce((s, p) => {
+      const liveYes   = livePrices.get(p.market_id);
+      const livePrice = liveYes != null ? (p.side === "YES" ? liveYes : 1 - liveYes) : p.avgBuyPrice;
+      return s + livePrice * p.netContracts;
+    }, 0);
 
   const winRate = settled.length > 0 ? Math.round((wins / settled.length) * 100) : null;
 
