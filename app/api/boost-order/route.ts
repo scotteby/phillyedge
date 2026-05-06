@@ -245,6 +245,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Signing error: ${String(err)}` }, { status: 500 });
   }
 
+  // Track how many contracts actually filled from the old order before the cancel
+  // arrived.  Kalshi returns fill_count_fp (fixed-point) in the cancel response.
+  let cancelledPartialFills = 0;
+
   try {
     const cancelRes = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, {
       method: "DELETE",
@@ -291,7 +295,17 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Kalshi cancel failed: ${msg}` }, { status: 502 });
       }
     } else {
-      console.log(`[boost-order] Cancelled order ${orderId}`);
+      // Successful cancel — read the response body to capture any partial fills
+      // that were matched before the cancel reached Kalshi.
+      try {
+        const cancelJson = await cancelRes.json();
+        const cancelled  = (cancelJson.order ?? cancelJson) as Record<string, unknown>;
+        const fp = parseFloat(String(cancelled.fill_count_fp ?? cancelled.filled_count ?? 0));
+        cancelledPartialFills = isNaN(fp) ? 0 : Math.round(fp);
+        console.log(`[boost-order] Cancelled order ${orderId} — partial fills before cancel: ${cancelledPartialFills}`);
+      } catch {
+        console.log(`[boost-order] Cancelled order ${orderId} (could not read response body)`);
+      }
     }
   } catch (err) {
     return NextResponse.json({ error: `Cancel network error: ${String(err)}` }, { status: 502 });
@@ -330,11 +344,13 @@ export async function POST(req: NextRequest) {
       console.error(`[boost-order] Place failed ${placeRes.status}:`, JSON.stringify(placeJson));
       const raw = placeJson?.message ?? placeJson?.error ?? placeJson;
       const msg = typeof raw === "string" ? raw : JSON.stringify(raw);
-      // Cancel already happened — mark old trade as cancelled anyway
-      await supabase
-        .from("trades")
-        .update({ outcome: "boosted", order_status: "canceled", last_checked_at: new Date().toISOString() })
-        .eq("id", trade_id);
+      // Cancel already happened — mark old trade as cancelled anyway.
+      // Preserve partial fills if the cancel captured them.
+      const errUpdate: Record<string, unknown> = {
+        outcome: "boosted", order_status: "canceled", last_checked_at: new Date().toISOString(),
+      };
+      if (cancelledPartialFills > 0) errUpdate.filled_count = cancelledPartialFills;
+      await supabase.from("trades").update(errUpdate).eq("id", trade_id);
       return NextResponse.json({ error: `New order rejected: ${msg}` }, { status: 502 });
     }
     const placed = (placeJson?.order ?? placeJson) as Record<string, unknown>;
@@ -413,17 +429,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Mark old trade as boosted
+  // Mark old trade as boosted.
+  // Include filled_count from any partial fills that occurred before the cancel
+  // reached Kalshi — these are real contracts the user holds and must be counted
+  // in the position model's contractsBought total.
+  const boostUpdate: Record<string, unknown> = {
+    outcome:         "boosted",
+    order_status:    "canceled",
+    last_checked_at: now,
+  };
+  if (cancelledPartialFills > 0) {
+    boostUpdate.filled_count = cancelledPartialFills;
+  }
+
   const { error: boostDbErr } = await supabase
     .from("trades")
-    .update({ outcome: "boosted", order_status: "canceled", last_checked_at: now })
+    .update(boostUpdate)
     .eq("id", trade_id);
 
   if (boostDbErr) {
     console.error(`[boost-order] WARN: Supabase update failed for trade ${trade_id}:`, boostDbErr.message);
   }
 
-  console.log(`[boost-order] ${ticker} boosted: old=${trade_id} new=${newTradeId} price=${new_price_cents}¢`);
+  console.log(`[boost-order] ${ticker} boosted: old=${trade_id} new=${newTradeId} price=${new_price_cents}¢ partial_fills=${cancelledPartialFills}`);
 
   return NextResponse.json({
     ok:           true,
