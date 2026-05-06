@@ -123,9 +123,21 @@ export function buildPositions(trades: Trade[]): Position[] {
     // Its filled_count is the number of contracts bought (and later sold), so it
     // must count toward contractsBought as well as contractsSold.
     // e.g. buy 26, sell 19 → contractsBought=45, contractsSold=19, net=26 ✓
+    //
+    // Boosted sell orders: when a limit sell order partially fills and then gets
+    // boosted (cancelled+replaced), the cancelled order is stored with
+    // outcome="boosted" and remaining_count=-1 (the sell-order sentinel).  Its
+    // filled_count represents contracts SOLD from the existing pool — they must
+    // NOT be counted in contractsBought (they're not new purchases).
+    const isBoostedSellOrder = (t: Trade) =>
+      (t.remaining_count ?? 0) === -1 && (t.filled_count ?? 0) > 0;
+
     const soldFills = fills.filter((t) => t.outcome === "sold");
 
-    const contractsBought = fills.reduce((s, t) => s + getContractsForFill(t), 0);
+    const contractsBought = fills.reduce(
+      (s, t) => s + (isBoostedSellOrder(t) ? 0 : getContractsForFill(t)),
+      0,
+    );
     const contractsSold   = soldFills.reduce((s, t) => s + getContractsForFill(t), 0);
 
     if (contractsSold > contractsBought) {
