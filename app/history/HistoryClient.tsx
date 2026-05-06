@@ -2140,6 +2140,12 @@ function GroupHeader({
   const settledCount    = positions.filter((p) => p.state === "SETTLED" || p.state === "CLOSED").length;
   const pendingOrderCount = positions.reduce((s, p) => s + p.pendingOrders.length, 0);
 
+  // Total cost: sum of cost basis (avgBuyPrice × netContracts) for open positions.
+  // Matches Kalshi's "Cost" column — shows money currently at stake.
+  const totalCost = positions
+    .filter((p) => p.netContracts > 0)
+    .reduce((s, p) => s + p.avgBuyPrice * p.netContracts, 0);
+
   const hasPnl  = settledCount > 0 || hasMtm;
   const showNet = hasPnl;
 
@@ -2167,15 +2173,23 @@ function GroupHeader({
         </div>
       </div>
 
-      {/* Right: Net P&L only */}
+      {/* Right: Total Cost + Net P&L */}
       {showNet && (
-        <div className="shrink-0 text-right">
-          <p className="text-slate-500 uppercase tracking-wide text-[10px]">
-            {hasMtm ? "~Net P&L" : "Net P&L"}
-          </p>
-          <p className={`text-sm font-semibold ${netPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-            {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(2)}
-          </p>
+        <div className="shrink-0 flex items-end gap-6">
+          {totalCost > 0 && (
+            <div className="text-right">
+              <p className="text-slate-500 uppercase tracking-wide text-[10px]">Cost</p>
+              <p className="text-sm font-semibold text-slate-300">${totalCost.toFixed(2)}</p>
+            </div>
+          )}
+          <div className="text-right">
+            <p className="text-slate-500 uppercase tracking-wide text-[10px]">
+              {hasMtm ? "~Net P&L" : "Net P&L"}
+            </p>
+            <p className={`text-sm font-semibold ${netPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {netPnl >= 0 ? "+" : ""}${netPnl.toFixed(2)}
+            </p>
+          </div>
         </div>
       )}
     </button>
