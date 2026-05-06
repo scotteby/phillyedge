@@ -698,43 +698,63 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
       });
       const json = await res.json();
       if (res.ok) {
-        // Mark old trade as boosted; inject new trade at top of list
-        setTrades((prev) => {
-          const updated = prev.map((t) =>
-            t.id === tradeId
-              ? { ...t, outcome: "boosted" as Trade["outcome"], order_status: "canceled" as Trade["order_status"] }
-              : t
-          );
-          // Append a placeholder for the new trade — will be refreshed on next poll
-          if (json.new_trade_id) {
-            updated.unshift({
-              id:              json.new_trade_id,
-              created_at:      new Date().toISOString(),
-              market_id:       json.ticker,
-              market_question: prev.find((t) => t.id === tradeId)?.market_question ?? "",
-              target_date:     prev.find((t) => t.id === tradeId)?.target_date ?? "",
-              side:            json.side,
-              amount_usdc:     json.new_amount,
-              market_pct:      json.new_price_cents,
-              my_pct:          prev.find((t) => t.id === tradeId)?.my_pct ?? 50,
-              edge:            json.new_edge,
-              signal:          prev.find((t) => t.id === tradeId)?.signal ?? "buy",
-              outcome:         "pending",
-              pnl:             null,
-              polymarket_url:  prev.find((t) => t.id === tradeId)?.polymarket_url ?? null,
-              kalshi_order_id: json.new_order_id ?? null,
-              order_status:    "resting",
-              filled_count:    0,
-              remaining_count: json.count ?? null,
-              last_checked_at: null,
-              entry_yes_price: json.side === "YES"
-                ? json.new_price_cents / 100
-                : 1 - json.new_price_cents / 100,
-            });
+        if (json.sell_order) {
+          // Resting sell order was lowered (or filled immediately)
+          if (json.filled) {
+            // Sell filled immediately — mark trade as sold
+            setTrades((prev) => prev.map((t) =>
+              t.id === tradeId
+                ? { ...t, outcome: "sold" as Trade["outcome"], order_status: "filled" as Trade["order_status"], pnl: json.pnl ?? null }
+                : t
+            ));
+            addToast(`✅ Sell filled at ${newPriceCents}¢`, "fill");
+          } else {
+            // Sell order still resting at new (lower) price — update kalshi_order_id
+            setTrades((prev) => prev.map((t) =>
+              t.id === tradeId
+                ? { ...t, kalshi_order_id: json.new_order_id ?? t.kalshi_order_id, remaining_count: -1 }
+                : t
+            ));
+            addToast(`↓ Sell order lowered to ${newPriceCents}¢ — still resting`, "fill");
           }
-          return updated;
-        });
-        addToast(`↑ Boosted to ${newPriceCents}¢ — new order placed`, "fill");
+        } else {
+          // Standard buy order boost: mark old trade boosted; inject new trade at top
+          setTrades((prev) => {
+            const updated = prev.map((t) =>
+              t.id === tradeId
+                ? { ...t, outcome: "boosted" as Trade["outcome"], order_status: "canceled" as Trade["order_status"] }
+                : t
+            );
+            if (json.new_trade_id) {
+              updated.unshift({
+                id:              json.new_trade_id,
+                created_at:      new Date().toISOString(),
+                market_id:       json.ticker,
+                market_question: prev.find((t) => t.id === tradeId)?.market_question ?? "",
+                target_date:     prev.find((t) => t.id === tradeId)?.target_date ?? "",
+                side:            json.side,
+                amount_usdc:     json.new_amount,
+                market_pct:      json.new_price_cents,
+                my_pct:          prev.find((t) => t.id === tradeId)?.my_pct ?? 50,
+                edge:            json.new_edge,
+                signal:          prev.find((t) => t.id === tradeId)?.signal ?? "buy",
+                outcome:         "pending",
+                pnl:             null,
+                polymarket_url:  prev.find((t) => t.id === tradeId)?.polymarket_url ?? null,
+                kalshi_order_id: json.new_order_id ?? null,
+                order_status:    "resting",
+                filled_count:    0,
+                remaining_count: json.count ?? null,
+                last_checked_at: null,
+                entry_yes_price: json.side === "YES"
+                  ? json.new_price_cents / 100
+                  : 1 - json.new_price_cents / 100,
+              });
+            }
+            return updated;
+          });
+          addToast(`↑ Boosted to ${newPriceCents}¢ — new order placed`, "fill");
+        }
       } else {
         addToast(`Boost failed: ${json.error ?? "unknown error"}`, "error");
       }
@@ -836,7 +856,18 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
       if (res.ok) {
         const restoredStatus = (json.order_status ?? "canceled") as OrderStatus;
         setTrades((prev) =>
-          prev.map((t) => t.id === tradeId ? { ...t, order_status: restoredStatus } : t)
+          prev.map((t) =>
+            t.id === tradeId
+              ? {
+                  ...t,
+                  order_status:    restoredStatus,
+                  // Clear the sell-order sentinel so the position becomes sellable again
+                  remaining_count: json.is_sell_order ? null : t.remaining_count,
+                  // Clear stale sell kalshi_order_id
+                  kalshi_order_id: json.is_sell_order ? null : t.kalshi_order_id,
+                }
+              : t
+          )
         );
         addToast(json.is_sell_order ? "Sell order cancelled — position restored." : "Order cancelled.", "cancel");
       } else {
@@ -1725,25 +1756,33 @@ function BoostModal({
   onConfirm: (newPriceCents: number) => void;
   onClose: () => void;
 }) {
-  const [askCents, setAskCents]       = useState<number | null>(null);
-  const [bidCents, setBidCents]       = useState<number | null>(null);
-  const [loadingAsk, setLoadingAsk]   = useState(true);
-  const [selected, setSelected]       = useState<"ask" | "+1" | "+2" | "custom">("ask");
-  const [customInput, setCustomInput] = useState("");
+  // remaining_count=-1 is our sentinel meaning this trade has a resting SELL order attached.
+  const isSellOrder = (trade.remaining_count ?? 0) === -1;
+
+  const [askCents,       setAskCents]       = useState<number | null>(null);
+  const [bidCents,       setBidCents]       = useState<number | null>(null);
+  const [obLoading,      setObLoading]      = useState(true);
+  // For sell orders: the current sell limit price fetched from Kalshi
+  const [sellLimitCents, setSellLimitCents] = useState<number | null>(null);
+  const [selected, setSelected]             = useState<"match" | "delta1" | "delta2" | "custom">("match");
+  const [customInput, setCustomInput]       = useState("");
 
   const entryYes   = getEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
-  const currentCents = Math.round(entryPrice * 100);
+  // For buy orders: current buy limit = entry price.
+  // For sell orders: current sell limit = fetched from Kalshi (falls back to entry price).
+  const currentCents = isSellOrder
+    ? (sellLimitCents ?? Math.round(entryPrice * 100))
+    : Math.round(entryPrice * 100);
 
-  // Orig edge corrected for side: for NO trades, my_pct is the YES forecast so
-  // we flip it to get the NO-side edge = (100 − my_pct) − NO_price.
+  // Orig edge (buy side) — not shown for sell orders
   const origEdge = trade.side === "YES"
-    ? trade.my_pct - currentCents
-    : (100 - trade.my_pct) - currentCents;
+    ? trade.my_pct - Math.round(entryPrice * 100)
+    : (100 - trade.my_pct) - Math.round(entryPrice * 100);
 
-  // Fetch current ask on mount
+  // Fetch orderbook (bid/ask) on mount
   useEffect(() => {
-    setLoadingAsk(true);
+    setObLoading(true);
     fetch(`/api/orderbook?ticker=${encodeURIComponent(trade.market_id)}`)
       .then((r) => r.ok ? r.json() : null)
       .then((j) => {
@@ -1755,14 +1794,30 @@ function BoostModal({
         }
       })
       .catch(() => {})
-      .finally(() => setLoadingAsk(false));
+      .finally(() => setObLoading(false));
   }, [trade.market_id, trade.side]);
+
+  // For sell orders: fetch the current Kalshi sell order limit price
+  useEffect(() => {
+    if (!isSellOrder || !trade.kalshi_order_id) return;
+    fetch(`/api/kalshi-order?order_id=${encodeURIComponent(trade.kalshi_order_id)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        if (!j) return;
+        const price = trade.side === "YES" ? j.yes_price_cents : j.no_price_cents;
+        if (price > 0) setSellLimitCents(price);
+      })
+      .catch(() => {});
+  }, [isSellOrder, trade.kalshi_order_id, trade.side]);
 
   // Derive the chosen price in cents
   const chosenCents: number | null = (() => {
-    if (selected === "ask")    return askCents ?? currentCents + 3;
-    if (selected === "+1")     return currentCents + 1;
-    if (selected === "+2")     return currentCents + 2;
+    if (selected === "match") {
+      if (isSellOrder) return bidCents ?? (currentCents > 1 ? currentCents - 2 : null);
+      return askCents ?? currentCents + 3;
+    }
+    if (selected === "delta1") return isSellOrder ? Math.max(1, currentCents - 1) : currentCents + 1;
+    if (selected === "delta2") return isSellOrder ? Math.max(1, currentCents - 2) : currentCents + 2;
     if (selected === "custom") {
       const n = parseInt(customInput, 10);
       return !isNaN(n) && n >= 1 && n <= 99 ? n : null;
@@ -1770,38 +1825,62 @@ function BoostModal({
     return null;
   })();
 
-  // DB stores 0 (not null) before polling updates remaining_count — must use > 0
-  const storedRemaining = trade.remaining_count;
-  const contracts = (storedRemaining != null && storedRemaining > 0)
-    ? storedRemaining
-    : (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
+  // Contract count
+  const contracts = isSellOrder
+    ? (trade.filled_count ?? 0)   // sell: contracts to sell = filled_count of the original buy
+    : (() => {
+        const storedRemaining = trade.remaining_count;
+        return (storedRemaining != null && storedRemaining > 0)
+          ? storedRemaining
+          : (entryPrice > 0 ? Math.floor(trade.amount_usdc / entryPrice) : 0);
+      })();
 
-  const newCost          = chosenCents != null ? (chosenCents / 100) * contracts : null;
-  const oldCost          = entryPrice * contracts;
-  const costDiff         = newCost != null ? newCost - oldCost : null;
-  // Profit if the market resolves in your favour at the new price.
-  // chosenCents is always the side-specific price (YES ¢ for YES, NO ¢ for NO),
-  // so profit-per-contract = 1 − price regardless of side.
-  const ifCorrectProfit  = chosenCents != null
+  // ── Buy-order cost summary ─────────────────────────────────────────────────
+  const newCost        = !isSellOrder && chosenCents != null ? (chosenCents / 100) * contracts : null;
+  const oldCost        = entryPrice * contracts;
+  const costDiff       = newCost != null ? newCost - oldCost : null;
+  const ifCorrectProfit = !isSellOrder && chosenCents != null
     ? parseFloat((contracts * (1 - chosenCents / 100)).toFixed(2))
     : null;
   const oldIfCorrectProfit = parseFloat((contracts * (1 - entryPrice)).toFixed(2));
-
-  // Edge at chosen price: my_pct - new_price_cents
-  // Edge = forecast_for_this_side − price_paid.
-  // For YES: edge = my_pct − chosenCents  (my_pct is YES probability)
-  // For NO:  edge = (100 − my_pct) − chosenCents  (flip to NO probability)
-  const newEdge     = chosenCents != null
+  const newEdge = !isSellOrder && chosenCents != null
     ? (trade.side === "YES" ? trade.my_pct - chosenCents : (100 - trade.my_pct) - chosenCents)
     : null;
   const edgeNegative = newEdge != null && newEdge < 0;
 
-  const options: { key: "ask" | "+1" | "+2" | "custom"; label: string; cents: number | null }[] = [
-    { key: "ask",    label: askCents != null ? `Match ask: ${askCents}¢ — fills now` : (loadingAsk ? "Match ask: loading…" : "Match ask"), cents: askCents },
-    { key: "+1",     label: `+1¢ → ${currentCents + 1}¢`,  cents: currentCents + 1 },
-    { key: "+2",     label: `+2¢ → ${currentCents + 2}¢`,  cents: currentCents + 2 },
-    { key: "custom", label: "Custom price",                 cents: null },
+  // ── Sell-order proceeds summary ────────────────────────────────────────────
+  // chosenCents is the YES sell price; proceeds = contracts × chosenCents / 100
+  const newProceeds = isSellOrder && chosenCents != null
+    ? parseFloat(((chosenCents / 100) * contracts).toFixed(2))
+    : null;
+  const originalSellAsk = isSellOrder ? currentCents : null;
+  const originalProceeds = originalSellAsk != null
+    ? parseFloat(((originalSellAsk / 100) * contracts).toFixed(2))
+    : null;
+  const proceedsDiff = newProceeds != null && originalProceeds != null ? newProceeds - originalProceeds : null;
+
+  // Option labels
+  const options: { key: "match" | "delta1" | "delta2" | "custom"; label: string }[] = isSellOrder ? [
+    { key: "match",  label: bidCents != null ? `Match bid: ${bidCents}¢ — fills now` : (obLoading ? "Match bid: loading…" : "Match bid") },
+    { key: "delta1", label: `-1¢ → ${Math.max(1, currentCents - 1)}¢` },
+    { key: "delta2", label: `-2¢ → ${Math.max(1, currentCents - 2)}¢` },
+    { key: "custom", label: "Custom price" },
+  ] : [
+    { key: "match",  label: askCents != null ? `Match ask: ${askCents}¢ — fills now` : (obLoading ? "Match ask: loading…" : "Match ask") },
+    { key: "delta1", label: `+1¢ → ${currentCents + 1}¢` },
+    { key: "delta2", label: `+2¢ → ${currentCents + 2}¢` },
+    { key: "custom", label: "Custom price" },
   ];
+
+  // Disable the action button if the direction is wrong
+  const actionDisabled = boosting || chosenCents == null || (
+    isSellOrder ? chosenCents >= currentCents : chosenCents <= currentCents
+  );
+  const actionLabel = boosting
+    ? (isSellOrder ? "Lowering…" : "Boosting…")
+    : chosenCents != null
+      ? (isSellOrder ? `Lower to ${chosenCents}¢ ↓` : `Boost to ${chosenCents}¢ ↑`)
+      : "Select a price";
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -1810,7 +1889,9 @@ function BoostModal({
         <div className="px-5 pt-5 pb-4 border-b border-slate-700">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-white font-bold text-lg">Improve Order Price</h2>
+              <h2 className="text-white font-bold text-lg">
+                {isSellOrder ? "Lower Sell Price" : "Improve Order Price"}
+              </h2>
               <p className="text-slate-400 text-sm mt-0.5 leading-snug">{trade.market_question}</p>
             </div>
             <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xl leading-none mt-0.5">×</button>
@@ -1820,29 +1901,43 @@ function BoostModal({
         {/* Current order info */}
         <div className="px-5 py-4 flex gap-6 text-sm border-b border-slate-700/50">
           <div>
-            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Current limit</p>
-            <p className="text-white font-semibold">{currentCents}¢ {trade.side}</p>
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+              {isSellOrder ? "Sell limit" : "Current limit"}
+            </p>
+            {isSellOrder && sellLimitCents == null ? (
+              <p className="text-slate-500 animate-pulse">…</p>
+            ) : (
+              <p className="text-white font-semibold">{currentCents}¢ {trade.side}</p>
+            )}
           </div>
           <div>
-            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Current ask</p>
-            {loadingAsk ? (
+            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+              {isSellOrder ? "Current bid" : "Current ask"}
+            </p>
+            {obLoading ? (
               <p className="text-slate-500 animate-pulse">…</p>
-            ) : askCents != null ? (
-              <p className="text-sky-300 font-semibold">{askCents}¢</p>
+            ) : isSellOrder ? (
+              bidCents != null
+                ? <p className="text-emerald-400 font-semibold">{bidCents}¢</p>
+                : <p className="text-slate-500">—</p>
             ) : (
-              <p className="text-slate-500">—</p>
+              askCents != null
+                ? <p className="text-sky-300 font-semibold">{askCents}¢</p>
+                : <p className="text-slate-500">—</p>
             )}
           </div>
           <div>
             <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Contracts</p>
             <p className="text-white font-semibold">{contracts}</p>
           </div>
-          <div>
-            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Orig edge</p>
-            <p className={`font-semibold ${origEdge >= 10 ? "text-emerald-400" : origEdge >= 0 ? "text-sky-400" : "text-red-400"}`}>
-              {origEdge > 0 ? "+" : ""}{origEdge}pt
-            </p>
-          </div>
+          {!isSellOrder && (
+            <div>
+              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Orig edge</p>
+              <p className={`font-semibold ${origEdge >= 10 ? "text-emerald-400" : origEdge >= 0 ? "text-sky-400" : "text-red-400"}`}>
+                {origEdge > 0 ? "+" : ""}{origEdge}pt
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Price options */}
@@ -1864,11 +1959,11 @@ function BoostModal({
             <div className="flex items-center gap-2 mt-2">
               <input
                 type="number"
-                min={currentCents + 1}
-                max={99}
+                min={isSellOrder ? 1 : currentCents + 1}
+                max={isSellOrder ? currentCents - 1 : 99}
                 value={customInput}
                 onChange={(e) => setCustomInput(e.target.value)}
-                placeholder={`> ${currentCents}¢`}
+                placeholder={isSellOrder ? `< ${currentCents}¢` : `> ${currentCents}¢`}
                 className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
                 autoFocus
               />
@@ -1877,41 +1972,64 @@ function BoostModal({
           )}
         </div>
 
-        {/* Cost + edge summary */}
+        {/* Summary */}
         {chosenCents != null && (
           <div className="px-5 pb-4 space-y-2">
             <div className="bg-slate-900/50 rounded-lg px-4 py-3 space-y-1.5 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Cost at {chosenCents}¢</span>
-                <span className="text-white font-medium">${newCost?.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Original cost</span>
-                <span className="text-slate-300">${oldCost.toFixed(2)}</span>
-              </div>
-              {costDiff != null && costDiff !== 0 && (
-                <div className="flex justify-between border-t border-slate-700/50 pt-1.5">
-                  <span className="text-slate-400">Difference</span>
-                  <span className={costDiff > 0 ? "text-amber-400" : "text-emerald-400"}>
-                    {costDiff > 0 ? "+" : ""}${costDiff.toFixed(2)} more
-                  </span>
-                </div>
-              )}
-              {ifCorrectProfit != null && (
-                <div className="flex justify-between border-t border-slate-700/50 pt-1.5">
-                  <span className="text-slate-400">🎯 If correct</span>
-                  <span className="font-semibold text-sky-400">
-                    +${ifCorrectProfit.toFixed(2)}
-                    {ifCorrectProfit !== oldIfCorrectProfit && (
-                      <span className="text-slate-500 font-normal ml-1.5">
-                        (was +${oldIfCorrectProfit.toFixed(2)})
+              {isSellOrder ? (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Proceeds at {chosenCents}¢</span>
+                    <span className="text-white font-medium">${newProceeds?.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Current sell ask</span>
+                    <span className="text-slate-300">${originalProceeds?.toFixed(2)}</span>
+                  </div>
+                  {proceedsDiff != null && (
+                    <div className="flex justify-between border-t border-slate-700/50 pt-1.5">
+                      <span className="text-slate-400">Difference</span>
+                      <span className={proceedsDiff >= 0 ? "text-emerald-400" : "text-amber-400"}>
+                        {proceedsDiff >= 0 ? "+" : ""}${proceedsDiff.toFixed(2)}
                       </span>
-                    )}
-                  </span>
-                </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Cost at {chosenCents}¢</span>
+                    <span className="text-white font-medium">${newCost?.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Original cost</span>
+                    <span className="text-slate-300">${oldCost.toFixed(2)}</span>
+                  </div>
+                  {costDiff != null && costDiff !== 0 && (
+                    <div className="flex justify-between border-t border-slate-700/50 pt-1.5">
+                      <span className="text-slate-400">Difference</span>
+                      <span className={costDiff > 0 ? "text-amber-400" : "text-emerald-400"}>
+                        {costDiff > 0 ? "+" : ""}${costDiff.toFixed(2)} more
+                      </span>
+                    </div>
+                  )}
+                  {ifCorrectProfit != null && (
+                    <div className="flex justify-between border-t border-slate-700/50 pt-1.5">
+                      <span className="text-slate-400">🎯 If correct</span>
+                      <span className="font-semibold text-sky-400">
+                        +${ifCorrectProfit.toFixed(2)}
+                        {ifCorrectProfit !== oldIfCorrectProfit && (
+                          <span className="text-slate-500 font-normal ml-1.5">
+                            (was +${oldIfCorrectProfit.toFixed(2)})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
-            {newEdge != null && (
+            {!isSellOrder && newEdge != null && (
               <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg border ${
                 edgeNegative
                   ? "bg-red-500/10 border-red-500/30 text-red-400"
@@ -1938,10 +2056,10 @@ function BoostModal({
           </button>
           <button
             onClick={() => chosenCents != null && onConfirm(chosenCents)}
-            disabled={boosting || chosenCents == null || chosenCents <= currentCents}
+            disabled={actionDisabled}
             className="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-white font-bold transition-colors text-sm"
           >
-            {boosting ? "Boosting…" : chosenCents != null ? `Boost to ${chosenCents}¢ ↑` : "Select a price"}
+            {actionLabel}
           </button>
         </div>
       </div>

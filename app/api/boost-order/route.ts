@@ -75,9 +75,130 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No Kalshi order ID for this trade" }, { status: 422 });
   }
 
-  const ticker    = trade.market_id as string;
-  const side      = (trade.side as string).toLowerCase() as "yes" | "no";
-  const orderId   = trade.kalshi_order_id as string;
+  const ticker  = trade.market_id as string;
+  const side    = (trade.side as string).toLowerCase() as "yes" | "no";
+  const orderId = trade.kalshi_order_id as string;
+
+  // ── Detect sell order: remaining_count=-1 is our sentinel ────────────────
+  const isSellOrder = (trade.remaining_count as number | null) === -1;
+
+  if (isSellOrder) {
+    // ── SELL ORDER BOOST: cancel + re-place at a LOWER sell price ──────────
+    const filledCount = (trade.filled_count as number | null) ?? 0;
+    if (filledCount < 1) {
+      return NextResponse.json({ error: "No contracts to sell" }, { status: 422 });
+    }
+
+    // 1. Cancel old sell order
+    const cancelPath    = `/trade-api/v2/portfolio/orders/${orderId}`;
+    const cancelHeaders = buildKalshiAuthHeaders("DELETE", cancelPath);
+    try {
+      const cancelRes = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, {
+        method: "DELETE", headers: cancelHeaders,
+      });
+      if (!cancelRes.ok) {
+        const errBody = await cancelRes.json().catch(() => ({}));
+        const msg = typeof errBody?.message === "string" ? errBody.message : JSON.stringify(errBody);
+        console.error(`[boost-order/sell] Cancel failed ${cancelRes.status}:`, JSON.stringify(errBody));
+        return NextResponse.json({ error: `Kalshi cancel failed: ${msg}` }, { status: 502 });
+      }
+      console.log(`[boost-order/sell] Cancelled sell order ${orderId}`);
+    } catch (err) {
+      return NextResponse.json({ error: `Cancel network error: ${String(err)}` }, { status: 502 });
+    }
+
+    // 2. Place new limit SELL order at lower price
+    const sellOrderBody: Record<string, unknown> = {
+      ticker,
+      action: "sell",
+      side,
+      type:   "limit",
+      count:  filledCount,
+      ...(side === "yes"
+        ? { yes_price: new_price_cents }
+        : { no_price:  new_price_cents }),
+    };
+    console.log("[boost-order/sell] new sell order body:", JSON.stringify(sellOrderBody));
+
+    const placeHeaders = buildKalshiAuthHeaders("POST", ORDER_PATH);
+    let newSellOrderId: string | null = null;
+    let newOrderFilled = false;
+
+    try {
+      const placeRes  = await fetch(`${KALSHI_BASE}/portfolio/orders`, {
+        method: "POST", headers: placeHeaders, body: JSON.stringify(sellOrderBody),
+      });
+      const placeJson = await placeRes.json();
+      if (!placeRes.ok) {
+        console.error(`[boost-order/sell] Place failed ${placeRes.status}:`, JSON.stringify(placeJson));
+        const raw = placeJson?.message ?? placeJson?.error ?? placeJson;
+        const msg = typeof raw === "string" ? raw : JSON.stringify(raw);
+        return NextResponse.json({ error: `New sell order rejected: ${msg}` }, { status: 502 });
+      }
+      const placed   = (placeJson?.order ?? placeJson) as Record<string, unknown>;
+      newSellOrderId = (placed.order_id as string | null) ?? null;
+      const rawStatus = String(placed.status ?? "");
+      newOrderFilled  = rawStatus === "filled" || rawStatus === "executed";
+      console.log(`[boost-order/sell] New sell order placed: ${newSellOrderId} status=${rawStatus}`);
+    } catch (err) {
+      return NextResponse.json({ error: `Place network error: ${String(err)}` }, { status: 502 });
+    }
+
+    // 3. Update trade record: swap kalshi_order_id to new sell order, keep sentinel
+    const now = new Date().toISOString();
+    if (newOrderFilled) {
+      // Sell filled immediately — compute P&L and mark sold
+      const entryYes: number =
+        (trade.entry_yes_price as number | null) ??
+        (side === "yes"
+          ? (trade.market_pct as number) / 100
+          : 1 - (trade.market_pct as number) / 100);
+      const entryCostPerContract = side === "yes" ? entryYes : 1 - entryYes;
+      const sellYesPrice         = side === "yes" ? new_price_cents / 100 : 1 - new_price_cents / 100;
+      const proceedsPerContract  = side === "yes" ? sellYesPrice : 1 - sellYesPrice;
+      const pnl = parseFloat(((proceedsPerContract - entryCostPerContract) * filledCount).toFixed(2));
+
+      await supabase.from("trades").update({
+        outcome:         "sold",
+        pnl,
+        kalshi_order_id: newSellOrderId,
+        order_status:    "filled",
+        last_checked_at: now,
+      }).eq("id", trade_id);
+
+      console.log(`[boost-order/sell] Sell filled immediately: pnl=${pnl}`);
+      return NextResponse.json({
+        ok:             true,
+        sell_order:     true,
+        filled:         true,
+        trade_id,
+        new_order_id:   newSellOrderId,
+        contracts_sold: filledCount,
+        pnl,
+      });
+    }
+
+    // Sell order is still resting at new price
+    await supabase.from("trades").update({
+      kalshi_order_id: newSellOrderId,
+      order_status:    "resting",
+      remaining_count: -1,   // keep sell-order sentinel
+      last_checked_at: now,
+    }).eq("id", trade_id);
+
+    console.log(`[boost-order/sell] ${ticker} sell order lowered to ${new_price_cents}¢`);
+    return NextResponse.json({
+      ok:           true,
+      sell_order:   true,
+      filled:       false,
+      trade_id,
+      new_order_id: newSellOrderId,
+      count:        filledCount,
+      new_price_cents,
+    });
+  }
+
+  // ── BUY ORDER BOOST ───────────────────────────────────────────────────────
 
   // Derive entry price and contract count
   const entryYes: number =
@@ -96,9 +217,9 @@ export async function POST(req: NextRequest) {
   // Last resort: fetch the live order from Kalshi to get contract count
   if (count < 1) {
     try {
-      const orderPath = `/trade-api/v2/portfolio/orders/${orderId}`;
+      const orderPath    = `/trade-api/v2/portfolio/orders/${orderId}`;
       const orderHeaders = buildKalshiAuthHeaders("GET", orderPath);
-      const orderRes  = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, { headers: orderHeaders });
+      const orderRes     = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, { headers: orderHeaders });
       if (orderRes.ok) {
         const orderJson = await orderRes.json();
         const o         = (orderJson.order ?? orderJson) as Record<string, unknown>;

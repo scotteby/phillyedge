@@ -106,8 +106,9 @@ export function buildPositions(trades: Trade[]): Position[] {
     const isLiveOrder = (t: Trade): boolean => {
       // Standard pending resting/partial orders
       if (t.outcome === "pending" && (t.order_status === "resting" || t.order_status === "partially_filled")) return true;
-      // Boosted fill with a resting sell order — remaining_count=-1 is our sell-order sentinel
-      if (t.outcome === "boosted" && (t.remaining_count ?? 0) === -1 && (t.filled_count ?? 0) > 0) return true;
+      // Boosted fill with a resting sell order — remaining_count=-1 is our sell-order sentinel.
+      // Only include if NOT cancelled (cancelled boosted sells are done, not pending).
+      if (t.outcome === "boosted" && (t.remaining_count ?? 0) === -1 && (t.filled_count ?? 0) > 0 && t.order_status !== "canceled") return true;
       return false;
     };
 

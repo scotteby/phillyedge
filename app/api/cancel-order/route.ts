@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   // Look up the trade
   const { data: trade, error: dbErr } = await supabase
     .from("trades")
-    .select("id, kalshi_order_id, order_status, filled_count")
+    .select("id, kalshi_order_id, order_status, filled_count, remaining_count")
     .eq("id", trade_id)
     .single();
 
@@ -51,14 +51,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Send cancel to Kalshi
+  // Send cancel to Kalshi. A 404 means the order is already gone (already cancelled,
+  // expired, or filled) — treat that as a success so we can still clean up the DB.
   try {
     const res = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, {
       method: "DELETE",
       headers,
     });
 
-    if (!res.ok) {
+    if (!res.ok && res.status !== 404) {
       const errBody = await res.json().catch(() => ({}));
       const msg = typeof errBody?.message === "string"
         ? errBody.message
@@ -69,6 +70,10 @@ export async function POST(req: NextRequest) {
         { status: 502 }
       );
     }
+
+    if (res.status === 404) {
+      console.log(`[cancel-order] Order ${orderId} already gone on Kalshi — cleaning up DB only`);
+    }
   } catch (err) {
     return NextResponse.json(
       { error: `Network error: ${err instanceof Error ? err.message : String(err)}` },
@@ -76,11 +81,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // If this was a resting sell order (filled_count > 0 means the buy was already
-  // filled and kalshi_order_id was swapped to the sell order), restore the trade
-  // to "filled" so the position stays open.  For a regular pending buy order
-  // (no fills yet), mark as "canceled" as before.
-  const isSellOrder    = (trade.filled_count as number | null ?? 0) > 0;
+  // Detect sell order by the remaining_count=-1 sentinel (most reliable) or
+  // filled_count > 0 as a fallback (covers older records before the sentinel).
+  const isSellOrder = (trade.remaining_count as number | null) === -1
+    || (trade.filled_count as number | null ?? 0) > 0;
+
+  // For a resting sell order: restore the trade to "pending/filled" state so the
+  // open position becomes visible again with a Sell button.
+  // For a plain buy order with no fills: mark as canceled.
   const restoredStatus = isSellOrder ? "filled" : "canceled";
 
   const now = new Date().toISOString();
@@ -90,9 +98,10 @@ export async function POST(req: NextRequest) {
   };
 
   if (isSellOrder) {
-    // Null out kalshi_order_id so the order-status poller doesn't fetch the
-    // (now-cancelled) sell order and overwrite filled_count back to 0.
+    // Clear the sell-order sentinel and the stale sell order ID so the
+    // order-status poller doesn't accidentally zero out filled_count.
     dbUpdate.kalshi_order_id = null;
+    dbUpdate.remaining_count = null;   // clear -1 sentinel; position is open again
   }
 
   await supabase
