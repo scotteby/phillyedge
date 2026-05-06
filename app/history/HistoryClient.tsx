@@ -698,7 +698,15 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
       });
       const json = await res.json();
       if (res.ok) {
-        if (json.sell_order) {
+        if (json.already_filled) {
+          // Order filled before boost was attempted — update state to reflect filled
+          setTrades((prev) => prev.map((t) =>
+            t.id === tradeId
+              ? { ...t, order_status: "filled" as Trade["order_status"], filled_count: json.count ?? t.filled_count }
+              : t
+          ));
+          addToast("✅ Order already filled — boost not needed", "fill");
+        } else if (json.sell_order) {
           // Resting sell order was lowered (or filled immediately)
           if (json.filled) {
             // Sell filled immediately — mark trade as sold
@@ -1296,16 +1304,29 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                         {allPending.length > 0 && (
                           <div className="mt-2">
                             <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold px-1 pb-1">Pending Orders</p>
-                            {allPending.map((t) => (
-                              <PendingOrderCard
-                                key={t.id}
-                                trade={t}
-                                canceling={canceling === t.id}
-                                boosting={boosting === t.id}
-                                onCancel={() => cancelOrder(t.id)}
-                                onBoost={() => setBoostModalTrade(t)}
-                              />
-                            ))}
+                            {groupPendingForDisplay(allPending).map((item) =>
+                              item.type === "sell" ? (
+                                <CombinedSellOrderCard
+                                  key={item.trades[0].id}
+                                  trades={item.trades}
+                                  bracket={item.bracket}
+                                  side={item.side}
+                                  canceling={canceling}
+                                  boosting={boosting}
+                                  onCancel={cancelOrder}
+                                  onBoost={(t) => setBoostModalTrade(t)}
+                                />
+                              ) : (
+                                <PendingOrderCard
+                                  key={item.trade.id}
+                                  trade={item.trade}
+                                  canceling={canceling === item.trade.id}
+                                  boosting={boosting === item.trade.id}
+                                  onCancel={() => cancelOrder(item.trade.id)}
+                                  onBoost={() => setBoostModalTrade(item.trade)}
+                                />
+                              )
+                            )}
                           </div>
                         )}
                       </div>
@@ -1369,16 +1390,29 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                                     <span className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Pending Orders</span>
                                   </td>
                                 </tr>
-                                {allPending.map((t) => (
-                                  <PendingOrderRow
-                                    key={t.id}
-                                    trade={t}
-                                    canceling={canceling === t.id}
-                                    boosting={boosting === t.id}
-                                    onCancel={() => cancelOrder(t.id)}
-                                    onBoost={() => setBoostModalTrade(t)}
-                                  />
-                                ))}
+                                {groupPendingForDisplay(allPending).map((item) =>
+                                  item.type === "sell" ? (
+                                    <CombinedSellOrderRow
+                                      key={item.trades[0].id}
+                                      trades={item.trades}
+                                      bracket={item.bracket}
+                                      side={item.side}
+                                      canceling={canceling}
+                                      boosting={boosting}
+                                      onCancel={cancelOrder}
+                                      onBoost={(t) => setBoostModalTrade(t)}
+                                    />
+                                  ) : (
+                                    <PendingOrderRow
+                                      key={item.trade.id}
+                                      trade={item.trade}
+                                      canceling={canceling === item.trade.id}
+                                      boosting={boosting === item.trade.id}
+                                      onCancel={() => cancelOrder(item.trade.id)}
+                                      onBoost={() => setBoostModalTrade(item.trade)}
+                                    />
+                                  )
+                                )}
                               </>
                             )}
                           </tbody>
@@ -3015,6 +3049,138 @@ function FillSubRow({ trade, onSell: _onSell, onBoost: _onBoost, onCancel: _onCa
   );
 }
 
+// ── Pending orders grouping helper ───────────────────────────────────────────
+
+type PendingItem =
+  | { type: "buy";  trade: Trade }
+  | { type: "sell"; trades: Trade[]; bracket: string; side: "YES" | "NO"; totalContracts: number };
+
+/** Group resting sell orders by position (market_id+side) into one item each.
+ *  Plain resting/partial buy orders are left as individual items. */
+function groupPendingForDisplay(pendingOrders: Trade[]): PendingItem[] {
+  const items: PendingItem[] = [];
+  const sellGroups = new Map<string, Trade[]>();
+
+  for (const t of pendingOrders) {
+    if ((t.remaining_count ?? 0) === -1) {
+      const key = `${t.market_id}__${t.side}`;
+      if (!sellGroups.has(key)) sellGroups.set(key, []);
+      sellGroups.get(key)!.push(t);
+    } else {
+      items.push({ type: "buy", trade: t });
+    }
+  }
+
+  for (const trades of sellGroups.values()) {
+    const first = trades[0];
+    items.push({
+      type:           "sell",
+      trades,
+      bracket:        modelGetBracketLabel(first.market_question),
+      side:           first.side as "YES" | "NO",
+      totalContracts: trades.reduce((s, t) => s + (t.filled_count ?? 0), 0),
+    });
+  }
+
+  return items;
+}
+
+// ── Combined sell-order card (mobile) ────────────────────────────────────────
+
+function CombinedSellOrderCard({
+  trades, bracket, side, canceling, boosting, onCancel, onBoost,
+}: {
+  trades: Trade[]; bracket: string; side: "YES" | "NO";
+  canceling: string | null; boosting: string | null;
+  onCancel: (id: string) => void; onBoost: (t: Trade) => void;
+}) {
+  return (
+    <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-xl p-3 my-1 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className={`font-semibold text-sm ${side === "YES" ? "text-emerald-400" : "text-red-400"}`}>{side}</span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">SELL</span>
+          <span className="text-slate-300 text-sm">{bracket}</span>
+        </div>
+        <OrderStatusBadge status="resting" filledCount={null} />
+      </div>
+      {trades.map((t) => {
+        const entryYes   = modelGetEntryYesPrice(t);
+        const entryPrice = t.side === "YES" ? entryYes : 1 - entryYes;
+        const cnt        = t.filled_count ?? 0;
+        return (
+          <div key={t.id} className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-700/30">
+            <span className="text-xs text-slate-400">{cnt} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit</span>
+            <div className="flex gap-1">
+              {isBoostable(t) && (
+                <ActionButton variant="boost"
+                  onClick={(e) => { e.stopPropagation(); onBoost(t); }}
+                  loading={boosting === t.id} label="Lower ↓" loadingLabel="…" />
+              )}
+              {t.kalshi_order_id != null && (
+                <ActionButton variant="cancel"
+                  onClick={(e) => { e.stopPropagation(); onCancel(t.id); }}
+                  loading={canceling === t.id} label="Cancel" loadingLabel="Canceling…" />
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Combined sell-order row (desktop table) ───────────────────────────────────
+
+function CombinedSellOrderRow({
+  trades, bracket, side, canceling, boosting, onCancel, onBoost,
+}: {
+  trades: Trade[]; bracket: string; side: "YES" | "NO";
+  canceling: string | null; boosting: string | null;
+  onCancel: (id: string) => void; onBoost: (t: Trade) => void;
+}) {
+  const summary = trades.map((t) => {
+    const entryYes   = modelGetEntryYesPrice(t);
+    const entryPrice = t.side === "YES" ? entryYes : 1 - entryYes;
+    return `${t.filled_count ?? 0} @ ${(entryPrice * 100).toFixed(1)}¢`;
+  }).join(" + ");
+
+  return (
+    <tr className="bg-yellow-500/5 hover:bg-yellow-500/10 transition-colors">
+      <td className="py-2 pr-4 pl-4 text-slate-300 text-sm">{bracket}</td>
+      <td className="py-2 pr-4">
+        <span className={`font-semibold text-sm ${side === "YES" ? "text-emerald-400" : "text-red-400"}`}>{side}</span>
+      </td>
+      <td className="py-2 pr-4">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">SELL</span>
+          <OrderStatusBadge status="resting" filledCount={null} />
+        </div>
+      </td>
+      <td className="py-2 pr-4 text-xs text-slate-400">{summary}</td>
+      <td className="py-2 pr-4" />
+      <td className="py-2 pr-4 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+        <div className="flex gap-1 flex-wrap justify-end">
+          {trades.map((t) => (
+            <Fragment key={t.id}>
+              {isBoostable(t) && (
+                <ActionButton variant="boost"
+                  onClick={(e) => { e.stopPropagation(); onBoost(t); }}
+                  loading={boosting === t.id} label="Lower ↓" loadingLabel="…" />
+              )}
+              {t.kalshi_order_id != null && (
+                <ActionButton variant="cancel"
+                  onClick={(e) => { e.stopPropagation(); onCancel(t.id); }}
+                  loading={canceling === t.id} label="Cancel" loadingLabel="Canceling…" />
+              )}
+            </Fragment>
+          ))}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 // ── Desktop pending order row ────────────────────────────────────────────────
 
 interface PendingOrderRowProps {
@@ -3035,10 +3201,8 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
   const filledCount    = trade.filled_count ?? 0;
   const remainingCount = trade.remaining_count ?? 0;
   const totalCount     = filledCount + remainingCount;
-  // A resting sell has existing fills (the buy) but order_status=resting (sell order resting)
-  // remaining_count === -1 is a sentinel set by sell-position when a limit sell
-  // order doesn't immediately fill.  Partial buy orders have remaining_count > 0.
-  const isSellOrder = filledCount > 0 && trade.order_status === "resting" && (trade.remaining_count ?? 0) === -1;
+  // remaining_count === -1 is our definitive sentinel for a resting sell order.
+  const isSellOrder = (trade.remaining_count ?? 0) === -1;
 
   return (
     <tr className="bg-yellow-500/5 hover:bg-yellow-500/10 transition-colors">
@@ -3252,7 +3416,8 @@ function PendingOrderCard({ trade, canceling, boosting, onCancel, onBoost }: Pen
   const filledCount    = trade.filled_count ?? 0;
   const remainingCount = trade.remaining_count ?? 0;
   const totalCount     = filledCount + remainingCount;
-  const isSellOrder    = filledCount > 0 && trade.order_status === "resting";
+  // remaining_count === -1 is our definitive sentinel for a resting sell order.
+  const isSellOrder = (trade.remaining_count ?? 0) === -1;
 
   return (
     <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-xl p-3 my-1 space-y-2">

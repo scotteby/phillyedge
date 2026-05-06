@@ -250,13 +250,49 @@ export async function POST(req: NextRequest) {
       method: "DELETE",
       headers: cancelHeaders,
     });
+
     if (!cancelRes.ok) {
-      const errBody = await cancelRes.json().catch(() => ({}));
-      const msg = typeof errBody?.message === "string" ? errBody.message : JSON.stringify(errBody);
-      console.error(`[boost-order] Cancel failed ${cancelRes.status}:`, JSON.stringify(errBody));
-      return NextResponse.json({ error: `Kalshi cancel failed: ${msg}` }, { status: 502 });
+      if (cancelRes.status === 404) {
+        // Order is already gone on Kalshi — could be filled or expired.
+        // Fetch the order to determine its status.
+        try {
+          const chkPath = `/trade-api/v2/portfolio/orders/${orderId}`;
+          const chkHdrs = buildKalshiAuthHeaders("GET", chkPath);
+          const chkRes  = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, { headers: chkHdrs });
+          if (chkRes.ok) {
+            const chkJson = await chkRes.json();
+            const o       = (chkJson.order ?? chkJson) as Record<string, unknown>;
+            const st      = String(o.status ?? "");
+            if (st === "filled" || st === "executed") {
+              // The order filled before we could boost it — update DB and return success.
+              const matchedCount = Number(o.quantity_matched ?? o.filled_count ?? count);
+              const now = new Date().toISOString();
+              await supabase.from("trades").update({
+                order_status:    "filled",
+                filled_count:    matchedCount > 0 ? matchedCount : count,
+                last_checked_at: now,
+              }).eq("id", trade_id);
+              console.log(`[boost-order] Order ${orderId} already filled — no boost needed`);
+              return NextResponse.json({
+                ok:            true,
+                already_filled: true,
+                trade_id,
+                count:         matchedCount > 0 ? matchedCount : count,
+              });
+            }
+          }
+        } catch { /* fall through — order might just be expired */ }
+        // Order gone but not confirmed filled — proceed to place new buy order
+        console.log(`[boost-order] Cancel 404: order ${orderId} already gone, placing new order`);
+      } else {
+        const errBody = await cancelRes.json().catch(() => ({}));
+        const msg = typeof errBody?.message === "string" ? errBody.message : JSON.stringify(errBody);
+        console.error(`[boost-order] Cancel failed ${cancelRes.status}:`, JSON.stringify(errBody));
+        return NextResponse.json({ error: `Kalshi cancel failed: ${msg}` }, { status: 502 });
+      }
+    } else {
+      console.log(`[boost-order] Cancelled order ${orderId}`);
     }
-    console.log(`[boost-order] Cancelled order ${orderId}`);
   } catch (err) {
     return NextResponse.json({ error: `Cancel network error: ${String(err)}` }, { status: 502 });
   }
