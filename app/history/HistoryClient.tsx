@@ -1028,7 +1028,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
               </span>
             ) : null}
             <button
-              onClick={() => { void fetchNewTrades(); pollAll(); fetchLivePrices(); }}
+              onClick={() => { void fetchNewTrades(); pollAll(); fetchLivePrices(); void fetchBalance(); }}
               disabled={pricesFetching || refreshing}
               title="Fetch new trades, refresh order statuses and live prices"
               className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-40 transition-colors">
