@@ -34,8 +34,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Trade not found" }, { status: 404 });
   }
 
-  if (trade.outcome !== "pending") {
+  // Allow selling boosted fills (outcome="boosted") — they hold real open contracts.
+  // Reject only truly settled trades (win/loss/sold).
+  if (trade.outcome === "win" || trade.outcome === "loss" || trade.outcome === "sold") {
     return NextResponse.json({ error: "Trade is already settled" }, { status: 422 });
+  }
+  if ((trade.filled_count as number | null) === 0 || trade.filled_count == null) {
+    return NextResponse.json({ error: "No filled contracts to sell" }, { status: 422 });
   }
 
   const side   = (trade.side as string).toLowerCase() as "yes" | "no";

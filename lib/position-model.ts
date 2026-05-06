@@ -103,9 +103,13 @@ export function buildPositions(trades: Trade[]): Position[] {
     // outcome still "pending"). We do NOT gate on remaining_count because
     // Kalshi may not return that field in every polling response, leaving it
     // as 0 in the DB even though contracts are still resting.
-    const isLiveOrder = (t: Trade): boolean =>
-      t.outcome === "pending" &&
-      (t.order_status === "resting" || t.order_status === "partially_filled");
+    const isLiveOrder = (t: Trade): boolean => {
+      // Standard pending resting/partial orders
+      if (t.outcome === "pending" && (t.order_status === "resting" || t.order_status === "partially_filled")) return true;
+      // Boosted fill with a resting sell order — remaining_count=-1 is our sell-order sentinel
+      if (t.outcome === "boosted" && (t.remaining_count ?? 0) === -1 && (t.filled_count ?? 0) > 0) return true;
+      return false;
+    };
 
     const fills         = sorted.filter(hasFills);
     const pendingOrders = sorted.filter(

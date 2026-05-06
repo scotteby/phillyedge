@@ -157,6 +157,8 @@ function isLivePriceEligible(trade: Trade, today: string): boolean {
 
 /** Can the user manually sell this position right now? */
 function isSellable(trade: Trade): boolean {
+  // Already has a resting sell order attached — don't offer a second sell.
+  if ((trade.remaining_count ?? 0) === -1) return false;
   // "Partial" badge shows for canceled/boosted orders that had partial fills —
   // those are real contracts we can still sell.
   // "boosted" is intentionally NOT excluded: a boosted order that partially
