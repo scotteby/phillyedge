@@ -253,15 +253,19 @@ async function logDemoTrade(
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export async function runDemoTrading(opts?: { force?: boolean }): Promise<DemoTradingResult> {
+export async function runDemoTrading(opts?: { force?: boolean; coverageRatio?: number }): Promise<DemoTradingResult> {
   const supabase   = createServiceClient();
   const targetDate = easternTomorrow();
   const errors:  string[] = [];
   const skipped: string[] = [];
   const orderRecords: DemoOrderRecord[] = [];
-  const force = opts?.force ?? false;
+  const force        = opts?.force ?? false;
+  const coverageRatio =
+    opts?.coverageRatio != null && opts.coverageRatio > 0 && opts.coverageRatio <= 1
+      ? opts.coverageRatio
+      : DEFAULT_HEDGE_COVERAGE;
 
-  console.log(`[demo-trading] Starting demo trading for ${targetDate}${force ? " (forced)" : ""}`);
+  console.log(`[demo-trading] Starting demo trading for ${targetDate}${force ? " (forced)" : ""} coverage=${coverageRatio}`);
 
   // ── 0. Idempotency guard ──────────────────────────────────────────────────
   // Block only when there are demo trades for tomorrow that are still actively
@@ -418,12 +422,12 @@ export async function runDemoTrading(opts?: { force?: boolean }): Promise<DemoTr
     } else if (hedge.yes_price <= 0) {
       skipped.push(`${group.series}: Hedge price = 0 — skipped`);
     } else {
-      // Hedge: sized by formula to cover DEFAULT_HEDGE_COVERAGE of primary loss
+      // Hedge: sized by formula to cover coverageRatio of primary loss
       const { secondaryContracts } = calcHedgeSize(
         primaryCount,
         primary.yes_price,
         hedge.yes_price,
-        DEFAULT_HEDGE_COVERAGE,
+        coverageRatio,
       );
 
       if (secondaryContracts > 0) {

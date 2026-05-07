@@ -106,7 +106,7 @@ async function settle(date: string): Promise<SettlementSummary> {
   };
 }
 
-async function run(date: string, forceDemo = false) {
+async function run(date: string, forceDemo = false, coverageRatio?: number) {
   // ── 1. Settle yesterday's markets ─────────────────────────────────────────
   const summary = await settle(date);
 
@@ -115,7 +115,7 @@ async function run(date: string, forceDemo = false) {
   // Failures are caught and surfaced in the response but never abort settlement.
   let demo: DemoTradingResult | null = null;
   try {
-    demo = await runDemoTrading({ force: forceDemo });
+    demo = await runDemoTrading({ force: forceDemo, coverageRatio });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[daily-settlement] runDemoTrading threw:", msg);
@@ -135,13 +135,16 @@ async function run(date: string, forceDemo = false) {
 // ?force_demo=true bypasses the idempotency guard and re-places demo trades
 // even if records for tomorrow already exist (e.g. after canceling on Kalshi).
 export async function GET(req: NextRequest) {
-  const dateParam  = req.nextUrl.searchParams.get("date");
-  const forceDemo  = req.nextUrl.searchParams.get("force_demo") === "true";
-  return run(dateParam ?? yesterdayET(), forceDemo);
+  const dateParam     = req.nextUrl.searchParams.get("date");
+  const forceDemo     = req.nextUrl.searchParams.get("force_demo") === "true";
+  const coverageParam = parseFloat(req.nextUrl.searchParams.get("coverage_ratio") ?? "");
+  const coverageRatio = isNaN(coverageParam) ? undefined : coverageParam;
+  return run(dateParam ?? yesterdayET(), forceDemo, coverageRatio);
 }
 
 export async function POST(req: NextRequest) {
-  let body: { date?: string; force_demo?: boolean } = {};
+  let body: { date?: string; force_demo?: boolean; coverage_ratio?: number } = {};
   try { body = await req.json(); } catch { /* empty body OK */ }
-  return run(body.date ?? yesterdayET(), body.force_demo === true);
+  const coverageRatio = body.coverage_ratio != null ? Number(body.coverage_ratio) : undefined;
+  return run(body.date ?? yesterdayET(), body.force_demo === true, coverageRatio);
 }

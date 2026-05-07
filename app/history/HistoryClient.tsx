@@ -821,7 +821,18 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     if (!confirm("Delete ALL demo trades and place fresh ones? This cannot be undone.")) return;
     setResetting(true);
     try {
-      const res  = await fetch("/api/reset-demo", { method: "POST" });
+      // Read coverage ratio from localStorage so the server uses the user's setting
+      let coverageRatio: number | undefined;
+      try {
+        const v = parseFloat(localStorage.getItem("hedge_coverage_ratio") ?? "");
+        if (!isNaN(v) && v > 0 && v <= 1) coverageRatio = v;
+      } catch { /* ignore */ }
+
+      const res  = await fetch("/api/reset-demo", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ coverage_ratio: coverageRatio }),
+      });
       const json = await res.json();
       if (res.ok) {
         const placed = (json.orders as unknown[])?.length ?? 0;

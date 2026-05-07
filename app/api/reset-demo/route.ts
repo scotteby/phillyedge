@@ -29,8 +29,16 @@ async function cancelKalshiDemoOrder(orderId: string): Promise<void> {
   }
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const supabase = createServiceClient();
+
+  // Optional coverage_ratio from client (read from localStorage on the client side)
+  let coverageRatio: number | undefined;
+  try {
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const v = parseFloat(String(body.coverage_ratio ?? ""));
+    if (!isNaN(v) && v > 0 && v <= 1) coverageRatio = v;
+  } catch { /* ignore */ }
 
   // 1. Find all live demo orders to cancel on Kalshi
   const { data: liveRows } = await supabase
@@ -65,7 +73,7 @@ export async function POST() {
   // 3. Place fresh demo orders
   let result;
   try {
-    result = await runDemoTrading();
+    result = await runDemoTrading({ coverageRatio });
   } catch (err) {
     return NextResponse.json({
       error: `runDemoTrading failed: ${err instanceof Error ? err.message : String(err)}`,
