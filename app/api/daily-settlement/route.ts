@@ -106,7 +106,7 @@ async function settle(date: string): Promise<SettlementSummary> {
   };
 }
 
-async function run(date: string) {
+async function run(date: string, forceDemo = false) {
   // ── 1. Settle yesterday's markets ─────────────────────────────────────────
   const summary = await settle(date);
 
@@ -115,7 +115,7 @@ async function run(date: string) {
   // Failures are caught and surfaced in the response but never abort settlement.
   let demo: DemoTradingResult | null = null;
   try {
-    demo = await runDemoTrading();
+    demo = await runDemoTrading({ force: forceDemo });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[daily-settlement] runDemoTrading threw:", msg);
@@ -132,13 +132,16 @@ async function run(date: string) {
 }
 
 // Vercel cron uses GET; manual triggers can use POST with a JSON body.
+// ?force_demo=true bypasses the idempotency guard and re-places demo trades
+// even if records for tomorrow already exist (e.g. after canceling on Kalshi).
 export async function GET(req: NextRequest) {
-  const dateParam = req.nextUrl.searchParams.get("date");
-  return run(dateParam ?? yesterdayET());
+  const dateParam  = req.nextUrl.searchParams.get("date");
+  const forceDemo  = req.nextUrl.searchParams.get("force_demo") === "true";
+  return run(dateParam ?? yesterdayET(), forceDemo);
 }
 
 export async function POST(req: NextRequest) {
-  let body: { date?: string } = {};
+  let body: { date?: string; force_demo?: boolean } = {};
   try { body = await req.json(); } catch { /* empty body OK */ }
-  return run(body.date ?? yesterdayET());
+  return run(body.date ?? yesterdayET(), body.force_demo === true);
 }

@@ -246,29 +246,54 @@ async function logDemoTrade(
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export async function runDemoTrading(): Promise<DemoTradingResult> {
+export async function runDemoTrading(opts?: { force?: boolean }): Promise<DemoTradingResult> {
   const supabase   = createServiceClient();
   const targetDate = easternTomorrow();
   const errors:  string[] = [];
   const skipped: string[] = [];
   const orderRecords: DemoOrderRecord[] = [];
+  const force = opts?.force ?? false;
 
-  console.log(`[demo-trading] Starting demo trading for ${targetDate}`);
+  console.log(`[demo-trading] Starting demo trading for ${targetDate}${force ? " (forced)" : ""}`);
 
   // ── 0. Idempotency guard ──────────────────────────────────────────────────
-  // Skip if demo trades for tomorrow were already placed today (e.g. manual retry).
+  // Block only when there are demo trades for tomorrow that are still actively
+  // resting or partially filled — i.e. real live orders on the exchange.
+  // Trades that were canceled (on Kalshi or in-app) don't block a re-run.
+  // force=true bypasses the guard entirely and cancels any stale pending rows
+  // so fresh placement can proceed cleanly.
   try {
-    const { count } = await supabase
+    const { data: existingRows } = await supabase
       .from("trades")
-      .select("*", { count: "exact", head: true })
+      .select("id, order_status, outcome")
       .eq("target_date", targetDate)
       .eq("demo", true);
 
-    if ((count ?? 0) > 0) {
+    const rows = existingRows ?? [];
+    const activeRows = rows.filter(
+      (r) =>
+        r.outcome === "pending" &&
+        (r.order_status === "resting" || r.order_status === "partially_filled"),
+    );
+
+    if (activeRows.length > 0 && !force) {
       skipped.push(
-        `Demo trades for ${targetDate} already exist (${count} rows) — skipping`
+        `Demo trades for ${targetDate} already active (${activeRows.length} resting/partial) — skipping. ` +
+        `Use force_demo=true to override.`,
       );
       return { target_date: targetDate, orders: [], skipped, errors };
+    }
+
+    if (rows.length > 0 && force) {
+      // Mark all existing demo trades for this date as canceled so they don't
+      // pollute the history view after re-placement.
+      await supabase
+        .from("trades")
+        .update({ outcome: "pending", order_status: "canceled", last_checked_at: new Date().toISOString() })
+        .eq("target_date", targetDate)
+        .eq("demo", true)
+        .in("outcome", ["pending"]);
+      console.log(`[demo-trading] Force: marked ${rows.length} existing demo trades as canceled`);
     }
   } catch {
     // Column may not exist yet — proceed without the guard
