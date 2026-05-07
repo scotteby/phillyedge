@@ -18,18 +18,19 @@ import type { BracketMarket } from "./brackets";
 
 function bracketFixture(overrides: Partial<BracketMarket> = {}): BracketMarket {
   return {
-    market_id:  "KXHIGHPHIL-26APR29-T70",
-    question:   "High Temp Philadelphia — 68–70°F",
-    end_date:   "2026-04-29",
-    yes_price:  0.4,
-    yes_pct:    40,
-    volume:     0,
-    range:      { min: 68, max: 70, label: "68–70°" },
-    relation:   "neutral",
-    confidence: 50,
-    edge:       10,
-    signal:     "buy",
-    trade_side: "YES",
+    market_id:   "KXHIGHPHIL-26APR29-T70",
+    question:    "High Temp Philadelphia — 68–70°F",
+    end_date:    "2026-04-29",
+    yes_price:   0.4,
+    yes_pct:     40,
+    volume:      0,
+    range:       { min: 68, max: 70, label: "68–70°" },
+    relation:    "neutral",
+    confidence:  50,
+    edge:        10,
+    signal:      "buy",
+    trade_side:  "YES",
+    bracketRole: null,
     ...overrides,
   };
 }

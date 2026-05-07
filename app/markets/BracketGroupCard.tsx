@@ -2,11 +2,9 @@
 
 import { useState, useEffect } from "react";
 import type { BracketGroup, BracketMarket, BracketRange } from "@/lib/brackets";
-import type { Signal } from "@/lib/types";
 import type { MarketTimeStatus, DailyHighStatus } from "@/lib/nws";
-import SignalBadge from "@/components/SignalBadge";
 import PositionBuilderModal from "./PositionBuilderModal";
-import { bracketDisplaySignal, SIGNAL_LABELS } from "@/lib/signal";
+import { calcHedgeSize, readHedgeCoverage } from "@/lib/strategy";
 
 interface Props {
   group:           BracketGroup;
@@ -48,6 +46,11 @@ export default function BracketGroupCard({
 }: Props) {
   const [tradeTarget, setTradeTarget] = useState<BracketMarket | null>(null);
   const [showPositionBuilder, setShowPositionBuilder] = useState(false);
+  const [hedgeCoverage, setHedgeCoverage] = useState(0.5);
+
+  useEffect(() => {
+    setHedgeCoverage(readHedgeCoverage());
+  }, []);
 
   // Extract the date/relative suffix from the computed title: "… · Today, Apr 29" → "Today, Apr 29"
   const titleParts  = group.title.split(" · ");
@@ -130,7 +133,7 @@ export default function BracketGroupCard({
         ) : isHigh && highSoFarF !== null ? (
           <CurrentHighBanner highSoFarF={highSoFarF} highReachedAt={highReachedAt ?? null} highObsStatus={highObsStatus} compact />
         ) : group.best ? (
-          <BestTradeBanner best={group.best} brackets={group.brackets} forecastValue={group.forecast_value} compact />
+          <BestTradeBanner primary={group.best} secondary={group.secondary} forecastValue={group.forecast_value} hedgeCoverage={hedgeCoverage} compact />
         ) : null}
       </div>
 
@@ -190,7 +193,7 @@ export default function BracketGroupCard({
         ) : isHigh && highSoFarF !== null ? (
           <CurrentHighBanner highSoFarF={highSoFarF} highReachedAt={highReachedAt ?? null} highObsStatus={highObsStatus} />
         ) : group.best ? (
-          <BestTradeBanner best={group.best} brackets={group.brackets} forecastValue={group.forecast_value} />
+          <BestTradeBanner primary={group.best} secondary={group.secondary} forecastValue={group.forecast_value} hedgeCoverage={hedgeCoverage} />
         ) : null}
       </div>
 
@@ -202,7 +205,7 @@ export default function BracketGroupCard({
           <div className="text-right">Kalshi %</div>
           <div className="text-right">Our %</div>
           <div className="text-right">Edge</div>
-          <div className="text-center">Signal</div>
+          <div className="text-center">Role</div>
           <div className="text-right" />
         </div>
 
@@ -406,81 +409,132 @@ function TimeGateBanner({
 
 // ── Best trade banner ─────────────────────────────────────────────────────────
 
+const REF_BUDGET = 20; // reference budget for suggested size display
 
 function BestTradeBanner({
-  best,
-  brackets,
+  primary,
+  secondary,
   forecastValue,
+  hedgeCoverage,
   compact = false,
 }: {
-  best:          BracketMarket;
-  brackets:      BracketMarket[];
+  primary:       BracketMarket;
+  secondary:     BracketMarket | null;
   forecastValue: number | null;
+  hedgeCoverage: number;
   compact?:      boolean;
 }) {
-  const isNo    = best.trade_side === "NO";
-  const sig     = bracketDisplaySignal(best.trade_side, best.edge);
-  const sigLabel = SIGNAL_LABELS[sig];
   const edgeSign = (n: number) => `${n >= 0 ? "+" : ""}${n}`;
 
-  // Detect Case 3: forecast bracket exists, is overpriced (edge ≤ -8), and is NOT the best trade.
-  // In this case show a header line explaining the situation before the best-alternative trade.
-  const forecastBkt    = brackets.find((b) => b.relation === "forecast");
-  const forecastIsCase3 = forecastBkt && forecastBkt.edge <= -8 && forecastBkt.market_id !== best.market_id;
+  // Suggested sizes
+  const primaryPrice     = primary.yes_price;
+  const primaryContracts = Math.max(1, Math.floor(REF_BUDGET / primaryPrice));
 
-  // Color palette keyed by derived signal — answers "how good is this trade?"
-  const palette: Record<string, { bg: string; accent: string; header: string }> = {
-    "strong-buy":  { bg: "bg-emerald-500/10 border border-emerald-500/30", accent: "text-emerald-400", header: "text-emerald-400" },
-    "buy":         { bg: "bg-sky-500/10 border border-sky-500/30",         accent: "text-sky-400",     header: "text-sky-400"     },
-    "sell":        { bg: "bg-orange-500/10 border border-orange-500/30",   accent: "text-orange-400",  header: "text-orange-400"  },
-    "strong-sell": { bg: "bg-orange-500/10 border border-orange-500/30",   accent: "text-orange-400",  header: "text-orange-400"  },
-    "neutral":     { bg: "bg-slate-700/40 border border-slate-600",         accent: "text-slate-400",   header: "text-slate-400"   },
-    "avoid":       { bg: "bg-red-500/10 border border-red-500/30",         accent: "text-red-400",     header: "text-red-400"     },
-  };
-  const clr = palette[sig] ?? palette["neutral"];
+  const hedgeCalc = secondary
+    ? calcHedgeSize(primaryContracts, primaryPrice, secondary.yes_price, hedgeCoverage)
+    : null;
 
   const outerClass = compact ? "mt-2 rounded-lg px-3 py-2" : "mt-3 rounded-lg px-4 py-2.5";
-  const textCls    = compact ? "text-xs" : "text-sm";
-  const sideLabel  = isNo ? "NO" : "YES";
-  const priceStr   = isNo ? `${Math.round((1 - best.yes_price) * 100)}¢` : `${best.yes_pct}%`;
+  const textSm     = compact ? "text-[10px]" : "text-xs";
+  const textMd     = compact ? "text-xs"     : "text-sm";
+
+  // Color based on primary edge
+  const bg =
+    primary.edge >= 25 ? "bg-emerald-500/10 border border-emerald-500/30" :
+    primary.edge >= 10 ? "bg-sky-500/10 border border-sky-500/30"         :
+    primary.edge >= 0  ? "bg-slate-700/40 border border-slate-600"         :
+    "bg-amber-500/10 border border-amber-500/30";
+
+  const accentCls =
+    primary.edge >= 25 ? "text-emerald-400" :
+    primary.edge >= 10 ? "text-sky-400"     :
+    primary.edge >= 0  ? "text-slate-400"   :
+    "text-amber-400";
 
   return (
-    <div className={`${outerClass} ${clr.bg}`}>
-      {/* Case 3: forecast bracket overpriced — show context before best-alternative trade */}
-      {forecastIsCase3 && forecastBkt && (
-        <p className="text-xs text-amber-300/80 mb-1">
-          <span className="font-semibold text-amber-300">Market overpricing your forecast bracket</span>
-          {" "}({forecastBkt.yes_pct}% vs our {forecastBkt.confidence}%) · best alternative:
-        </p>
-      )}
+    <div className={`${outerClass} ${bg}`}>
       {!compact && (
-        <p className={`text-xs font-semibold uppercase tracking-wide mb-0.5 ${clr.header}`}>
-          Best Trade
+        <p className={`${textSm} font-semibold uppercase tracking-wide mb-1 ${accentCls}`}>
+          Suggested Trades
         </p>
       )}
-      <p className={`${textCls} text-white`}>
-        {compact && (
-          <span className={`font-semibold uppercase tracking-wide text-[10px] mr-1.5 ${clr.header}`}>
-            Best Trade
-          </span>
-        )}
-        <span className="font-semibold">{best.range.label} {sideLabel} @ {priceStr}</span>
-        {forecastValue !== null && !isNo && (
-          <span className="text-slate-300">
-            {" "}— our forecast of {forecastValue}°F puts this at ~{best.confidence}% likely
-          </span>
-        )}
-        {forecastValue !== null && isNo && (
-          <span className="text-slate-300">
-            {" "}— market {best.yes_pct}%, our model ~{best.confidence}%
-          </span>
-        )}
-        <span className={`ml-1.5 font-bold ${clr.accent}`}>
-          {sigLabel} · {isNo ? Math.abs(best.edge) : edgeSign(best.edge)}pt edge
+      {compact && (
+        <p className={`${textSm} font-semibold uppercase tracking-wide mb-0.5 ${accentCls}`}>
+          Suggested Trades
+        </p>
+      )}
+
+      {/* Primary row */}
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 shrink-0">Primary</span>
+        <span className={`${textMd} text-white font-semibold`}>
+          {primary.range.label} YES @ {primary.yes_pct}%
         </span>
-      </p>
+        {forecastValue !== null && (
+          <span className={`${textSm} text-slate-400`}>
+            — ~{primary.confidence}% likely
+          </span>
+        )}
+        <span className={`${textSm} font-semibold ${accentCls} ml-auto shrink-0`}>
+          {edgeSign(primary.edge)}pt edge
+        </span>
+      </div>
+      <div className={`${textSm} text-slate-500 mt-0.5 mb-1`}>
+        {primaryContracts} contracts · ${REF_BUDGET.toFixed(2)}
+        {primary.edge < 0 && (
+          <span className="ml-1 text-amber-400/80">(market overpricing our forecast)</span>
+        )}
+      </div>
+
+      {/* Hedge row */}
+      {secondary && hedgeCalc && hedgeCalc.secondaryContracts > 0 && (
+        <>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400 shrink-0">Hedge</span>
+            <span className={`${textMd} text-white font-semibold`}>
+              {secondary.range.label} YES @ {secondary.yes_pct}%
+            </span>
+            <span className={`${textSm} text-slate-400`}>
+              — ~{secondary.confidence}% likely
+            </span>
+            <span className={`${textSm} font-semibold text-amber-400 ml-auto shrink-0`}>
+              {edgeSign(secondary.edge)}pt edge
+            </span>
+          </div>
+          <div className={`${textSm} text-slate-500 mt-0.5`}>
+            {hedgeCalc.secondaryContracts} contracts · ${hedgeCalc.secondarySize.toFixed(2)}
+            {" · "}{Math.round(hedgeCoverage * 100)}% coverage
+          </div>
+        </>
+      )}
+
+      {!secondary && (
+        <div className={`${textSm} text-slate-500 mt-0.5`}>
+          No hedge — primary is at edge of bracket range
+        </div>
+      )}
     </div>
   );
+}
+
+// ── Role badge ────────────────────────────────────────────────────────────────
+
+function RoleBadge({ role, compact = false }: { role: "primary" | "hedge" | null; compact?: boolean }) {
+  if (role === "primary") {
+    return (
+      <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
+        {compact ? "PRIMARY" : "PRIMARY"}
+      </span>
+    );
+  }
+  if (role === "hedge") {
+    return (
+      <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-amber-500/20 text-amber-400 border border-amber-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
+        {compact ? "HEDGE" : "HEDGE"}
+      </span>
+    );
+  }
+  return null;
 }
 
 // ── Bracket row ───────────────────────────────────────────────────────────────
@@ -496,22 +550,11 @@ function BracketRow({
   isLikelyWinner?: boolean;
   isLeading?:      boolean;
 }) {
-  const isForecast         = bracket.relation === "forecast";
-  const isAdjacent         = bracket.relation === "adjacent";
-  const isConfirmed        = bracket.relation === "confirmed";
-  const isLocked           = timeStatus === "locked";
-  const isDimmed           = timeStatus === "warning";
-  // ── Forecast bracket sub-cases ───────────────────────────────────────────────
-  // Case 2: edge between -8 and 0 → fairly priced, trade with caution
-  const isForecastFairly   = isForecast && bracket.confidence > 0 && bracket.edge <= 0 && bracket.edge > -8;
-  // Case 3: edge ≤ -8 → market more confident than us
-  const isForecastOverconfident = isForecast && bracket.confidence > 0 && bracket.edge <= -8;
-
-  // Pre-compute display signal for this bracket (used for badge + button color).
-  // For forecast brackets with negative edge, cap at "neutral" — never show a
-  // NO/sell badge on our own forecast bracket.
-  const rawSig = bracketDisplaySignal(bracket.trade_side, bracket.edge);
-  const rowSig: Signal = (isForecast && bracket.edge <= 0) ? "neutral" : rawSig;
+  const isForecast  = bracket.relation === "forecast";
+  const isConfirmed = bracket.relation === "confirmed";
+  const isLocked    = timeStatus === "locked";
+  const isDimmed    = timeStatus === "warning";
+  const role        = bracket.bracketRole;
 
   const rowBg = isLikelyWinner
     ? "bg-yellow-500/10 hover:bg-yellow-500/15"
@@ -519,10 +562,10 @@ function BracketRow({
     ? "bg-sky-500/10 hover:bg-sky-500/15"
     : isConfirmed
     ? "bg-amber-500/10 hover:bg-amber-500/15"
-    : isForecast
+    : role === "primary"
     ? "bg-emerald-500/8 hover:bg-emerald-500/12"
-    : isAdjacent
-    ? "bg-slate-700/20 hover:bg-slate-700/30"
+    : role === "hedge"
+    ? "bg-amber-500/5 hover:bg-amber-500/10"
     : "hover:bg-slate-700/20";
 
   const edgeColor =
@@ -533,8 +576,6 @@ function BracketRow({
     bracket.edge !== 0  ? "text-slate-300"   :
     "text-slate-600";
 
-  // Trade button: hidden when locked (unless this is the likely winner),
-  // dimmed opacity when warning
   const tradeAllowed = !isLocked || isLikelyWinner;
 
   function TradeBtn({ mobile }: { mobile: boolean }) {
@@ -545,39 +586,24 @@ function BracketRow({
         </span>
       );
     }
-    // Forecast bracket always gets a Trade button (never blocked).
-    // For the forecast bracket, always trade YES.
-    const effectiveSide = isForecast ? "YES" : bracket.trade_side;
-
-    // Orange button only when this is a *recommended* NO trade (buy or strong-buy signal).
-    // Neutral-direction NO brackets (cascade-forced or thin edge) get a gray button.
-    const isRecommendedNo =
-      effectiveSide === "NO" && (rowSig === "buy" || rowSig === "strong-buy");
-
-    const label = effectiveSide === "NO" ? "Trade NO" : "Trade";
 
     return (
       <button
         onClick={onTrade}
-        className={`${mobile ? "shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border" : "text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"} ${
+        className={`${mobile
+          ? "shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border"
+          : "text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+        } ${
           isLikelyWinner
             ? mobile
               ? "border-yellow-500 text-yellow-400 hover:bg-yellow-500/20"
               : "bg-yellow-600/80 hover:bg-yellow-500 text-white"
-            : isRecommendedNo
-            ? mobile
-              ? "border-orange-600 text-orange-400 hover:bg-orange-600/20 active:bg-orange-600/30"
-              : "bg-orange-600/80 hover:bg-orange-500 text-white"
-            : effectiveSide === "YES"
-            ? mobile
+            : mobile
               ? "border-sky-600 text-sky-400 hover:bg-sky-600/20 active:bg-sky-600/30"
               : "bg-sky-600 hover:bg-sky-500 text-white"
-            : mobile
-            ? "border-slate-600 text-slate-500 hover:bg-slate-700/50"
-            : "bg-slate-600 hover:bg-slate-500 text-white"
         }`}
       >
-        {label}
+        Trade
       </button>
     );
   }
@@ -617,7 +643,7 @@ function BracketRow({
         {/* Our % */}
         <div className="text-right text-sm">
           {bracket.confidence > 0 ? (
-            <span className={isForecast ? "text-emerald-400 font-semibold" : "text-slate-400"}>
+            <span className={role === "primary" ? "text-emerald-400 font-semibold" : "text-slate-400"}>
               ~{bracket.confidence}%
             </span>
           ) : (
@@ -632,12 +658,12 @@ function BracketRow({
             : <span className="text-slate-600 text-xs italic">—</span>}
         </div>
 
-        {/* Signal */}
+        {/* Role badge */}
         <div className="flex justify-center">
           {isLocked && !isLikelyWinner
             ? <span className="text-slate-600 text-xs">—</span>
-            : bracket.confidence > 0
-            ? <SignalBadge signal={rowSig} />
+            : role !== null
+            ? <RoleBadge role={role} />
             : <span className="text-slate-600 text-xs">—</span>}
         </div>
 
@@ -647,23 +673,9 @@ function BracketRow({
         </div>
       </div>
 
-      {/* Forecast bracket notes (desktop) — Cases 2 & 3 */}
-      {isForecastFairly && (
-        <div className="hidden md:flex px-5 py-1.5 bg-emerald-500/5 border-b border-slate-700/30 text-xs text-slate-400 gap-1">
-          <span className="text-emerald-400 font-medium">Fairly priced</span>
-          <span>· Kalshi {bracket.yes_pct}% vs our {bracket.confidence}% · consider a smaller YES position</span>
-        </div>
-      )}
-      {isForecastOverconfident && (
-        <div className="hidden md:flex px-5 py-1.5 bg-amber-500/5 border-b border-slate-700/30 text-xs text-slate-400 gap-1">
-          <span className="text-amber-400 font-medium">Market overconfident</span>
-          <span>· Kalshi {bracket.yes_pct}% vs our {bracket.confidence}% · raise your confidence level or trade a smaller YES</span>
-        </div>
-      )}
-
       {/* ── Mobile card ────────────────────────────────────────────────── */}
       <div className={`md:hidden px-4 py-2 border-b border-slate-700/30 last:border-0 transition-colors ${rowBg} ${isDimmed ? "opacity-60" : ""}`}>
-        {/* Row 1: label · tags · signal · trade btn */}
+        {/* Row 1: label · tags · role badge · trade btn */}
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-white flex-1 min-w-0">{bracket.range.label}</span>
           {isLikelyWinner && (
@@ -687,11 +699,7 @@ function BracketRow({
             </span>
           )}
           <div className="shrink-0">
-            {isLocked && !isLikelyWinner
-              ? null
-              : bracket.confidence > 0
-              ? <SignalBadge signal={rowSig} />
-              : <span className="text-slate-600 text-xs">—</span>}
+            {!isLocked && role !== null && <RoleBadge role={role} compact />}
           </div>
           <TradeBtn mobile={true} />
         </div>
@@ -699,21 +707,13 @@ function BracketRow({
         {/* Row 2: inline stats */}
         <div className="text-sm mt-0.5">
           {bracket.confidence > 0 ? (
-            <>
-              <span className="text-slate-500">
-                Kalshi <span className="text-slate-400">{bracket.yes_pct}%</span>
-                {" · "}Ours <span className={isForecast ? "text-emerald-400 font-medium" : "text-slate-400"}>~{bracket.confidence}%</span>
-                {!isLocked && (
-                  <>{" · "}Edge <span className={`font-medium ${edgeColor}`}>{bracket.edge > 0 ? "+" : ""}{bracket.edge}</span></>
-                )}
-              </span>
-              {isForecastFairly && (
-                <div className="mt-0.5 text-emerald-400/70 text-xs">Fairly priced · consider smaller YES</div>
+            <span className="text-slate-500">
+              Kalshi <span className="text-slate-400">{bracket.yes_pct}%</span>
+              {" · "}Ours <span className={role === "primary" ? "text-emerald-400 font-medium" : "text-slate-400"}>~{bracket.confidence}%</span>
+              {!isLocked && (
+                <>{" · "}Edge <span className={`font-medium ${edgeColor}`}>{bracket.edge > 0 ? "+" : ""}{bracket.edge}</span></>
               )}
-              {isForecastOverconfident && (
-                <div className="mt-0.5 text-amber-400/70 text-xs">Market overconfident · raise confidence or trade smaller YES</div>
-              )}
-            </>
+            </span>
           ) : (
             <span className="text-slate-500">Kalshi {bracket.yes_pct}% · no forecast</span>
           )}
@@ -750,7 +750,7 @@ function BracketTradeModal({
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const [side, setSide]     = useState<"YES" | "NO">(bracket.trade_side === "NO" ? "NO" : "YES");
+  const [side, setSide]     = useState<"YES" | "NO">("YES");
   const [amount, setAmount] = useState("");
   const [status, setStatus] = useState<TradeStatus>("idle");
   const [error, setError]   = useState<string | null>(null);

@@ -21,12 +21,12 @@ interface RecLogRow {
   target_date:      string;
   market_id:        string;
   market_question:  string;
-  signal:           string;
+  signal:           string;   // "primary" | "hedge"
   edge:             number;
   bracket_type:     RecLogBracketType;
   my_pct:           number;
   market_pct:       number;
-  side:             "YES" | "NO";
+  side:             "YES";    // always YES — we never recommend NO positions
   confidence_level: string;
 }
 
@@ -62,10 +62,12 @@ export function deriveRecLogBracketType(
 // ── logActionableSignals ─────────────────────────────────────────────────────
 
 /**
- * Upsert actionable signals (buy / strong-buy) from a set of bracket groups
- * into recommendation_log. Uses conflict-do-nothing so repeated page loads
- * don't create duplicate rows. If signal upgrades (buy→strong-buy), the unique
- * key changes so a new row is inserted — that's intentional.
+ * Upsert primary / hedge signals from a set of bracket groups into
+ * recommendation_log. Uses conflict-do-nothing so repeated page loads
+ * don't create duplicate rows.
+ *
+ * Signal values are now 'primary' (forecast bracket) or 'hedge' (adjacent
+ * bracket). Only brackets with bracketRole !== null are logged.
  *
  * MUST be called fire-and-forget (void / after()). Any failure is caught and
  * console-logged; the caller must never await this.
@@ -86,19 +88,18 @@ export async function logActionableSignals(
       const confidenceLevel = confidenceMap.get(group.obs_date) ?? "confident";
 
       for (const bracket of group.brackets) {
-        if (bracket.trade_side == null) continue;
-        if (bracket.signal !== "buy" && bracket.signal !== "strong-buy") continue;
+        if (bracket.bracketRole == null) continue; // only primary / hedge
 
         rows.push({
           target_date:      group.obs_date,
           market_id:        bracket.market_id,
           market_question:  bracket.question,
-          signal:           bracket.signal,
+          signal:           bracket.bracketRole,  // "primary" | "hedge"
           edge:             bracket.edge,
           bracket_type:     deriveRecLogBracketType(bracket, group.forecast_value),
           my_pct:           bracket.confidence,
           market_pct:       bracket.yes_pct,
-          side:             bracket.trade_side,
+          side:             "YES",
           confidence_level: confidenceLevel,
         });
       }

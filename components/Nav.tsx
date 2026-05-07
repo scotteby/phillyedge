@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const tabs = [
-  { href: "/forecast", label: "Forecast" },
-  { href: "/markets", label: "Markets" },
-  { href: "/history", label: "Trades" },
-  { href: "/performance", label: "Performance" },
+  { href: "/forecast",    label: "Forecast"     },
+  { href: "/markets",     label: "Markets"      },
+  { href: "/history",     label: "Trades"       },
+  { href: "/performance", label: "Performance"  },
+  { href: "/settings",    label: "Settings"     },
 ];
 
 export default function Nav() {

@@ -1,5 +1,6 @@
 import type { Forecast, ForecastConfidence, MarketCache, Signal } from "./types";
 import { easternToday, easternTomorrow } from "./dates";
+import { selectSecondaryBracket } from "./strategy";
 
 // ── Normal distribution ────────────────────────────────────────────────────────
 
@@ -73,6 +74,9 @@ export interface BracketRange {
 
 export type BracketRelation = "forecast" | "adjacent" | "neutral" | "confirmed" | "likely_winner";
 
+/** Role of this bracket in our primary / hedge two-trade strategy. */
+export type BracketRole = "primary" | "hedge" | null;
+
 export interface BracketMarket {
   market_id:   string;
   question:    string;
@@ -85,7 +89,8 @@ export interface BracketMarket {
   confidence:  number;            // our estimated probability 0–100
   edge:        number;            // confidence − yes_pct (positive = YES edge, negative = NO edge)
   signal:      Signal;
-  trade_side:  "YES" | "NO" | null; // recommended side, null when neutral or no forecast
+  trade_side:  "YES" | null;     // always "YES" for primary/hedge, null otherwise
+  bracketRole: BracketRole;      // "primary" | "hedge" | null
 }
 
 export interface BracketGroup {
@@ -95,7 +100,8 @@ export interface BracketGroup {
   end_date:        string;
   obs_date:        string;              // actual weather observation date (from event key)
   brackets:        BracketMarket[];     // sorted low → high
-  best:            BracketMarket | null; // highest-edge bracket with a view
+  best:            BracketMarket | null; // primary (forecast) bracket; null if no forecast
+  secondary:       BracketMarket | null; // hedge bracket (adjacent to primary)
   forecast_value:  number | null;        // our forecast temp for this series
   observed_value:  number | null;        // NWS observed temp — non-null = outcome known
 }
@@ -375,67 +381,51 @@ export function groupBracketMarkets(
       const edge   = confidence > 0 ? confidence - yes_pct : 0;
       const signal = toSignal(edge);
 
-      // ── Forecast Bracket Protection ─────────────────────────────────────────
-      // If this bracket IS our forecast, we cannot logically recommend NO — that
-      // would mean "we think the temp lands here AND it doesn't land here."
-      // Rule: forecast bracket is ALWAYS trade_side = "YES", regardless of edge.
-      //   Positive edge    → Buy/Strong Buy + Trade (normal)
-      //   Near-zero edge   → Neutral + Trade + "fairly priced" note
-      //   Negative edge    → Neutral + Trade + "market overconfident" note
-      // The UI (BracketRow) handles the note and signal capping.
-      const trade_side: "YES" | "NO" | null =
-        relation === "forecast"
-          ? "YES"
-          : signal === "strong-buy" || signal === "buy"         ? "YES"
-          : signal === "sell"       || signal === "strong-sell" ? "NO"
-          : null;
-
+      // trade_side and bracketRole are set after all brackets are built
+      // (we need to know which is primary/hedge first).
       return {
-        market_id: m.market_id,
-        question:  m.question,
-        end_date:  m.end_date,
-        yes_price: m.yes_price,
+        market_id:   m.market_id,
+        question:    m.question,
+        end_date:    m.end_date,
+        yes_price:   m.yes_price,
         yes_pct,
-        volume:    m.volume,
+        volume:      m.volume,
         range,
         relation,
         confidence,
         edge,
         signal,
-        trade_side,
+        trade_side:  null,   // filled in below
+        bracketRole: null,   // filled in below
       };
     });
 
     // Sort brackets ascending by lower bound (null min = −∞ goes first)
     brackets.sort((a, b) => (a.range.min ?? -999) - (b.range.min ?? -999));
 
-    // ── Cascading NO ──────────────────────────────────────────────────────────
-    // If bracket X is flagged NO, every bracket further from the forecast in the
-    // same direction must also be NO — probability is monotonically decreasing
-    // away from the mode, so P(<64°) ≤ P(64-65°).  This prevents the absurd case
-    // where an adjacent bracket is NO but the even-further bracket is Neutral.
-    // Applied only when a forecast bracket exists (confirmed/no-forecast markets
-    // don't need it and have no "forecast" relation to anchor on).
-    const fIdx = brackets.findIndex((b) => b.relation === "forecast");
-    if (fIdx >= 0) {
-      // Walk below the forecast (indices fIdx-1 → 0)
-      let cascade = false;
-      for (let i = fIdx - 1; i >= 0; i--) {
-        if (brackets[i].trade_side === "NO") {
-          cascade = true;
-        } else if (cascade) {
-          brackets[i] = { ...brackets[i], signal: "sell", trade_side: "NO" };
-        }
-      }
-      // Walk above the forecast (indices fIdx+1 → end)
-      cascade = false;
-      for (let i = fIdx + 1; i < brackets.length; i++) {
-        if (brackets[i].trade_side === "NO") {
-          cascade = true;
-        } else if (cascade) {
-          brackets[i] = { ...brackets[i], signal: "sell", trade_side: "NO" };
-        }
-      }
+    // ── Assign bracketRole and trade_side ─────────────────────────────────────
+    // Strategy: exactly two YES trades per group.
+    //   primary = forecast bracket (bracketRole = "primary", trade_side = "YES")
+    //   hedge   = adjacent bracket nearest to forecast temp (bracketRole = "hedge", trade_side = "YES")
+    //   others  = no recommendation (bracketRole = null, trade_side = null)
+    // We never recommend NO positions.
+    const primaryBkt = brackets.find((b) => b.relation === "forecast") ?? null;
+    const hedgeBkt   =
+      primaryBkt && fVal != null
+        ? selectSecondaryBracket(brackets, fVal)
+        : null;
+
+    for (let i = 0; i < brackets.length; i++) {
+      const b    = brackets[i];
+      const role: "primary" | "hedge" | null =
+        b.market_id === primaryBkt?.market_id ? "primary" :
+        b.market_id === hedgeBkt?.market_id   ? "hedge"   :
+        null;
+      brackets[i] = {
+        ...b,
+        bracketRole: role,
+        trade_side:  role !== null ? "YES" : null,
+      };
     }
 
     // Diagnostic: log probability distribution so we can verify the math
@@ -448,31 +438,9 @@ export function groupBracketMarkets(
       console.log(`[brackets] ${series} N(mean=${meanLabel}, σ=${std}) Σ≈${total}%: ${dist}`);
     }
 
-    // Best YES: prefer the forecast bracket only when it has POSITIVE edge
-    // (i.e. Kalshi is underpricing our forecast — a real opportunity).
-    // When forecast is overpriced (edge ≤ 0), fall back to the highest-edge
-    // non-forecast YES bracket — that's the "best alternative" shown in the banner.
-    // The banner component then adds a note about the overpriced forecast bracket.
-    const forecastBkt = brackets.find((b) => b.relation === "forecast");
-    const bestYes: BracketMarket | null =
-      (forecastBkt?.trade_side === "YES" && (forecastBkt?.edge ?? 0) > 0)
-        ? forecastBkt
-        : ([...brackets]
-            .filter((b) => b.trade_side === "YES" && b.relation !== "forecast")
-            .sort((a, b) => b.edge - a.edge)[0] ?? null);
-
-    // Forecast bracket is never NO (see trade_side logic above), but be explicit:
-    // never let the best-trade banner recommend NO on the bracket that IS our forecast.
-    const bestNo = [...brackets]
-      .filter((b) => b.trade_side === "NO" && b.relation !== "forecast")
-      .sort((a, b) => a.edge - b.edge)[0] ?? null; // most-negative edge = strongest NO
-
-    let best: BracketMarket | null = null;
-    if (bestYes && bestNo) {
-      best = bestYes.edge >= Math.abs(bestNo.edge) ? bestYes : bestNo;
-    } else {
-      best = bestYes ?? bestNo;
-    }
+    // best = primary bracket (for filtering); secondary = hedge bracket
+    const best      = brackets.find((b) => b.bracketRole === "primary") ?? null;
+    const secondary = brackets.find((b) => b.bracketRole === "hedge")   ?? null;
 
     groups.push({
       series,
@@ -482,6 +450,7 @@ export function groupBracketMarkets(
       obs_date:       obsDate,
       brackets,
       best,
+      secondary,
       forecast_value: fVal ?? null,
       observed_value: seriesObs,
     });

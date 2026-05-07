@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { BracketGroup, BracketMarket } from "@/lib/brackets";
 import type { MarketTimeStatus } from "@/lib/nws";
-import { bracketDisplaySignal } from "@/lib/signal";
+import { buildStrategyLegs, calcHedgeSize, readHedgeCoverage, DEFAULT_HEDGE_COVERAGE } from "@/lib/strategy";
 import KalshiBalance from "@/components/KalshiBalance";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -11,9 +11,9 @@ import KalshiBalance from "@/components/KalshiBalance";
 interface PositionLeg {
   id:        string;
   bracket:   BracketMarket;
-  side:      "YES" | "NO";
-  pct:       number;   // % of total budget (0–100, can sum to any total)
-  isPrimary: boolean;  // true = YOUR FORECAST bracket on YES side
+  side:      "YES";          // always YES — we never trade NO
+  pct:       number;         // % of total budget (0–100, sums to 100)
+  isPrimary: boolean;        // true = primary (forecast) bracket
 }
 
 type LegExecStatus = "placing" | "success" | "error";
@@ -26,108 +26,27 @@ interface LegResult {
   error?:   string;
 }
 
-// ── Allocation helpers ────────────────────────────────────────────────────────
+// ── Allocation helper ─────────────────────────────────────────────────────────
 
 /**
- * True when a bracket deserves a default position leg.
+ * Build the default legs using the primary / hedge strategy.
+ * Primary = forecast bracket (bracketRole === "primary").
+ * Hedge   = secondary bracket (bracketRole === "hedge").
  *
- * Rules:
- *  - Must have buy or strong-buy signal on the RECOMMENDED side (bracketDisplaySignal)
- *  - Forecast bracket with edge ≤ 0 is always excluded (Case 2/3 — fairly priced or
- *    market overconfident); it appears instead as an optional checkbox row in the UI.
- *  - Neutral brackets (gray button) are never included by default.
+ * Budget allocation: primary gets the user's full budget; hedge size is derived
+ * from calcHedgeSize.  Pcts are computed from primary/(primary+hedge) split.
  */
-function isActionable(b: BracketMarket): boolean {
-  if (b.relation === "forecast" && b.edge <= 0) return false;
-  const sig = bracketDisplaySignal(b.trade_side, b.edge);
-  return sig === "buy" || sig === "strong-buy";
-}
-
-/**
- * Build the default legs from signal data.
- *
- * Inclusion: only brackets with buy/strong-buy signal on their recommended side.
- * Forecast brackets with negative edge and neutral-direction NO brackets are excluded.
- *
- * Allocation (two-phase, then normalize to 100%):
- *
- *   YES group  — gets 55% of total budget when NO brackets also exist (100% if YES-only)
- *     · Primary (forecast bracket or highest-edge YES) → 35 raw weight
- *     · Each secondary YES                            → 20 raw weight
- *     → Scale YES raw weights so they sum to the YES budget share
- *
- *   NO group   — gets 45% of total budget when YES brackets also exist (100% if NO-only)
- *     · Each NO bracket → weight proportional to |edge| (min 1 to avoid zero)
- *     → Scale NO raw weights so they sum to the NO budget share
- *
- *   Final pcts are integers that sum to exactly 100 via largest-remainder rounding.
- */
-function buildDefaultLegs(brackets: BracketMarket[]): PositionLeg[] {
-  const yesBrackets = brackets.filter((b) => b.trade_side === "YES" && b.confidence > 0 && isActionable(b));
-  const noBrackets  = brackets.filter((b) => b.trade_side === "NO"  && b.confidence > 0 && isActionable(b));
-
-  if (yesBrackets.length === 0 && noBrackets.length === 0) return [];
-
-  // Primary YES = forecast bracket (if actionable), else highest-edge YES
-  const forecastYes = yesBrackets.find((b) => b.relation === "forecast");
-  const highestYes  = [...yesBrackets].sort((a, b) => b.edge - a.edge)[0] ?? null;
-  const primaryId   = (forecastYes ?? highestYes)?.market_id ?? null;
-
-  const hasBoth = yesBrackets.length > 0 && noBrackets.length > 0;
-  const yesBudget = hasBoth ? 55 : 100;
-  const noBudget  = hasBoth ? 45 : 100;
-
-  // YES: raw weights (primary=35, secondary=20), then scale to yesBudget
-  const yesRaw = yesBrackets.map((b) => (b.market_id === primaryId ? 35 : 20));
-  const yesRawTotal = yesRaw.reduce((s, v) => s + v, 0);
-  const yesScaled = yesBrackets.map((_, i) =>
-    yesRawTotal > 0 ? (yesRaw[i] / yesRawTotal) * yesBudget : 0
-  );
-
-  // NO: raw weights proportional to |edge| (min 1), then scale to noBudget
-  const noRaw = noBrackets.map((b) => Math.max(1, Math.abs(b.edge)));
-  const noRawTotal = noRaw.reduce((s, v) => s + v, 0);
-  const noScaled = noBrackets.map((_, i) =>
-    noRawTotal > 0 ? (noRaw[i] / noRawTotal) * noBudget : 0
-  );
-
-  // Combine into a flat list (YES first, then NO sorted by |edge| descending)
-  const sortedNo = noBrackets
-    .map((b, i) => ({ b, scaled: noScaled[i] }))
-    .sort((a, b) => Math.abs(b.b.edge) - Math.abs(a.b.edge)); // strongest NO first
-
-  type DraftEntry = { bracket: BracketMarket; side: "YES" | "NO"; isPrimary: boolean; scaledPct: number };
-
-  const draft: DraftEntry[] = [
-    ...yesBrackets.map((b, i) => ({
-      bracket:   b,
-      side:      "YES" as const,
-      isPrimary: b.market_id === primaryId,
-      scaledPct: yesScaled[i],
-    })),
-    ...sortedNo.map(({ b, scaled }) => ({
-      bracket:   b,
-      side:      "NO" as const,
-      isPrimary: false,
-      scaledPct: scaled,
-    })),
-  ];
-
-  // Largest-remainder integer allocation → pcts sum to exactly 100
-  const total    = draft.reduce((s, l) => s + l.scaledPct, 0);
-  const rawPcts  = draft.map((l) => (total > 0 ? (l.scaledPct / total) * 100 : 100 / draft.length));
-  const floored  = rawPcts.map(Math.floor);
-  const remainder = 100 - floored.reduce((s, v) => s + v, 0);
-  const fracOrder = rawPcts
-    .map((v, i) => ({ i, frac: v - floored[i] }))
-    .sort((a, b) => b.frac - a.frac);
-  for (let j = 0; j < remainder; j++) floored[fracOrder[j].i]++;
-
-  return draft.map((l, i) => ({
-    id:        `${l.bracket.market_id}-${l.side}`,
+function buildDefaultLegs(
+  brackets:      BracketMarket[],
+  coverageRatio: number,
+  budget:        number = 20,
+): PositionLeg[] {
+  const stratLegs = buildStrategyLegs(brackets, coverageRatio, budget);
+  return stratLegs.map((l) => ({
+    id:        `${l.market_id}-YES`,
     bracket:   l.bracket,
-    side:      l.side,
-    pct:       floored[i],
+    side:      "YES" as const,
+    pct:       l.pct,
     isPrimary: l.isPrimary,
   }));
 }
@@ -176,37 +95,29 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
   const isLate = timeStatus === "warning" || timeStatus === "locked";
 
   const [budget,        setBudget]        = useState("20");
+  const [coverageRatio, setCoverageRatio] = useState(DEFAULT_HEDGE_COVERAGE);
   const [legs,          setLegs]          = useState<PositionLeg[]>(() =>
-    buildDefaultLegs(group.brackets)
+    buildDefaultLegs(group.brackets, DEFAULT_HEDGE_COVERAGE, 20)
   );
   const [legResults,    setLegResults]    = useState<LegResult[]>([]);
   const [phase,         setPhase]         = useState<"build" | "placing" | "done">("build");
   const [error,         setError]         = useState<string | null>(null);
   const [showAddPicker, setShowAddPicker] = useState(false);
 
-  // Optional forecast bracket (Case 2/3 — negative edge, excluded from default legs)
-  const forecastOptional = group.brackets.find(
-    (b) => b.relation === "forecast" && b.edge <= 0 && b.confidence > 0
-  ) ?? null;
-  const forecastInLegs = forecastOptional
-    ? legs.some((l) => l.bracket.market_id === forecastOptional.market_id && l.side === "YES")
-    : false;
-
-  function toggleForecastBracket(include: boolean) {
-    if (!forecastOptional) return;
-    if (include) {
-      const id = `${forecastOptional.market_id}-YES-forecast`;
-      setLegs((prev) => {
-        if (prev.some((l) => l.bracket.market_id === forecastOptional.market_id && l.side === "YES")) return prev;
-        // Give it equal weight to the other legs, then renormalize so total stays 100
-        const equalShare = prev.length > 0 ? prev[0].pct : 100;
-        return normalizePcts([...prev, { id, bracket: forecastOptional, side: "YES", pct: equalShare, isPrimary: false }]);
-      });
-    } else {
-      setLegs((prev) => normalizePcts(
-        prev.filter((l) => !(l.bracket.market_id === forecastOptional.market_id && l.side === "YES"))
-      ));
+  // Read hedge coverage from localStorage after mount
+  useEffect(() => {
+    const stored = readHedgeCoverage();
+    if (stored !== DEFAULT_HEDGE_COVERAGE) {
+      setCoverageRatio(stored);
+      setLegs(buildDefaultLegs(group.brackets, stored, 20));
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Rebuild legs when coverage ratio changes
+  function handleCoverageChange(ratio: number) {
+    setCoverageRatio(ratio);
+    setLegs(buildDefaultLegs(group.brackets, ratio, parseFloat(budget) || 20));
   }
 
   const totalBudget = parseFloat(budget) || 0;
@@ -216,14 +127,13 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
   const totalDeployed = legs.reduce((s, l) => s + legAmount(l.pct, totalBudget), 0);
 
   const totalEV = legs.reduce((s, l) => {
-    const amt   = legAmount(l.pct, totalBudget);
-    const edge  = l.side === "YES" ? l.bracket.edge : -l.bracket.edge;
-    return s + amt * (edge / 100);
+    const amt  = legAmount(l.pct, totalBudget);
+    return s + amt * (l.bracket.edge / 100);
   }, 0);
 
   const bestCase = legs.reduce((s, l) => {
     const amt   = legAmount(l.pct, totalBudget);
-    const price = l.side === "YES" ? l.bracket.yes_price : 1 - l.bracket.yes_price;
+    const price = l.bracket.yes_price;
     return s + (price > 0 ? amt * (1 - price) / price : 0);
   }, 0);
 
@@ -240,13 +150,13 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
     setLegs((prev) => normalizePcts(prev.filter((l) => l.id !== id)));
   }
 
-  function addCustomLeg(bracket: BracketMarket, side: "YES" | "NO") {
-    const id = `${bracket.market_id}-${side}-custom`;
+  function addCustomLeg(bracket: BracketMarket) {
+    const id = `${bracket.market_id}-YES-custom`;
     setLegs((prev) => {
-      if (prev.some((l) => l.bracket.market_id === bracket.market_id && l.side === side)) return prev;
+      if (prev.some((l) => l.bracket.market_id === bracket.market_id)) return prev;
       // Give the new leg a proportional share (equal weight to the others) then renormalize
       const equalShare = prev.length > 0 ? prev[0].pct : 100;
-      return normalizePcts([...prev, { id, bracket, side, pct: equalShare, isPrimary: false }]);
+      return normalizePcts([...prev, { id, bracket, side: "YES", pct: equalShare, isPrimary: false }]);
     });
     setShowAddPicker(false);
   }
@@ -263,7 +173,7 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
     await Promise.all(
       legs.map(async (leg) => {
         const amt   = parseFloat(legAmount(leg.pct, totalBudget).toFixed(2));
-        const price = leg.side === "YES" ? leg.bracket.yes_price : 1 - leg.bracket.yes_price;
+        const price = leg.bracket.yes_price; // always YES side
 
         try {
           const res  = await fetch("/api/place-trade", {
@@ -271,7 +181,7 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               ticker:          leg.bracket.market_id,
-              side:            leg.side,
+              side:            "YES",
               amount_dollars:  amt,
               limit_price:     price,
               market_question: `${group.title} — ${leg.bracket.range.label}`,
@@ -279,7 +189,7 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
               market_pct:      leg.bracket.yes_pct,
               my_pct:          leg.bracket.confidence,
               edge:            leg.bracket.edge,
-              signal:          leg.bracket.signal,
+              signal:          leg.bracket.bracketRole === "primary" ? "strong-buy" : "buy",
             }),
           });
           const json = await res.json();
@@ -425,39 +335,66 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
             </div>
           )}
 
-          {/* Budget input */}
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium text-slate-300 whitespace-nowrap">
-              Total budget:
-            </label>
-            <div className="relative w-36">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
-              <input
-                type="number" min="1" value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-                disabled={isPlacing}
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-7 pr-14 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">USDC</span>
+          {/* Budget + coverage inputs */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-slate-300 whitespace-nowrap">
+                Total budget:
+              </label>
+              <div className="relative w-36">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                <input
+                  type="number" min="1" value={budget}
+                  onChange={(e) => {
+                    setBudget(e.target.value);
+                    const b = parseFloat(e.target.value) || 20;
+                    setLegs(buildDefaultLegs(group.brackets, coverageRatio, b));
+                  }}
+                  disabled={isPlacing}
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-7 pr-14 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">USDC</span>
+              </div>
             </div>
+
+            {/* Hedge coverage selector */}
+            {!isPlacing && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-400 whitespace-nowrap">Hedge:</label>
+                <div className="flex gap-1">
+                  {([0.25, 0.5, 0.75, 1.0] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => handleCoverageChange(v)}
+                      className={`text-xs px-2 py-1 rounded border transition-colors ${
+                        coverageRatio === v
+                          ? "bg-amber-500/20 border-amber-500 text-amber-400"
+                          : "border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300"
+                      }`}
+                    >
+                      {Math.round(v * 100)}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Legs list */}
           {legs.length > 0 ? (
             <div className="space-y-2">
               {/* Column headers — desktop */}
-              <div className="hidden sm:grid grid-cols-[1fr_56px_96px_52px_28px] gap-2 px-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              <div className="hidden sm:grid grid-cols-[1fr_96px_52px_28px] gap-2 px-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 <div>Bracket</div>
-                <div className="text-center">Side</div>
                 <div className="text-right">Amount</div>
                 <div className="text-right">Edge</div>
                 <div />
               </div>
 
               {legs.map((leg) => {
-                const amt      = legAmount(leg.pct, totalBudget);
-                const edgeVal  = leg.side === "YES" ? leg.bracket.edge : -leg.bracket.edge;
-                const edgeCls  = edgeVal >= 25 ? "text-emerald-400" : edgeVal >= 10 ? "text-sky-400" : "text-orange-400";
+                const amt     = legAmount(leg.pct, totalBudget);
+                const edgeVal = leg.bracket.edge;
+                const edgeCls = edgeVal >= 25 ? "text-emerald-400" : edgeVal >= 10 ? "text-sky-400" : edgeVal >= 0 ? "text-slate-300" : "text-orange-400";
                 const execRes  = legResults.find((r) => r.id === leg.id);
 
                 return (
@@ -469,21 +406,21 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
                     }`}
                   >
                     {/* ── Desktop row ─────────────────────────────────── */}
-                    <div className="hidden sm:grid grid-cols-[1fr_56px_96px_52px_28px] gap-2 items-center">
-                      {/* Label + tag */}
+                    <div className="hidden sm:grid grid-cols-[1fr_96px_52px_28px] gap-2 items-center">
+                      {/* Label + role badge */}
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-sm font-medium text-white truncate">
                           {leg.bracket.range.label}
                         </span>
-                        {leg.isPrimary && (
+                        {leg.isPrimary ? (
                           <span className="shrink-0 text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0.5 rounded font-semibold">
                             PRIMARY
                           </span>
+                        ) : (
+                          <span className="shrink-0 text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1 py-0.5 rounded font-semibold">
+                            HEDGE
+                          </span>
                         )}
-                      </div>
-                      {/* Side */}
-                      <div className="flex justify-center">
-                        <SideBadge side={leg.side} />
                       </div>
                       {/* Amount */}
                       <div className="flex justify-end">
@@ -525,12 +462,15 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
                         <span className="text-sm font-medium text-white flex-1 min-w-0 truncate">
                           {leg.bracket.range.label}
                         </span>
-                        {leg.isPrimary && (
+                        {leg.isPrimary ? (
                           <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0.5 rounded font-semibold shrink-0">
                             PRIMARY
                           </span>
+                        ) : (
+                          <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1 py-0.5 rounded font-semibold shrink-0">
+                            HEDGE
+                          </span>
                         )}
-                        <SideBadge side={leg.side} />
                         <span className={`text-sm font-semibold shrink-0 ${edgeCls}`}>
                           {edgeVal > 0 ? "+" : ""}{edgeVal}
                         </span>
@@ -559,7 +499,7 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
                           </div>
                         )}
                         <span className="text-xs text-slate-500 ml-auto">
-                          {((leg.side === "YES" ? leg.bracket.yes_price : 1 - leg.bracket.yes_price) * 100).toFixed(0)}¢/share
+                          {(leg.bracket.yes_price * 100).toFixed(0)}¢/share
                         </span>
                       </div>
                     </div>
@@ -569,40 +509,13 @@ export default function PositionBuilderModal({ group, timeStatus = "active", onC
             </div>
           ) : (
             <div className="text-center py-8 text-slate-500">
-              <p className="font-medium">No actionable signals found</p>
-              <p className="text-xs mt-1">All brackets are neutral or have no forecast.</p>
+              <p className="font-medium">No forecast bracket available</p>
+              <p className="text-xs mt-1">Enter a forecast to see suggested trades.</p>
             </div>
           )}
 
-          {/* Optional forecast bracket checkbox (Cases 2 & 3) */}
-          {!isPlacing && forecastOptional && (
-            <label className={`flex items-center gap-2.5 cursor-pointer select-none px-3 py-2 rounded-lg border transition-colors ${
-              forecastInLegs
-                ? "bg-emerald-500/8 border-emerald-500/20"
-                : "bg-slate-700/20 border-slate-700/40 opacity-70 hover:opacity-90"
-            }`}>
-              <input
-                type="checkbox"
-                checked={forecastInLegs}
-                onChange={(e) => toggleForecastBracket(e.target.checked)}
-                className="accent-emerald-500 w-3.5 h-3.5 shrink-0"
-              />
-              <span className="text-sm text-slate-300">
-                <span className="font-medium text-white">{forecastOptional.range.label} YES</span>
-                {" "}
-                <span className="text-slate-400">
-                  · forecast bracket
-                  {forecastOptional.edge <= -8
-                    ? ` · market overconfident (${forecastOptional.yes_pct}% vs our ${forecastOptional.confidence}%)`
-                    : ` · fairly priced`}
-                  {" · "}{Math.round(forecastOptional.yes_price * 100)}¢
-                </span>
-              </span>
-            </label>
-          )}
-
           {/* Add custom trade */}
-          {!isPlacing && (
+          {!isPlacing && legs.length > 0 && (
             showAddPicker ? (
               <AddTradePicker
                 brackets={group.brackets}
@@ -682,16 +595,13 @@ function AddTradePicker({
 }: {
   brackets:     BracketMarket[];
   existingLegs: PositionLeg[];
-  onAdd:        (b: BracketMarket, side: "YES" | "NO") => void;
+  onAdd:        (b: BracketMarket) => void;
   onCancel:     () => void;
 }) {
-  const existingKeys = new Set(existingLegs.map((l) => `${l.bracket.market_id}-${l.side}`));
+  const existingIds = new Set(existingLegs.map((l) => l.bracket.market_id));
 
-  const options = brackets.flatMap((b) =>
-    (["YES", "NO"] as const)
-      .filter((side) => !existingKeys.has(`${b.market_id}-${side}`))
-      .map((side) => ({ b, side }))
-  );
+  // Only show brackets not already in legs (always YES side)
+  const options = brackets.filter((b) => !existingIds.has(b.market_id));
 
   return (
     <div className="bg-slate-700/40 border border-slate-600 rounded-xl p-3 space-y-2">
@@ -708,25 +618,23 @@ function AddTradePicker({
         <p className="text-slate-500 text-sm py-2 text-center">All brackets already added.</p>
       ) : (
         <div className="space-y-1 max-h-48 overflow-y-auto">
-          {options.map(({ b, side }) => {
-            const price = side === "YES" ? b.yes_price : 1 - b.yes_price;
-            const edge  = side === "YES" ? b.edge : -b.edge;
-            const edgeCls = edge >= 10 ? "text-emerald-400" : edge <= -10 ? "text-red-400" : "text-slate-500";
+          {options.map((b) => {
+            const edgeCls = b.edge >= 10 ? "text-emerald-400" : b.edge <= -10 ? "text-orange-400" : "text-slate-500";
             return (
               <button
-                key={`${b.market_id}-${side}`}
-                onClick={() => onAdd(b, side)}
+                key={b.market_id}
+                onClick={() => onAdd(b)}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-slate-600/50 transition-colors"
               >
                 <div className="flex items-center gap-2">
                   <span className="text-white font-medium">{b.range.label}</span>
-                  <SideBadge side={side} />
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/20 text-emerald-400 border-emerald-500/30">YES</span>
                 </div>
                 <div className="flex items-center gap-3 text-xs">
                   <span className={`font-semibold ${edgeCls}`}>
-                    {edge > 0 ? "+" : ""}{edge}pt
+                    {b.edge > 0 ? "+" : ""}{b.edge}pt
                   </span>
-                  <span className="text-slate-400">{(price * 100).toFixed(0)}¢</span>
+                  <span className="text-slate-400">{(b.yes_price * 100).toFixed(0)}¢</span>
                 </div>
               </button>
             );
