@@ -448,6 +448,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const [viewMode, setViewMode]   = useState<"active" | "history">("active");
   const [historyDays, setHistoryDays] = useState<7 | 30 | 90 | null>(30);
   const [showCancelled, setShowCancelled] = useState(false);
+  const [demoMode, setDemoMode]   = useState<boolean>(false);
   const [balance, setBalance]     = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
@@ -899,9 +900,17 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
 
+  // ── Demo / real split ─────────────────────────────────────────────────────
+  // Applied before all other filters so summary cards and visible trade lists
+  // are scoped to the correct population.  Trades without a demo flag (pre-
+  // migration rows) are treated as real trades (demo !== true).
+  const modeFilteredTrades = trades.filter((t) =>
+    demoMode ? t.demo === true : t.demo !== true
+  );
+
   // Void-cancelled = boosted predecessors or cancelled orders with 0 fills.
   // Hidden by default in both views (no capital deployed, no real position).
-  const nonVoidTrades = trades.filter((t) => !isVoidCancelled(t));
+  const nonVoidTrades = modeFilteredTrades.filter((t) => !isVoidCancelled(t));
 
   // ── Active & Settled view ─────────────────────────────────────────────────
   // Scope: all open positions (any age) + trades for today's or yesterday's
@@ -938,7 +947,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   })() : null;
 
-  const historyBase = showCancelled ? trades : nonVoidTrades;
+  const historyBase = showCancelled ? modeFilteredTrades : nonVoidTrades;
   const historyVisibleTrades = historyBase.filter((t) =>
     historyStartDate === null || dateInLocalTZ(t.created_at) >= historyStartDate
   );
@@ -1023,11 +1032,33 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
 
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-2xl font-bold text-white">Trades</h1>
+          {demoMode && (
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full border
+              bg-violet-500/15 text-violet-300 border-violet-500/30">
+              Demo
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          {/* Demo / real toggle */}
+          <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs">
+            <button
+              onClick={() => setDemoMode(false)}
+              className={`px-3 py-1.5 transition-colors ${!demoMode ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
+            >
+              Real
+            </button>
+            <button
+              onClick={() => setDemoMode(true)}
+              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${demoMode ? "bg-violet-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
+            >
+              Demo
+            </button>
+          </div>
+
           {/* View toggle */}
           <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs">
             <button
@@ -1206,13 +1237,19 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
         <div className="text-center py-20 text-slate-500">
           <p className="text-4xl mb-3">📊</p>
           <p className="text-lg font-medium">
-            {trades.length === 0 ? "No trades logged yet" :
-             viewMode === "history" ? "No trades in this date range" :
-             "No active or settled trades"}
+            {modeFilteredTrades.length === 0
+              ? demoMode
+                ? "No demo trades yet"
+                : "No trades logged yet"
+              : viewMode === "history"
+              ? "No trades in this date range"
+              : "No active or settled trades"}
           </p>
           <p className="text-sm mt-1">
-            {trades.length === 0
-              ? "Head to Markets to find edges and log your first trade."
+            {modeFilteredTrades.length === 0
+              ? demoMode
+                ? "The 10 AM cron will place demo trades once tomorrow's markets are listed."
+                : "Head to Markets to find edges and log your first trade."
               : viewMode === "active"
               ? <button onClick={() => setViewMode("history")} className="text-sky-400 hover:text-sky-300 underline">View history</button>
               : null}
