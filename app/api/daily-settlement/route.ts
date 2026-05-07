@@ -9,6 +9,7 @@ import {
   type RecommendationResultRow,
   type SettlementSummary,
 } from "@/lib/settlement";
+import { runDemoTrading, type DemoTradingResult } from "@/lib/demo-trading";
 import type { Forecast, Trade } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -106,9 +107,28 @@ async function settle(date: string): Promise<SettlementSummary> {
 }
 
 async function run(date: string) {
+  // ── 1. Settle yesterday's markets ─────────────────────────────────────────
   const summary = await settle(date);
-  const status  = summary.errors.length === 0 ? 200 : 207; // partial success
-  return NextResponse.json(summary, { status });
+
+  // ── 2. Place demo trades for tomorrow ─────────────────────────────────────
+  // Fire after settlement so the two tasks don't compete for the cron timeout.
+  // Failures are caught and surfaced in the response but never abort settlement.
+  let demo: DemoTradingResult | null = null;
+  try {
+    demo = await runDemoTrading();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[daily-settlement] runDemoTrading threw:", msg);
+    demo = {
+      target_date: "",
+      orders:      [],
+      skipped:     [],
+      errors:      [`runDemoTrading threw: ${msg}`],
+    };
+  }
+
+  const hasErrors = summary.errors.length > 0 || (demo?.errors.length ?? 0) > 0;
+  return NextResponse.json({ ...summary, demo }, { status: hasErrors ? 207 : 200 });
 }
 
 // Vercel cron uses GET; manual triggers can use POST with a JSON body.

@@ -48,12 +48,17 @@ function normalisePem(raw: string): string {
 /**
  * Build the three Kalshi auth headers for a given HTTP method + path.
  * Timestamp is milliseconds-since-epoch as a string (Kalshi v2 format).
+ *
+ * @param forceDemo - When true, always use demo credentials regardless of the
+ *                    KALSHI_DEMO_MODE env var.  Used by the automated demo-trading
+ *                    cron so it always targets the demo API.
  */
 export function buildKalshiAuthHeaders(
   method: string,
-  path: string
+  path: string,
+  forceDemo?: boolean,
 ): Record<string, string> {
-  const demo = process.env.KALSHI_DEMO_MODE === "true";
+  const demo = forceDemo ?? (process.env.KALSHI_DEMO_MODE === "true");
 
   const accessKey = demo
     ? (process.env.KALSHI_DEMO_API_KEY_ID ?? "")
