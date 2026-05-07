@@ -292,11 +292,31 @@ export async function runDemoTrading(opts?: { force?: boolean }): Promise<DemoTr
     }
 
     if (rows.length > 0 && force) {
-      // Mark all existing demo trades for this date as canceled so they don't
-      // pollute the history view after re-placement.
+      // Cancel any live Kalshi demo orders for these trades first, then mark
+      // the DB rows as canceled so they don't pollute the history view.
+      const { data: pendingRows } = await supabase
+        .from("trades")
+        .select("id, kalshi_order_id, order_status, outcome")
+        .eq("target_date", targetDate)
+        .eq("demo", true)
+        .in("outcome", ["pending"]);
+
+      const liveOrders = (pendingRows ?? []).filter(
+        (r) =>
+          r.kalshi_order_id &&
+          (r.order_status === "resting" || r.order_status === "partially_filled"),
+      );
+
+      if (liveOrders.length > 0) {
+        console.log(`[demo-trading] Force: canceling ${liveOrders.length} live Kalshi demo orders…`);
+        await Promise.all(
+          liveOrders.map((r) => cancelKalshiDemoOrder(r.kalshi_order_id as string)),
+        );
+      }
+
       await supabase
         .from("trades")
-        .update({ outcome: "pending", order_status: "canceled", last_checked_at: new Date().toISOString() })
+        .update({ order_status: "canceled", last_checked_at: new Date().toISOString() })
         .eq("target_date", targetDate)
         .eq("demo", true)
         .in("outcome", ["pending"]);
