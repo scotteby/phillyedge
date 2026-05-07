@@ -489,13 +489,14 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     setPricesFetching(true);
     try {
       const results = await Promise.allSettled(
-        candidates.map((t) =>
-          fetch(`/api/live-price?ticker=${encodeURIComponent(t.market_id)}`)
+        candidates.map((t) => {
+          const demoSuffix = (t.demo === true) ? "&demo=true" : "";
+          return fetch(`/api/live-price?ticker=${encodeURIComponent(t.market_id)}${demoSuffix}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((j: { ticker: string; yes_price: number } | null) =>
               j?.yes_price != null ? { ticker: t.market_id, yes_price: j.yes_price } : null
-            )
-        )
+            );
+        })
       );
 
       setLivePrices((prev) => {
@@ -1502,6 +1503,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
         <BoostModal
           trade={boostModalTrade}
           boosting={boosting === boostModalTrade.id}
+          demoMode={demoMode}
           onConfirm={(cents) => boostOrder(boostModalTrade.id, cents)}
           onClose={() => setBoostModalTrade(null)}
         />
@@ -1843,10 +1845,11 @@ function MarkSoldModal({
 // ── Boost modal ───────────────────────────────────────────────────────────────
 
 function BoostModal({
-  trade, boosting, onConfirm, onClose,
+  trade, boosting, demoMode, onConfirm, onClose,
 }: {
   trade: Trade;
   boosting: boolean;
+  demoMode?: boolean;
   onConfirm: (newPriceCents: number) => void;
   onClose: () => void;
 }) {
@@ -1874,10 +1877,11 @@ function BoostModal({
     ? trade.my_pct - Math.round(entryPrice * 100)
     : (100 - trade.my_pct) - Math.round(entryPrice * 100);
 
-  // Fetch orderbook (bid/ask) on mount
+  // Fetch orderbook (bid/ask) on mount — use demo exchange when trade is a demo trade
   useEffect(() => {
     setObLoading(true);
-    fetch(`/api/orderbook?ticker=${encodeURIComponent(trade.market_id)}`)
+    const demoSuffix = (demoMode || trade.demo) ? "&demo=true" : "";
+    fetch(`/api/orderbook?ticker=${encodeURIComponent(trade.market_id)}${demoSuffix}`)
       .then((r) => r.ok ? r.json() : null)
       .then((j) => {
         if (j) {
@@ -1889,12 +1893,13 @@ function BoostModal({
       })
       .catch(() => {})
       .finally(() => setObLoading(false));
-  }, [trade.market_id, trade.side]);
+  }, [trade.market_id, trade.side, demoMode, trade.demo]);
 
   // For sell orders: fetch the current Kalshi sell order limit price
   useEffect(() => {
     if (!isSellOrder || !trade.kalshi_order_id) return;
-    fetch(`/api/kalshi-order?order_id=${encodeURIComponent(trade.kalshi_order_id)}`)
+    const demoSuffix = (demoMode || trade.demo) ? "&demo=true" : "";
+    fetch(`/api/kalshi-order?order_id=${encodeURIComponent(trade.kalshi_order_id)}${demoSuffix}`)
       .then((r) => r.ok ? r.json() : null)
       .then((j) => {
         if (!j) return;
@@ -1902,7 +1907,7 @@ function BoostModal({
         if (price > 0) setSellLimitCents(price);
       })
       .catch(() => {});
-  }, [isSellOrder, trade.kalshi_order_id, trade.side]);
+  }, [isSellOrder, trade.kalshi_order_id, trade.side, demoMode, trade.demo]);
 
   // Derive the chosen price in cents
   const chosenCents: number | null = (() => {

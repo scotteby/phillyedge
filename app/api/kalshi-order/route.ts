@@ -8,20 +8,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
 
-const DEMO_MODE   = process.env.KALSHI_DEMO_MODE === "true";
-const KALSHI_BASE = DEMO_MODE
-  ? "https://demo-api.kalshi.co/trade-api/v2"
-  : "https://api.elections.kalshi.com/trade-api/v2";
+const PROD_BASE = "https://api.elections.kalshi.com/trade-api/v2";
+const DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2";
 
 export async function GET(req: NextRequest) {
-  const orderId = req.nextUrl.searchParams.get("order_id");
+  const orderId   = req.nextUrl.searchParams.get("order_id");
+  const forceDemo = req.nextUrl.searchParams.get("demo") === "true";
   if (!orderId) {
     return NextResponse.json({ error: "Missing order_id" }, { status: 400 });
   }
 
+  const isDemo      = forceDemo || process.env.KALSHI_DEMO_MODE === "true";
+  const KALSHI_BASE = isDemo ? DEMO_BASE : PROD_BASE;
+
   try {
     const path    = `/trade-api/v2/portfolio/orders/${orderId}`;
-    const headers = buildKalshiAuthHeaders("GET", path);
+    const headers = buildKalshiAuthHeaders("GET", path, isDemo);
     const res     = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, {
       headers,
       cache: "no-store",

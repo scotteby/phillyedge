@@ -15,16 +15,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-const DEMO_MODE   = process.env.KALSHI_DEMO_MODE === "true";
-const KALSHI_BASE = DEMO_MODE
-  ? "https://demo-api.kalshi.co/trade-api/v2"
-  : "https://api.elections.kalshi.com/trade-api/v2";
+const PROD_BASE = "https://api.elections.kalshi.com/trade-api/v2";
+const DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2";
 
 export async function GET(req: NextRequest) {
-  const ticker = req.nextUrl.searchParams.get("ticker");
+  const ticker    = req.nextUrl.searchParams.get("ticker");
+  const forceDemo = req.nextUrl.searchParams.get("demo") === "true";
   if (!ticker) {
     return NextResponse.json({ error: "Missing ticker" }, { status: 400 });
   }
+
+  const KALSHI_BASE = (forceDemo || process.env.KALSHI_DEMO_MODE === "true") ? DEMO_BASE : PROD_BASE;
 
   try {
     const res = await fetch(
