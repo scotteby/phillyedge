@@ -19,10 +19,8 @@ import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
 import { createServiceClient } from "@/lib/supabase/server";
 import { deriveTradeSignal } from "@/lib/signal";
 
-const DEMO_MODE   = process.env.KALSHI_DEMO_MODE === "true";
-const KALSHI_BASE = DEMO_MODE
-  ? "https://demo-api.kalshi.co/trade-api/v2"
-  : "https://api.elections.kalshi.com/trade-api/v2";
+const PROD_BASE   = "https://api.elections.kalshi.com/trade-api/v2";
+const DEMO_BASE   = "https://demo-api.kalshi.co/trade-api/v2";
 const ORDER_PATH  = "/trade-api/v2/portfolio/orders";
 
 const SERIES_SLUGS: Record<string, string> = {
@@ -58,7 +56,7 @@ export async function POST(req: NextRequest) {
   // ── Look up old trade ─────────────────────────────────────────────────────
   const { data: trade, error: dbErr } = await supabase
     .from("trades")
-    .select("id, market_id, market_question, target_date, side, amount_usdc, entry_yes_price, market_pct, my_pct, edge, signal, kalshi_order_id, order_status, filled_count, remaining_count, outcome, polymarket_url")
+    .select("id, market_id, market_question, target_date, side, amount_usdc, entry_yes_price, market_pct, my_pct, edge, signal, kalshi_order_id, order_status, filled_count, remaining_count, outcome, polymarket_url, demo")
     .eq("id", trade_id)
     .single();
 
@@ -75,9 +73,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No Kalshi order ID for this trade" }, { status: 422 });
   }
 
-  const ticker  = trade.market_id as string;
-  const side    = (trade.side as string).toLowerCase() as "yes" | "no";
-  const orderId = trade.kalshi_order_id as string;
+  const ticker   = trade.market_id as string;
+  const side     = (trade.side as string).toLowerCase() as "yes" | "no";
+  const orderId  = trade.kalshi_order_id as string;
+  // Use demo API if this trade was placed on the demo exchange
+  const isDemo   = (trade.demo as boolean | null) === true;
+  const KALSHI_BASE = isDemo ? DEMO_BASE : PROD_BASE;
 
   // ── Detect sell order: remaining_count=-1 is our sentinel ────────────────
   const isSellOrder = (trade.remaining_count as number | null) === -1;
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
 
     // 1. Cancel old sell order
     const cancelPath    = `/trade-api/v2/portfolio/orders/${orderId}`;
-    const cancelHeaders = buildKalshiAuthHeaders("DELETE", cancelPath);
+    const cancelHeaders = buildKalshiAuthHeaders("DELETE", cancelPath, isDemo);
     try {
       const cancelRes = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, {
         method: "DELETE", headers: cancelHeaders,
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
     };
     console.log("[boost-order/sell] new sell order body:", JSON.stringify(sellOrderBody));
 
-    const placeHeaders = buildKalshiAuthHeaders("POST", ORDER_PATH);
+    const placeHeaders = buildKalshiAuthHeaders("POST", ORDER_PATH, isDemo);
     let newSellOrderId: string | null = null;
     let newOrderFilled = false;
 
@@ -218,7 +219,7 @@ export async function POST(req: NextRequest) {
   if (count < 1) {
     try {
       const orderPath    = `/trade-api/v2/portfolio/orders/${orderId}`;
-      const orderHeaders = buildKalshiAuthHeaders("GET", orderPath);
+      const orderHeaders = buildKalshiAuthHeaders("GET", orderPath, isDemo);
       const orderRes     = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, { headers: orderHeaders });
       if (orderRes.ok) {
         const orderJson = await orderRes.json();
@@ -240,7 +241,7 @@ export async function POST(req: NextRequest) {
   const cancelPath = `/trade-api/v2/portfolio/orders/${orderId}`;
   let cancelHeaders: Record<string, string>;
   try {
-    cancelHeaders = buildKalshiAuthHeaders("DELETE", cancelPath);
+    cancelHeaders = buildKalshiAuthHeaders("DELETE", cancelPath, isDemo);
   } catch (err) {
     return NextResponse.json({ error: `Signing error: ${String(err)}` }, { status: 500 });
   }
@@ -261,7 +262,7 @@ export async function POST(req: NextRequest) {
         // Fetch the order to determine its status.
         try {
           const chkPath = `/trade-api/v2/portfolio/orders/${orderId}`;
-          const chkHdrs = buildKalshiAuthHeaders("GET", chkPath);
+          const chkHdrs = buildKalshiAuthHeaders("GET", chkPath, isDemo);
           const chkRes  = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, { headers: chkHdrs });
           if (chkRes.ok) {
             const chkJson = await chkRes.json();
@@ -327,7 +328,7 @@ export async function POST(req: NextRequest) {
 
   let placeHeaders: Record<string, string>;
   try {
-    placeHeaders = buildKalshiAuthHeaders("POST", ORDER_PATH);
+    placeHeaders = buildKalshiAuthHeaders("POST", ORDER_PATH, isDemo);
   } catch (err) {
     return NextResponse.json({ error: `Signing error: ${String(err)}` }, { status: 500 });
   }
@@ -392,6 +393,7 @@ export async function POST(req: NextRequest) {
         entry_yes_price: newEntryYes,
         filled_count:    0,
         remaining_count: count,
+        demo:            isDemo,
       }])
       .select("id")
       .single();
@@ -464,5 +466,6 @@ export async function POST(req: NextRequest) {
     new_price_cents,
     new_amount:   newAmount,
     new_edge:     newEdge,
+    demo:         isDemo,
   });
 }

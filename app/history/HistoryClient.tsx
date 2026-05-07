@@ -740,21 +740,22 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                 : t
             );
             if (json.new_trade_id) {
+              const origTrade = prev.find((t) => t.id === tradeId);
               updated.unshift({
                 id:              json.new_trade_id,
                 created_at:      new Date().toISOString(),
                 market_id:       json.ticker,
-                market_question: prev.find((t) => t.id === tradeId)?.market_question ?? "",
-                target_date:     prev.find((t) => t.id === tradeId)?.target_date ?? "",
+                market_question: origTrade?.market_question ?? "",
+                target_date:     origTrade?.target_date ?? "",
                 side:            json.side,
                 amount_usdc:     json.new_amount,
                 market_pct:      json.new_price_cents,
-                my_pct:          prev.find((t) => t.id === tradeId)?.my_pct ?? 50,
+                my_pct:          origTrade?.my_pct ?? 50,
                 edge:            json.new_edge,
-                signal:          prev.find((t) => t.id === tradeId)?.signal ?? "buy",
+                signal:          origTrade?.signal ?? "buy",
                 outcome:         "pending",
                 pnl:             null,
-                polymarket_url:  prev.find((t) => t.id === tradeId)?.polymarket_url ?? null,
+                polymarket_url:  origTrade?.polymarket_url ?? null,
                 kalshi_order_id: json.new_order_id ?? null,
                 order_status:    "resting",
                 filled_count:    0,
@@ -763,6 +764,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                 entry_yes_price: json.side === "YES"
                   ? json.new_price_cents / 100
                   : 1 - json.new_price_cents / 100,
+                demo:            json.demo === true ? true : undefined,
               });
             }
             return updated;

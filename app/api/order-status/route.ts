@@ -3,10 +3,8 @@ import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { OrderStatus } from "@/lib/types";
 
-const DEMO_MODE   = process.env.KALSHI_DEMO_MODE === "true";
-const KALSHI_BASE = DEMO_MODE
-  ? "https://demo-api.kalshi.co/trade-api/v2"
-  : "https://api.elections.kalshi.com/trade-api/v2";
+const PROD_BASE = "https://api.elections.kalshi.com/trade-api/v2";
+const DEMO_BASE = "https://demo-api.kalshi.co/trade-api/v2";
 
 /** Map Kalshi order statuses to our internal set. */
 function normaliseStatus(raw: string): OrderStatus {
@@ -42,6 +40,7 @@ async function checkMarketResolutionOnly(
   trade: DbTrade,
   filledCount: number,
   supabase: ReturnType<typeof createServiceClient>,
+  kalshiBase: string,
 ): Promise<NextResponse> {
   const outcome = trade.outcome;
   const tradeSide = String(trade.side ?? "").toLowerCase();
@@ -59,7 +58,7 @@ async function checkMarketResolutionOnly(
 
   try {
     const mktRes = await fetch(
-      `${KALSHI_BASE}/markets/${encodeURIComponent(trade.market_id)}`,
+      `${kalshiBase}/markets/${encodeURIComponent(trade.market_id)}`,
       { headers: { Accept: "application/json" }, cache: "no-store" }
     );
     if (!mktRes.ok) throw new Error(`HTTP ${mktRes.status}`);
@@ -120,13 +119,17 @@ export async function GET(req: NextRequest) {
   // Fetch trade — include fields needed for resolution calc
   const { data: trade, error: dbErr } = await supabase
     .from("trades")
-    .select("id, kalshi_order_id, order_status, market_id, side, entry_yes_price, market_pct, outcome, filled_count")
+    .select("id, kalshi_order_id, order_status, market_id, side, entry_yes_price, market_pct, outcome, filled_count, demo")
     .eq("id", tradeId)
     .single();
 
   if (dbErr || !trade) {
     return NextResponse.json({ error: "Trade not found" }, { status: 404 });
   }
+
+  // Use demo API if this trade was placed on the demo exchange
+  const isDemo      = (trade.demo as boolean | null) === true;
+  const KALSHI_BASE = isDemo ? DEMO_BASE : PROD_BASE;
 
   // Boosted+canceled trades have a fixed, known fill count — the order was
   // cancelled when the user re-placed it at a higher price.  Re-querying the
@@ -145,7 +148,7 @@ export async function GET(req: NextRequest) {
         resolved:     false,
       });
     }
-    return await checkMarketResolutionOnly(trade as DbTrade, storedFilled, supabase);
+    return await checkMarketResolutionOnly(trade as DbTrade, storedFilled, supabase, KALSHI_BASE);
   }
 
   // If there's no kalshi_order_id we can't fetch order details, but we can
@@ -156,7 +159,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "No Kalshi order ID for this trade" }, { status: 422 });
     }
     // Fall through to market resolution check below using stored filled_count.
-    return await checkMarketResolutionOnly(trade, storedFilled, supabase);
+    return await checkMarketResolutionOnly(trade, storedFilled, supabase, KALSHI_BASE);
   }
 
   const orderId = trade.kalshi_order_id as string;
@@ -166,7 +169,7 @@ export async function GET(req: NextRequest) {
 
   let headers: Record<string, string>;
   try {
-    headers = buildKalshiAuthHeaders("GET", apiPath);
+    headers = buildKalshiAuthHeaders("GET", apiPath, isDemo);
   } catch (err) {
     return NextResponse.json(
       { error: `Signing error: ${err instanceof Error ? err.message : String(err)}` },
