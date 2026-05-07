@@ -230,6 +230,7 @@ const ACTION_STYLES = {
   boost:     "border-sky-500/40     text-sky-400     hover:bg-sky-500/15     hover:border-sky-400",
   reconcile: "border-slate-500/40   text-slate-400   hover:bg-slate-500/15   hover:border-slate-400",
   buy:       "border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 hover:border-emerald-400",
+  simulate:  "border-violet-500/40  text-violet-400  hover:bg-violet-500/15  hover:border-violet-400",
 } as const;
 
 function ActionButton({
@@ -441,6 +442,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const [sellModalTrades, setSellModalTrades] = useState<Trade[] | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
+  const [simFilling, setSimFilling] = useState<string | null>(null);
   const [buyModalPosition, setBuyModalPosition] = useState<Position | null>(null);
   const [syncing, setSyncing]           = useState(false);
   const [reconciling, setReconciling]   = useState(false);
@@ -779,6 +781,36 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
       addToast(`Boost error: ${String(err)}`, "error");
     } finally {
       setBoosting(null);
+    }
+  }
+
+  // ── Simulate fill (demo only) ────────────────────────────────────────────
+
+  async function simulateFill(tradeId: string) {
+    setSimFilling(tradeId);
+    try {
+      const res  = await fetch("/api/simulate-fill", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ trade_id: tradeId }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setTrades((prev) =>
+          prev.map((t) =>
+            t.id === tradeId
+              ? { ...t, order_status: "filled" as Trade["order_status"], filled_count: json.filled_count ?? t.filled_count }
+              : t
+          )
+        );
+        addToast(`⚡ Demo fill simulated — ${json.filled_count} contracts`, "fill");
+      } else {
+        addToast(`Simulate fill failed: ${json.error ?? "unknown error"}`, "error");
+      }
+    } catch (err) {
+      addToast(`Simulate fill error: ${String(err)}`, "error");
+    } finally {
+      setSimFilling(null);
     }
   }
 
@@ -1383,8 +1415,10 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                                   trade={item.trade}
                                   canceling={canceling === item.trade.id}
                                   boosting={boosting === item.trade.id}
+                                  simFilling={simFilling === item.trade.id}
                                   onCancel={() => cancelOrder(item.trade.id)}
                                   onBoost={() => setBoostModalTrade(item.trade)}
+                                  onSimFill={item.trade.demo === true ? () => simulateFill(item.trade.id) : undefined}
                                 />
                               )
                             )}
@@ -1469,8 +1503,10 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                                       trade={item.trade}
                                       canceling={canceling === item.trade.id}
                                       boosting={boosting === item.trade.id}
+                                      simFilling={simFilling === item.trade.id}
                                       onCancel={() => cancelOrder(item.trade.id)}
                                       onBoost={() => setBoostModalTrade(item.trade)}
+                                      onSimFill={item.trade.demo === true ? () => simulateFill(item.trade.id) : undefined}
                                     />
                                   )
                                 )}
@@ -3263,20 +3299,23 @@ function CombinedSellOrderRow({
 // ── Desktop pending order row ────────────────────────────────────────────────
 
 interface PendingOrderRowProps {
-  trade:     Trade;
-  canceling: boolean;
-  boosting:  boolean;
-  onCancel:  () => void;
-  onBoost:   () => void;
+  trade:        Trade;
+  canceling:    boolean;
+  boosting:     boolean;
+  simFilling?:  boolean;
+  onCancel:     () => void;
+  onBoost:      () => void;
+  onSimFill?:   () => void;
 }
 
-function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: PendingOrderRowProps) {
+function PendingOrderRow({ trade, canceling, boosting, simFilling, onCancel, onBoost, onSimFill }: PendingOrderRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const bracket    = modelGetBracketLabel(trade.market_question);
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null;
+  const showSimFill = trade.demo === true && isBoostable(trade) && onSimFill != null;
   const filledCount    = trade.filled_count ?? 0;
   const remainingCount = trade.remaining_count ?? 0;
   const totalCount     = filledCount + remainingCount;
@@ -3327,6 +3366,10 @@ function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: Pend
       {/* Actions */}
       <td className="py-2 pr-4 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
         <div className="flex gap-1 flex-wrap justify-end">
+          {showSimFill && (
+            <ActionButton variant="simulate" onClick={(e) => { e.stopPropagation(); onSimFill!(); }}
+              loading={simFilling ?? false} label="Fill ⚡" loadingLabel="Filling…" />
+          )}
           {showBoost && (
             <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
               loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
@@ -3485,13 +3528,14 @@ function FillSubCard({ trade, onSell: _onSell, onBoost: _onBoost, onCancel: _onC
 
 // ── Mobile pending order card ────────────────────────────────────────────────
 
-function PendingOrderCard({ trade, canceling, boosting, onCancel, onBoost }: PendingOrderRowProps) {
+function PendingOrderCard({ trade, canceling, boosting, simFilling, onCancel, onBoost, onSimFill }: PendingOrderRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const bracket    = modelGetBracketLabel(trade.market_question);
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null;
+  const showSimFill = trade.demo === true && isBoostable(trade) && onSimFill != null;
   const filledCount    = trade.filled_count ?? 0;
   const remainingCount = trade.remaining_count ?? 0;
   const totalCount     = filledCount + remainingCount;
@@ -3525,8 +3569,12 @@ function PendingOrderCard({ trade, canceling, boosting, onCancel, onBoost }: Pen
           <>{contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit</>
         )}
       </div>
-      {(showBoost || showCancel) && (
+      {(showSimFill || showBoost || showCancel) && (
         <div className="flex gap-1 flex-wrap">
+          {showSimFill && (
+            <ActionButton variant="simulate" onClick={(e) => { e.stopPropagation(); onSimFill!(); }}
+              loading={simFilling ?? false} label="Fill ⚡" loadingLabel="Filling…" />
+          )}
           {showBoost && (
             <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
               loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
