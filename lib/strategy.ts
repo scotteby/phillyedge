@@ -38,21 +38,32 @@ export function selectSecondaryBracket(
   // No hedge for open-ended (lowest / highest) forecast brackets
   if (fMin === null || fMax === null) return null;
 
-  // Immediately adjacent brackets share an exact boundary with the forecast bracket
-  const bracketBelow = brackets.find(
-    (b) => b.range.max === fMin && b.market_id !== forecastBkt.market_id,
-  ) ?? null;
-  const bracketAbove = brackets.find(
-    (b) => b.range.min === fMax && b.market_id !== forecastBkt.market_id,
-  ) ?? null;
+  // Sort brackets ascending by lower bound (null min = −∞ first).
+  // This handles both contiguous (64-66, 66-68) and non-contiguous
+  // (63-64, 65-66, 67-68) Kalshi bracket structures — we use positional
+  // neighbours rather than requiring exact shared boundaries.
+  const sorted = [...brackets].sort(
+    (a, b) => (a.range.min ?? -Infinity) - (b.range.min ?? -Infinity),
+  );
+
+  const fIdx = sorted.findIndex((b) => b.market_id === forecastBkt.market_id);
+  if (fIdx < 0) return null;
+
+  const bracketBelow = fIdx > 0                    ? sorted[fIdx - 1] : null;
+  const bracketAbove = fIdx < sorted.length - 1    ? sorted[fIdx + 1] : null;
 
   if (!bracketBelow && !bracketAbove) return null;
-  if (!bracketBelow) return bracketAbove;
+  if (!bracketBelow) return bracketAbove!;
   if (!bracketAbove) return bracketBelow;
 
-  // Distance from forecastValue to each bracket's shared boundary
-  const distBelow = forecastValue - fMin; // distance to lower boundary (bracketBelow.max = fMin)
-  const distAbove = fMax - forecastValue; // distance to upper boundary (bracketAbove.min = fMax)
+  // Distance from forecastValue to the nearest edge of each adjacent bracket.
+  //   bracketBelow: its upper boundary (max), or min if open-ended at top.
+  //   bracketAbove: its lower boundary (min), or max if open-ended at bottom.
+  const belowBoundary = bracketBelow.range.max ?? bracketBelow.range.min ?? fMin;
+  const aboveBoundary = bracketAbove.range.min ?? bracketAbove.range.max ?? fMax;
+
+  const distBelow = forecastValue - belowBoundary;
+  const distAbove = aboveBoundary - forecastValue;
 
   // Tie-break: prefer bracket above
   return distBelow < distAbove ? bracketBelow : bracketAbove;

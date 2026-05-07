@@ -136,6 +136,40 @@ describe("selectSecondaryBracket", () => {
     const result = selectSecondaryBracket(all, 65);
     assert.strictEqual(result!.market_id, "C");
   });
+
+  test("non-contiguous Kalshi brackets: 65-66 forecast at 66°F picks 67-68 hedge", () => {
+    // Actual Kalshi structure: 2-degree brackets with 1-degree gaps
+    // 63-64°, 65-66°, 67-68°, 69-70° — no shared boundaries
+    // Forecast = 65-66°F, actual temp = 66°F
+    // bracketBelow = 63-64: distBelow = 66 - 64 = 2
+    // bracketAbove = 67-68: distAbove = 67 - 66 = 1 → pick above (67-68)
+    const all = [
+      makeBracket({ market_id: "low",  min: null, max: 63, relation: "neutral" }),
+      makeBracket({ market_id: "A",    min: 63,   max: 64, relation: "neutral" }),
+      makeBracket({ market_id: "B",    min: 65,   max: 66, relation: "forecast" }),
+      makeBracket({ market_id: "C",    min: 67,   max: 68, relation: "neutral" }),
+      makeBracket({ market_id: "high", min: 69,   max: null, relation: "neutral" }),
+    ];
+    const result = selectSecondaryBracket(all, 66);
+    assert.ok(result, "should find a hedge bracket");
+    assert.strictEqual(result!.market_id, "C");  // 67-68°
+  });
+
+  test("non-contiguous Kalshi brackets: 65-66 forecast at 65°F picks 63-64 hedge", () => {
+    // Same structure, but temp is 65°F (near low end of forecast bracket)
+    // bracketBelow = 63-64: distBelow = 65 - 64 = 1
+    // bracketAbove = 67-68: distAbove = 67 - 65 = 2 → pick below (63-64)
+    const all = [
+      makeBracket({ market_id: "low",  min: null, max: 63, relation: "neutral" }),
+      makeBracket({ market_id: "A",    min: 63,   max: 64, relation: "neutral" }),
+      makeBracket({ market_id: "B",    min: 65,   max: 66, relation: "forecast" }),
+      makeBracket({ market_id: "C",    min: 67,   max: 68, relation: "neutral" }),
+      makeBracket({ market_id: "high", min: 69,   max: null, relation: "neutral" }),
+    ];
+    const result = selectSecondaryBracket(all, 65);
+    assert.ok(result, "should find a hedge bracket");
+    assert.strictEqual(result!.market_id, "A");  // 63-64°
+  });
 });
 
 // ── calcHedgeSize ─────────────────────────────────────────────────────────────
