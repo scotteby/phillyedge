@@ -44,7 +44,7 @@ create table if not exists public.trades (
   market_pct       int          not null,
   my_pct           int,                      -- null when model pct unavailable
   edge             int,                      -- null when my_pct is null
-  signal           text         not null check (signal in ('strong-buy', 'buy', 'neutral', 'avoid')),
+  signal           text         not null check (signal in ('strong-buy', 'buy', 'neutral', 'sell', 'strong-sell', 'avoid')),
   outcome          text         not null default 'pending'
                                 check (outcome in ('pending', 'win', 'loss', 'sold', 'boosted')),
   pnl              numeric(12,2),

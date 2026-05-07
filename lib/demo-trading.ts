@@ -196,6 +196,7 @@ type BracketSnap = {
   signal:      string;
 };
 
+/** Returns null on success, or an error string on failure. */
 async function logDemoTrade(
   supabase:    ReturnType<typeof createServiceClient>,
   bracket:     BracketSnap,
@@ -203,7 +204,7 @@ async function logDemoTrade(
   count:       number,
   filledCount: number,
   targetDate:  string,
-): Promise<void> {
+): Promise<string | null> {
   const price = bracket.yes_price;
 
   const row = {
@@ -229,19 +230,25 @@ async function logDemoTrade(
     .from("trades")
     .insert([{ ...row, demo: true }]);
 
-  if (error) {
-    if (error.message.includes("demo")) {
-      // Column not yet added — retry without it
-      console.warn(
-        `[demo-trading] INSERT with demo=true failed (${error.message}); retrying without demo flag. ` +
-        `Run: ALTER TABLE trades ADD COLUMN demo boolean NOT NULL DEFAULT false;`
-      );
-      const { error: e2 } = await supabase.from("trades").insert([row]);
-      if (e2) console.error(`[demo-trading] Supabase insert failed: ${e2.message}`);
-    } else {
-      console.error(`[demo-trading] Supabase insert failed: ${error.message}`);
+  if (!error) return null;  // success
+
+  if (error.message.toLowerCase().includes("demo")) {
+    // Column not yet added — retry without it
+    const msg = `demo column missing — run: ALTER TABLE trades ADD COLUMN demo boolean NOT NULL DEFAULT false;`;
+    console.warn(`[demo-trading] ${msg}`);
+    const { error: e2 } = await supabase.from("trades").insert([row]);
+    if (e2) {
+      const msg2 = `Supabase insert failed (retry): ${e2.message}`;
+      console.error(`[demo-trading] ${msg2}`);
+      return msg2;
     }
+    return null;  // retry succeeded (trade in DB but without demo flag)
   }
+
+  // All other errors (e.g. CHECK constraint violation on signal column)
+  const msg = `Supabase insert failed for ${bracket.market_id}: ${error.message}`;
+  console.error(`[demo-trading] ${msg}`);
+  return msg;
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -536,7 +543,7 @@ export async function runDemoTrading(opts?: { force?: boolean }): Promise<DemoTr
 
       if (!finalOid) return; // placement failed — no Supabase record to write
 
-      await logDemoTrade(
+      const logErr = await logDemoTrade(
         supabase,
         {
           market_id:  spec.bracket.market_id,
@@ -552,6 +559,7 @@ export async function runDemoTrading(opts?: { force?: boolean }): Promise<DemoTr
         filled,
         targetDate,
       );
+      if (logErr) errors.push(logErr);
     }),
   );
 
