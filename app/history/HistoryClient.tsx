@@ -530,7 +530,8 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const fetchBalance = useCallback(async () => {
     setBalanceLoading(true);
     try {
-      const res  = await fetch("/api/balance");
+      const url  = demoMode ? "/api/balance?demo=true" : "/api/balance";
+      const res  = await fetch(url);
       const json = await res.json();
       if (res.ok && json.balance_dollars != null) {
         setBalance(json.balance_dollars);
@@ -538,7 +539,8 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     } catch { /* ignore */ } finally {
       setBalanceLoading(false);
     }
-  }, []);
+  // demoMode in deps: switching mode creates a new fn → useEffect re-fetches
+  }, [demoMode]);
 
   useEffect(() => {
     fetchBalance();
@@ -1046,13 +1048,13 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
           {/* Demo / real toggle */}
           <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs">
             <button
-              onClick={() => setDemoMode(false)}
+              onClick={() => { setDemoMode(false); setBalance(null); }}
               className={`px-3 py-1.5 transition-colors ${!demoMode ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
             >
               Real
             </button>
             <button
-              onClick={() => setDemoMode(true)}
+              onClick={() => { setDemoMode(true); setBalance(null); }}
               className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${demoMode ? "bg-violet-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
             >
               Demo
@@ -1128,22 +1130,32 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
               onClick={fetchBalance}
               disabled={balanceLoading}
               title="Refresh balance"
-              className="bg-slate-800 border border-slate-700 hover:border-slate-500 rounded-xl p-4 text-left transition-colors disabled:opacity-50"
+              className={`bg-slate-800 border rounded-xl p-4 text-left transition-colors disabled:opacity-50 ${
+                demoMode
+                  ? "border-violet-700/50 hover:border-violet-500/60"
+                  : "border-slate-700 hover:border-slate-500"
+              }`}
             >
-              <p className="text-xs text-slate-500 uppercase tracking-wider">Balance</p>
+              <p className="text-xs text-slate-500 uppercase tracking-wider">
+                {demoMode ? "Demo Balance" : "Balance"}
+              </p>
               {balanceLoading ? (
                 <p className="text-2xl font-bold text-white mt-1 animate-pulse">…</p>
               ) : (
                 <>
-                  <p className="text-2xl font-bold text-emerald-400 mt-1">
-                    {balance != null ? `$${balance.toFixed(2)}` : "—"}
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <p className="text-2xl font-bold text-emerald-400">
+                      {balance != null ? `$${balance.toFixed(2)}` : "—"}
+                    </p>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {demoMode ? "cash available" : "available"}
                   </p>
-                  <p className="text-xs text-slate-500 mt-0.5">available</p>
                   {inPositions > 0 && (
                     <>
                       <div className="border-t border-slate-700 my-2" />
                       <div className="flex justify-between text-xs text-slate-400">
-                        <span>in open positions</span>
+                        <span>{demoMode ? "portfolio" : "in open positions"}</span>
                         <span className="font-medium">${inPositions.toFixed(2)}</span>
                       </div>
                       {balance != null && (

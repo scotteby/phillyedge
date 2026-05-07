@@ -6,19 +6,23 @@
  * Kalshi returns balance in cents (integer).
  */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
 
-const DEMO_MODE    = process.env.KALSHI_DEMO_MODE === "true";
-const KALSHI_BASE  = DEMO_MODE
-  ? "https://demo-api.kalshi.co/trade-api/v2"
-  : "https://api.elections.kalshi.com/trade-api/v2";
-const BALANCE_PATH = "/trade-api/v2/portfolio/balance";
+const DEMO_MODE       = process.env.KALSHI_DEMO_MODE === "true";
+const PROD_BASE       = "https://api.elections.kalshi.com/trade-api/v2";
+const DEMO_BASE_URL   = "https://demo-api.kalshi.co/trade-api/v2";
+const BALANCE_PATH    = "/trade-api/v2/portfolio/balance";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // ?demo=true forces demo credentials regardless of KALSHI_DEMO_MODE env var.
+  const forceDemo  = req.nextUrl.searchParams.get("demo") === "true";
+  const useDemo    = forceDemo || DEMO_MODE;
+  const KALSHI_BASE = useDemo ? DEMO_BASE_URL : PROD_BASE;
+
   let headers: Record<string, string>;
   try {
-    headers = buildKalshiAuthHeaders("GET", BALANCE_PATH);
+    headers = buildKalshiAuthHeaders("GET", BALANCE_PATH, useDemo || undefined);
   } catch (err) {
     return NextResponse.json(
       { error: `Signing error: ${err instanceof Error ? err.message : String(err)}` },
