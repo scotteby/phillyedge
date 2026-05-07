@@ -30,7 +30,10 @@ export function selectSecondaryBracket(
   brackets:      BracketMarket[],
   forecastValue: number,
 ): BracketMarket | null {
-  const forecastBkt = brackets.find((b) => b.relation === "forecast");
+  // Accept observed-mode relations as equivalent to "forecast"
+  const forecastBkt = brackets.find(
+    (b) => b.relation === "forecast" || b.relation === "likely_winner" || b.relation === "confirmed"
+  );
   if (!forecastBkt) return null;
 
   const { min: fMin, max: fMax } = forecastBkt.range;

@@ -155,6 +155,38 @@ describe("selectSecondaryBracket", () => {
     assert.strictEqual(result!.market_id, "C");  // 67-68°
   });
 
+  test("likely_winner relation: treats observed bracket as primary (low-temp market pattern)", () => {
+    // Low-temp market observed at 52°F → 51-52° gets relation "likely_winner".
+    // Forecast was 53°F. Hedge should be >52° (distAbove=52-53=-1 < distBelow=53-50=3 → above wins).
+    const all = [
+      makeBracket({ market_id: "lo",  min: null, max: 45, relation: "neutral" }),
+      makeBracket({ market_id: "a",   min: 45,   max: 46, relation: "neutral" }),
+      makeBracket({ market_id: "b",   min: 47,   max: 48, relation: "neutral" }),
+      makeBracket({ market_id: "c",   min: 49,   max: 50, relation: "neutral" }),
+      makeBracket({ market_id: "d",   min: 51,   max: 52, relation: "likely_winner" as const }),
+      makeBracket({ market_id: "hi",  min: 52,   max: null, relation: "neutral" }),
+    ];
+    const result = selectSecondaryBracket(all, 53);   // forecast=53°F
+    assert.ok(result, "should find a hedge bracket");
+    assert.strictEqual(result!.market_id, "hi");  // >52°
+  });
+
+  test("confirmed relation: treats confirmed bracket as primary (high-temp market pattern)", () => {
+    // High-temp market confirmed at 67°F → 66-68° gets relation "confirmed".
+    // Forecast was 67°F. Hedge should pick the closer neighbour.
+    const all = [
+      makeBracket({ market_id: "A", min: null, max: 64, relation: "neutral" }),
+      makeBracket({ market_id: "B", min: 64,   max: 66, relation: "neutral" }),
+      makeBracket({ market_id: "C", min: 66,   max: 68, relation: "confirmed" as const }),
+      makeBracket({ market_id: "D", min: 68,   max: 70, relation: "neutral" }),
+      makeBracket({ market_id: "E", min: 70,   max: null, relation: "neutral" }),
+    ];
+    // distBelow = 67 - 66 = 1, distAbove = 68 - 67 = 1 → tie → prefer above (D)
+    const result = selectSecondaryBracket(all, 67);
+    assert.ok(result, "should find a hedge bracket");
+    assert.strictEqual(result!.market_id, "D");  // 68-70°
+  });
+
   test("non-contiguous Kalshi brackets: 65-66 forecast at 65°F picks 63-64 hedge", () => {
     // Same structure, but temp is 65°F (near low end of forecast bracket)
     // bracketBelow = 63-64: distBelow = 65 - 64 = 1

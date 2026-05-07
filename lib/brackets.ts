@@ -409,7 +409,10 @@ export function groupBracketMarkets(
     //   hedge   = adjacent bracket nearest to forecast temp (bracketRole = "hedge", trade_side = "YES")
     //   others  = no recommendation (bracketRole = null, trade_side = null)
     // We never recommend NO positions.
-    const primaryBkt = brackets.find((b) => b.relation === "forecast") ?? null;
+    // "likely_winner" / "confirmed" are observed-mode equivalents of "forecast"
+    const primaryBkt = brackets.find(
+      (b) => b.relation === "forecast" || b.relation === "likely_winner" || b.relation === "confirmed"
+    ) ?? null;
     const hedgeBkt   =
       primaryBkt && fVal != null
         ? selectSecondaryBracket(brackets, fVal)
