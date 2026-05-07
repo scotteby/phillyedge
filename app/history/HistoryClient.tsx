@@ -443,6 +443,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
   const [simFilling, setSimFilling] = useState<string | null>(null);
+  const [resetting, setResetting]   = useState(false);
   const [buyModalPosition, setBuyModalPosition] = useState<Position | null>(null);
   const [syncing, setSyncing]           = useState(false);
   const [reconciling, setReconciling]   = useState(false);
@@ -814,6 +815,32 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     }
   }
 
+  // ── Reset demo (delete all + re-run) ─────────────────────────────────────
+
+  async function resetDemo() {
+    if (!confirm("Delete ALL demo trades and place fresh ones? This cannot be undone.")) return;
+    setResetting(true);
+    try {
+      const res  = await fetch("/api/reset-demo", { method: "POST" });
+      const json = await res.json();
+      if (res.ok) {
+        const placed = (json.orders as unknown[])?.length ?? 0;
+        addToast(
+          `♻️ Reset complete — deleted ${json.deleted} trades, placed ${placed} fresh orders`,
+          "fill",
+        );
+        // Reload to show the new trades
+        window.location.reload();
+      } else {
+        addToast(`Reset failed: ${json.error ?? "unknown error"}`, "error");
+      }
+    } catch (err) {
+      addToast(`Reset error: ${String(err)}`, "error");
+    } finally {
+      setResetting(false);
+    }
+  }
+
   // ── Sync open orders from Kalshi ─────────────────────────────────────────
   // Fetches all resting/partially_filled orders from Kalshi and inserts DB
   // records for any that are missing (e.g. when a boost's DB insert failed).
@@ -1111,6 +1138,18 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
               History
             </button>
           </div>
+
+          {/* Reset demo trades (demo mode only) */}
+          {demoMode && (
+            <button
+              onClick={resetDemo}
+              disabled={resetting}
+              title="Delete all demo trades and place fresh ones"
+              className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-800 border border-violet-700/50 hover:border-violet-500/60 hover:text-violet-300 text-violet-400 disabled:opacity-40 transition-colors"
+            >
+              {resetting ? "Resetting…" : "♻ Reset Demo"}
+            </button>
+          )}
 
           {/* Sync missing orders from Kalshi */}
           <button
