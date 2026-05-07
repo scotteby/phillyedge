@@ -131,6 +131,25 @@ export async function GET(req: NextRequest) {
   const isDemo      = (trade.demo as boolean | null) === true;
   const KALSHI_BASE = isDemo ? DEMO_BASE : PROD_BASE;
 
+  // Simulate-filled demo trades: we marked order_status=filled in our DB
+  // without actually filling on the Kalshi demo exchange.  Don't hit Kalshi
+  // (which would return "resting" and revert us) — just check whether the
+  // market has resolved and return the stored filled state.
+  if (
+    isDemo &&
+    trade.outcome === "pending" &&
+    trade.order_status === "filled" &&
+    (trade.filled_count as number | null) != null &&
+    (trade.filled_count as number) > 0
+  ) {
+    return await checkMarketResolutionOnly(
+      trade as DbTrade,
+      trade.filled_count as number,
+      supabase,
+      KALSHI_BASE,
+    );
+  }
+
   // Boosted+canceled trades have a fixed, known fill count — the order was
   // cancelled when the user re-placed it at a higher price.  Re-querying the
   // Kalshi order would overwrite our stored filled_count with 0 (Kalshi returns
