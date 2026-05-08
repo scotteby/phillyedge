@@ -27,24 +27,23 @@ import type { BracketMarket } from "./brackets";
  * @param forecastValue The forecast temperature (integer °F).
  */
 export function selectSecondaryBracket(
-  brackets:      BracketMarket[],
-  forecastValue: number,
+  brackets:             BracketMarket[],
+  forecastValue:        number,
+  primaryBktOverride?:  BracketMarket | null,
 ): BracketMarket | null {
-  // Accept observed-mode relations as equivalent to "forecast"
-  const forecastBkt = brackets.find(
-    (b) => b.relation === "forecast" || b.relation === "likely_winner" || b.relation === "confirmed"
-  );
+  // Caller can pass the already-resolved primary bracket so we don't
+  // re-derive it from relation tags (which can be wrong in observed mode —
+  // "likely_winner" / "confirmed" point to the observed bracket, not ours).
+  const forecastBkt =
+    primaryBktOverride ??
+    brackets.find((b) => b.relation === "forecast") ??
+    brackets.find((b) => b.relation === "likely_winner" || b.relation === "confirmed") ??
+    null;
   if (!forecastBkt) return null;
 
   const { min: fMin, max: fMax } = forecastBkt.range;
 
-  // No hedge for open-ended (lowest / highest) forecast brackets
-  if (fMin === null || fMax === null) return null;
-
   // Sort brackets ascending by lower bound (null min = −∞ first).
-  // This handles both contiguous (64-66, 66-68) and non-contiguous
-  // (63-64, 65-66, 67-68) Kalshi bracket structures — we use positional
-  // neighbours rather than requiring exact shared boundaries.
   const sorted = [...brackets].sort(
     (a, b) => (a.range.min ?? -Infinity) - (b.range.min ?? -Infinity),
   );
@@ -52,20 +51,24 @@ export function selectSecondaryBracket(
   const fIdx = sorted.findIndex((b) => b.market_id === forecastBkt.market_id);
   if (fIdx < 0) return null;
 
-  const bracketBelow = fIdx > 0                    ? sorted[fIdx - 1] : null;
-  const bracketAbove = fIdx < sorted.length - 1    ? sorted[fIdx + 1] : null;
+  const bracketBelow = fIdx > 0                 ? sorted[fIdx - 1] : null;
+  const bracketAbove = fIdx < sorted.length - 1 ? sorted[fIdx + 1] : null;
 
   if (!bracketBelow && !bracketAbove) return null;
+
+  // Open-ended primary brackets: only one neighbour makes sense.
+  //   Top-open (>X, fMax=null): can only spill downward → hedge below.
+  //   Bottom-open (<X, fMin=null): can only spill upward  → hedge above.
+  if (fMax === null) return bracketBelow;   // e.g. forecast=53 in >52° → hedge 51-52°
+  if (fMin === null) return bracketAbove;   // e.g. forecast=41 in <42° → hedge 42-43°
+
   if (!bracketBelow) return bracketAbove!;
   if (!bracketAbove) return bracketBelow;
 
-  // Use the primary bracket's own edges as reference.
-  // Hedge on the side where the forecast is NEAREST to the boundary —
-  // that's the direction you'd spill into if the forecast is even slightly off.
-  //
-  // e.g. forecast=48 in 48-49°: distBelow=0, distAbove=1 → hedge below (46-47°)
-  //      forecast=66 in 65-66°: distBelow=1, distAbove=0 → hedge above (67-68°)
-  //      forecast at center:    distBelow=distAbove      → tie-break: prefer above
+  // Closed bracket: hedge on the side the forecast is NEAREST to the edge.
+  //   forecast=48 in 48-49°: distBelow=0, distAbove=1 → below (46-47°)
+  //   forecast=66 in 65-66°: distBelow=1, distAbove=0 → above (67-68°)
+  //   forecast at centre: tie-break → above
   const distBelow = forecastValue - fMin;
   const distAbove = fMax - forecastValue;
 

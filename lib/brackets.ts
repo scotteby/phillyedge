@@ -422,7 +422,7 @@ export function groupBracketMarkets(
       null;
     const hedgeBkt   =
       primaryBkt && fVal != null
-        ? selectSecondaryBracket(brackets, fVal)
+        ? selectSecondaryBracket(brackets, fVal, primaryBkt)
         : null;
 
     for (let i = 0; i < brackets.length; i++) {
