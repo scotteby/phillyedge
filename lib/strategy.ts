@@ -59,16 +59,16 @@ export function selectSecondaryBracket(
   if (!bracketBelow) return bracketAbove!;
   if (!bracketAbove) return bracketBelow;
 
-  // Distance from forecastValue to the nearest edge of each adjacent bracket.
-  //   bracketBelow: its upper boundary (max), or min if open-ended at top.
-  //   bracketAbove: its lower boundary (min), or max if open-ended at bottom.
-  const belowBoundary = bracketBelow.range.max ?? bracketBelow.range.min ?? fMin;
-  const aboveBoundary = bracketAbove.range.min ?? bracketAbove.range.max ?? fMax;
+  // Use the primary bracket's own edges as reference.
+  // Hedge on the side where the forecast is NEAREST to the boundary —
+  // that's the direction you'd spill into if the forecast is even slightly off.
+  //
+  // e.g. forecast=48 in 48-49°: distBelow=0, distAbove=1 → hedge below (46-47°)
+  //      forecast=66 in 65-66°: distBelow=1, distAbove=0 → hedge above (67-68°)
+  //      forecast at center:    distBelow=distAbove      → tie-break: prefer above
+  const distBelow = forecastValue - fMin;
+  const distAbove = fMax - forecastValue;
 
-  const distBelow = forecastValue - belowBoundary;
-  const distAbove = aboveBoundary - forecastValue;
-
-  // Tie-break: prefer bracket above
   return distBelow < distAbove ? bracketBelow : bracketAbove;
 }
 
