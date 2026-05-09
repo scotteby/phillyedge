@@ -30,7 +30,8 @@ function bracketFixture(overrides: Partial<BracketMarket> = {}): BracketMarket {
     edge:        10,
     signal:      "buy",
     trade_side:  "YES",
-    bracketRole: null,
+    bracketRole:    null,
+    isKateForecast: false,
     ...overrides,
   };
 }

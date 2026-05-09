@@ -519,7 +519,11 @@ function BestTradeBanner({
 
 // ── Role badge ────────────────────────────────────────────────────────────────
 
-function RoleBadge({ role, compact = false }: { role: "primary" | "hedge" | null; compact?: boolean }) {
+function RoleBadge({ role, isKateForecast = false, compact = false }: {
+  role:            "primary" | "hedge" | null;
+  isKateForecast?: boolean;
+  compact?:        boolean;
+}) {
   if (role === "primary") {
     return (
       <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
@@ -527,7 +531,9 @@ function RoleBadge({ role, compact = false }: { role: "primary" | "hedge" | null
       </span>
     );
   }
-  if (role === "hedge") {
+  // KATE only shows when the hedge bracket is literally Kate's forecast bracket,
+  // not when it's just an adjacent fallback bracket.
+  if (role === "hedge" && isKateForecast) {
     return (
       <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-amber-500/20 text-amber-400 border border-amber-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
         KATE
@@ -658,7 +664,7 @@ function BracketRow({
           {isLocked && !isLikelyWinner
             ? <span className="text-slate-600 text-xs">—</span>
             : role !== null
-            ? <RoleBadge role={role} />
+            ? <RoleBadge role={role} isKateForecast={bracket.isKateForecast} />
             : <span className="text-slate-600 text-xs">—</span>}
         </div>
 
@@ -689,7 +695,7 @@ function BracketRow({
             </span>
           )}
           <div className="shrink-0">
-            {!isLocked && role !== null && <RoleBadge role={role} compact />}
+            {!isLocked && role !== null && <RoleBadge role={role} isKateForecast={bracket.isKateForecast} compact />}
           </div>
           <TradeBtn mobile={true} />
         </div>

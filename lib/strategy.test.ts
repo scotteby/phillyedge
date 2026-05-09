@@ -39,7 +39,8 @@ function makeBracket(
     edge:       overrides.edge       ?? 10,
     signal:     overrides.signal     ?? "buy",
     trade_side: overrides.trade_side ?? "YES",
-    bracketRole: overrides.bracketRole ?? null,
+    bracketRole:    overrides.bracketRole    ?? null,
+    isKateForecast: overrides.isKateForecast ?? false,
     ...overrides,
   };
 }

@@ -89,8 +89,9 @@ export interface BracketMarket {
   confidence:  number;            // our estimated probability 0–100
   edge:        number;            // confidence − yes_pct (positive = YES edge, negative = NO edge)
   signal:      Signal;
-  trade_side:  "YES" | null;     // always "YES" for primary/hedge, null otherwise
-  bracketRole: BracketRole;      // "primary" | "hedge" | null
+  trade_side:    "YES" | null;     // always "YES" for primary/hedge, null otherwise
+  bracketRole:   BracketRole;      // "primary" | "hedge" | null
+  isKateForecast: boolean;         // true only when this bracket IS Kate's model forecast
 }
 
 export interface BracketGroup {
@@ -403,8 +404,9 @@ export function groupBracketMarkets(
         confidence,
         edge,
         signal,
-        trade_side:  null,   // filled in below
-        bracketRole: null,   // filled in below
+        trade_side:     null,   // filled in below
+        bracketRole:    null,   // filled in below
+        isKateForecast: false,  // filled in below
       };
     });
 
@@ -462,8 +464,9 @@ export function groupBracketMarkets(
         null;
       brackets[i] = {
         ...b,
-        bracketRole: role,
-        trade_side:  role !== null ? "YES" : null,
+        bracketRole:    role,
+        trade_side:     role !== null ? "YES" : null,
+        isKateForecast: b.market_id === ourBkt?.market_id,
       };
     }
 
