@@ -490,7 +490,7 @@ function BestTradeBanner({
       {secondary && hedgeCalc && hedgeCalc.secondaryContracts > 0 && (
         <>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400 shrink-0">Hedge</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400 shrink-0">Kate</span>
             <span className={`${textMd} text-white font-semibold`}>
               {secondary.range.label} YES @ {secondary.yes_pct}%
             </span>
