@@ -205,7 +205,7 @@ export default function BracketGroupCard({
           <div className="text-right">Kalshi %</div>
           <div className="text-right">Our %</div>
           <div className="text-right">Edge</div>
-          <div className="text-center">Role</div>
+          <div className="text-center">Model</div>
           <div className="text-right" />
         </div>
 
