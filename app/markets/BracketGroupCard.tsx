@@ -527,13 +527,6 @@ function RoleBadge({ role, compact = false }: { role: "primary" | "hedge" | null
       </span>
     );
   }
-  if (role === "hedge") {
-    return (
-      <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-amber-500/20 text-amber-400 border border-amber-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
-        HEDGE
-      </span>
-    );
-  }
   return null;
 }
 
