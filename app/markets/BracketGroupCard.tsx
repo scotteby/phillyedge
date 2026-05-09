@@ -524,23 +524,24 @@ function RoleBadge({ role, isKateForecast = false, compact = false }: {
   isKateForecast?: boolean;
   compact?:        boolean;
 }) {
-  if (role === "primary") {
-    return (
-      <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
-        NWS
-      </span>
-    );
-  }
-  // KATE only shows when the hedge bracket is literally Kate's forecast bracket,
-  // not when it's just an adjacent fallback bracket.
-  if (role === "hedge" && isKateForecast) {
-    return (
-      <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-amber-500/20 text-amber-400 border border-amber-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
-        KATE
-      </span>
-    );
-  }
-  return null;
+  const px   = compact ? "text-[10px] px-1" : "text-xs px-1.5";
+  const showNws  = role === "primary";
+  const showKate = isKateForecast;
+  if (!showNws && !showKate) return null;
+  return (
+    <div className="flex items-center gap-1">
+      {showNws && (
+        <span className={`${px} bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-0.5 rounded font-semibold leading-tight`}>
+          NWS
+        </span>
+      )}
+      {showKate && (
+        <span className={`${px} bg-amber-500/20 text-amber-400 border border-amber-500/30 py-0.5 rounded font-semibold leading-tight`}>
+          KATE
+        </span>
+      )}
+    </div>
+  );
 }
 
 // ── Bracket row ───────────────────────────────────────────────────────────────
