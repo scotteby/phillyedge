@@ -464,9 +464,9 @@ function BestTradeBanner({
         </p>
       )}
 
-      {/* Primary row */}
+      {/* NWS row */}
       <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 shrink-0">Primary</span>
+        <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 shrink-0">NWS</span>
         <span className={`${textMd} text-white font-semibold`}>
           {primary.range.label} YES @ {primary.yes_pct}%
         </span>
@@ -523,14 +523,14 @@ function RoleBadge({ role, compact = false }: { role: "primary" | "hedge" | null
   if (role === "primary") {
     return (
       <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
-        {compact ? "PRIMARY" : "PRIMARY"}
+        NWS
       </span>
     );
   }
   if (role === "hedge") {
     return (
       <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-amber-500/20 text-amber-400 border border-amber-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
-        {compact ? "HEDGE" : "HEDGE"}
+        HEDGE
       </span>
     );
   }

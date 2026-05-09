@@ -288,9 +288,10 @@ export function forecastPctForMarket(
 // ── Main grouping function ────────────────────────────────────────────────────
 
 export function groupBracketMarkets(
-  markets:   MarketCache[],
-  forecasts: Forecast[],
-  observed?: { low: number | null; high: number | null }
+  markets:     MarketCache[],
+  forecasts:   Forecast[],
+  observed?:   { low: number | null; high: number | null },
+  nwsForecast?: { high: number | null; low: number | null; target_date?: string },
 ): { groups: BracketGroup[]; singles: MarketCache[] } {
   const bracketMarkets = markets.filter((m) => isBracketSeries(m.market_id));
   const singles        = markets.filter((m) => !isBracketSeries(m.market_id));
@@ -321,9 +322,15 @@ export function groupBracketMarkets(
       : undefined;
 
     // Observed NWS temp — only applies to today's markets
-    const isToday = obsDate === easternToday();
-    const seriesObs   = isToday
+    const isToday    = obsDate === easternToday();
+    const isTomorrow = obsDate === easternTomorrow();
+    const seriesObs  = isToday
       ? (series === "KXHIGHPHIL" ? (observed?.high ?? null) : (observed?.low ?? null))
+      : null;
+
+    // NWS tomorrow forecast — used as the primary (NWS) bracket for tomorrow's markets
+    const nwsVal: number | null = isTomorrow
+      ? (series === "KXHIGHPHIL" ? (nwsForecast?.high ?? null) : (nwsForecast?.low ?? null))
       : null;
 
     console.log(
@@ -331,6 +338,7 @@ export function groupBracketMarkets(
       `end_date=${endDate}  obs_date=${obsDate}`,
       forecast ? `${cfg?.forecastKey}=${fVal}` : "no forecast",
       seriesObs != null ? `observed=${seriesObs}°F` : "",
+      nwsVal    != null ? `nws=${nwsVal}°F` : "",
     );
 
     const std = CONFIDENCE_STD[forecast?.forecast_confidence ?? "confident"] ?? 1.5;
@@ -405,25 +413,46 @@ export function groupBracketMarkets(
 
     // ── Assign bracketRole and trade_side ─────────────────────────────────────
     // Strategy: exactly two YES trades per group.
-    //   primary = forecast bracket (bracketRole = "primary", trade_side = "YES")
-    //   hedge   = adjacent bracket nearest to forecast temp (bracketRole = "hedge", trade_side = "YES")
+    //   primary = NWS forecast bracket when available ("NWS" label in UI)
+    //   hedge   = our model's forecast bracket ("Hedge" label in UI)
     //   others  = no recommendation (bracketRole = null, trade_side = null)
-    // We never recommend NO positions.
     //
-    // Priority for primary bracket:
+    // When NWS and our forecast land in the SAME bracket, or when there is no
+    // NWS forecast, fall back: primary = our forecast bracket, hedge = adjacent.
+    //
+    // Priority for our-model bracket:
     //   1. Bracket tagged "forecast" (normal pre-observation mode)
-    //   2. Bracket whose range contains fVal (observed mode — base on our forecast,
-    //      not on the observed/confirmed outcome which may differ from our prediction)
-    //   3. "likely_winner" or "confirmed" bracket (fallback when no forecast exists)
-    const primaryBkt =
+    //   2. Bracket whose range contains fVal (observed mode)
+    //   3. "likely_winner" or "confirmed" bracket (fallback when no forecast)
+    const ourBkt =
       brackets.find((b) => b.relation === "forecast") ??
       (fVal != null ? brackets.find((b) => inRange(fVal, b.range)) : null) ??
       brackets.find((b) => b.relation === "likely_winner" || b.relation === "confirmed") ??
       null;
-    const hedgeBkt   =
-      primaryBkt && fVal != null
+
+    // NWS bracket: bracket containing the NWS forecast temperature (tomorrow only)
+    const nwsBkt: typeof ourBkt =
+      nwsVal != null
+        ? (brackets.find((b) => inRange(nwsVal, b.range)) ?? null)
+        : null;
+
+    // Determine primary and hedge:
+    //   NWS available AND different bracket → NWS=primary, Ours=hedge
+    //   NWS same bracket as ours OR no NWS  → Ours=primary, adjacent=hedge
+    let primaryBkt: typeof ourBkt;
+    let hedgeBkt:   typeof ourBkt;
+
+    if (nwsBkt && ourBkt && nwsBkt.market_id !== ourBkt.market_id) {
+      // NWS and our forecast disagree → two distinct trade recommendations
+      primaryBkt = nwsBkt;
+      hedgeBkt   = ourBkt;
+    } else {
+      // Same bracket or no NWS data → fall back to our bracket + adjacent hedge
+      primaryBkt = ourBkt;
+      hedgeBkt   = primaryBkt && fVal != null
         ? selectSecondaryBracket(brackets, fVal, primaryBkt)
         : null;
+    }
 
     for (let i = 0; i < brackets.length; i++) {
       const b    = brackets[i];

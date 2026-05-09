@@ -27,6 +27,7 @@ import { easternTomorrow }       from "@/lib/dates";
 import { groupBracketMarkets }   from "@/lib/brackets";
 import { calcHedgeSize, DEFAULT_HEDGE_COVERAGE } from "@/lib/strategy";
 import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
+import { fetchNWSTomorrowForecast } from "@/lib/nws";
 import type { Forecast, MarketCache } from "@/lib/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -363,10 +364,18 @@ export async function runDemoTrading(opts?: { force?: boolean; coverageRatio?: n
 
   const allMarkets = (mRows ?? []) as MarketCache[];
 
-  // ── 3. Run recommendation logic ────────────────────────────────────────────
-  // groupBracketMarkets assigns bracketRole: "primary" / "hedge" / null and
-  // populates group.best (primary) + group.secondary (hedge) for each group.
-  const { groups } = groupBracketMarkets(allMarkets, [forecast]);
+  // ── 3. Fetch NWS tomorrow forecast (for primary bracket selection) ─────────
+  const nwsTomorrow = await fetchNWSTomorrowForecast().catch(() => null);
+
+  // ── 4. Run recommendation logic ────────────────────────────────────────────
+  // groupBracketMarkets assigns bracketRole: "primary" (NWS bracket) / "hedge"
+  // (our model bracket) / null and populates group.best + group.secondary.
+  const { groups } = groupBracketMarkets(
+    allMarkets,
+    [forecast],
+    undefined,
+    nwsTomorrow ?? undefined,
+  );
 
   // ── 4. Filter to tomorrow's high + low markets ────────────────────────────
   const tomorrowGroups = groups.filter(

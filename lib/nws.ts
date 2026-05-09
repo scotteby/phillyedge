@@ -433,3 +433,98 @@ export async function fetchCurrentObservation(): Promise<CurrentObservation> {
     return empty;
   }
 }
+
+// ── NWS tomorrow forecast ─────────────────────────────────────────────────────
+
+export interface NWSTomorrowForecast {
+  high: number | null;
+  low:  number | null;
+  target_date: string;  // "YYYY-MM-DD" ET
+}
+
+const FORECAST_CACHE_TTL_MS = 60 * 60 * 1000;  // 1 hour — NWS updates every few hours
+let forecastCache: CacheEntry<NWSTomorrowForecast> | null = null;
+
+/**
+ * Fetch tomorrow's NWS official high and low temperature forecast for PHL.
+ *
+ * Uses the NWS gridpoint forecast API (PHI office, grid 48,75 — Philadelphia
+ * International Airport area).  No auth required; returns imperial °F directly.
+ *
+ * High = first daytime period whose startTime date equals tomorrow ET.
+ * Low  = the overnight period immediately preceding that daytime period
+ *        (the "tonight" going into tomorrow morning).
+ *
+ * Cached for 1 hour — NWS gridpoint forecasts update every few hours.
+ */
+export async function fetchNWSTomorrowForecast(): Promise<NWSTomorrowForecast> {
+  const tomorrowDate = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "America/New_York" })
+  );
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const target_date = tomorrowDate.toISOString().slice(0, 10);
+
+  const empty: NWSTomorrowForecast = { high: null, low: null, target_date };
+
+  // Return cached result if still fresh and for the same date
+  if (
+    forecastCache &&
+    forecastCache.data.target_date === target_date &&
+    Date.now() - forecastCache.cachedAt < FORECAST_CACHE_TTL_MS
+  ) {
+    return forecastCache.data;
+  }
+
+  try {
+    const res = await fetch(
+      "https://api.weather.gov/gridpoints/PHI/48,75/forecast",
+      {
+        headers: {
+          "User-Agent": "PhillyEdge/1.0 (scott.m.eby@gmail.com)",
+          Accept: "application/geo+json",
+        },
+        next: { revalidate: 3600 },
+      }
+    );
+    if (!res.ok) {
+      console.warn("[nws] Tomorrow forecast fetch failed:", res.status);
+      return empty;
+    }
+
+    const json    = await res.json();
+    const periods: Array<{ isDaytime: boolean; temperature: number; temperatureUnit: string; startTime: string }> =
+      json.properties?.periods ?? [];
+
+    // Find the first daytime period that is for tomorrow's date
+    const tomorrowHighIdx = periods.findIndex(
+      (p) => p.isDaytime && p.startTime.startsWith(target_date)
+    );
+    if (tomorrowHighIdx < 0) {
+      console.warn(`[nws] No tomorrow daytime period found for ${target_date}`);
+      return empty;
+    }
+
+    const highPeriod = periods[tomorrowHighIdx];
+    const high = highPeriod.temperatureUnit === "F"
+      ? highPeriod.temperature
+      : Math.round(highPeriod.temperature * 9 / 5 + 32);
+
+    // The overnight LOW for tomorrow is the period immediately before tomorrow's
+    // daytime period — that's "tonight" going into tomorrow morning.
+    const lowPeriod = tomorrowHighIdx > 0 ? periods[tomorrowHighIdx - 1] : null;
+    let low: number | null = null;
+    if (lowPeriod && !lowPeriod.isDaytime) {
+      low = lowPeriod.temperatureUnit === "F"
+        ? lowPeriod.temperature
+        : Math.round(lowPeriod.temperature * 9 / 5 + 32);
+    }
+
+    const result: NWSTomorrowForecast = { high, low, target_date };
+    forecastCache = { data: result, cachedAt: Date.now() };
+    console.log(`[nws] Tomorrow forecast: high=${high}°F low=${low}°F (${target_date})`);
+    return result;
+  } catch (err) {
+    console.error("[nws] Tomorrow forecast error:", err);
+    return empty;
+  }
+}
