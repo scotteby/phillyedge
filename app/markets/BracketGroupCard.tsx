@@ -527,6 +527,13 @@ function RoleBadge({ role, compact = false }: { role: "primary" | "hedge" | null
       </span>
     );
   }
+  if (role === "hedge") {
+    return (
+      <span className={`${compact ? "text-[10px] px-1" : "text-xs px-1.5"} bg-amber-500/20 text-amber-400 border border-amber-500/30 py-0.5 rounded font-semibold shrink-0 leading-tight`}>
+        KATE
+      </span>
+    );
+  }
   return null;
 }
 
@@ -623,11 +630,6 @@ function BracketRow({
               CONFIRMED
             </span>
           )}
-          {isForecast && !isConfirmed && !isLikelyWinner && !isLeading && (
-            <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
-              YOUR FORECAST
-            </span>
-          )}
         </div>
 
         {/* Kalshi % */}
@@ -684,11 +686,6 @@ function BracketRow({
           {isConfirmed && (
             <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
               ✓ CONFIRMED
-            </span>
-          )}
-          {isForecast && !isConfirmed && !isLikelyWinner && !isLeading && (
-            <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1 py-0.5 rounded font-semibold shrink-0 leading-tight">
-              FCST
             </span>
           )}
           <div className="shrink-0">
