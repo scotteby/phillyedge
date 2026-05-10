@@ -437,8 +437,14 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     trade_id:        tradeId,
     order_status:    orderStatus,
-    filled_count:    Math.round(effectiveFilled),
-    remaining_count: Math.round(remainingCount),
+    // For sell orders: preserve the -1 sentinel so BoostModal continues to show
+    // "Lower Sell Price" mode rather than switching to buy mode.  The Kalshi
+    // remaining_count for a resting sell is a positive number, which would
+    // overwrite our sentinel in client state if we returned it naively.
+    // Also omit filled_count for sell orders — the stored value is the original
+    // buy count and must not be overwritten by the sell order's fill count.
+    ...(!isSellOrder ? { filled_count: Math.round(effectiveFilled) } : {}),
+    remaining_count: isRestingSell ? -1 : Math.round(remainingCount),
     last_checked_at: now,
     raw_status:      rawStatus,
     outcome,

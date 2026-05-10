@@ -85,14 +85,17 @@ export async function POST(req: NextRequest) {
 
   if (isSellOrder) {
     // ── SELL ORDER BOOST: cancel + re-place at a LOWER sell price ──────────
-    const filledCount = (trade.filled_count as number | null) ?? 0;
-    if (filledCount < 1) {
+    const totalBought = (trade.filled_count as number | null) ?? 0;
+    if (totalBought < 1) {
       return NextResponse.json({ error: "No contracts to sell" }, { status: 422 });
     }
 
-    // 1. Cancel old sell order
+    // 1. Cancel old sell order — read the response to learn how many contracts
+    //    were filled from this sell order before the cancel arrived, and how many
+    //    are still remaining (which is what the new sell order should cover).
     const cancelPath    = `/trade-api/v2/portfolio/orders/${orderId}`;
     const cancelHeaders = buildKalshiAuthHeaders("DELETE", cancelPath, isDemo);
+    let contractsToSell = totalBought; // fallback: assume nothing sold yet
     try {
       const cancelRes = await fetch(`${KALSHI_BASE}/portfolio/orders/${orderId}`, {
         method: "DELETE", headers: cancelHeaders,
@@ -103,18 +106,35 @@ export async function POST(req: NextRequest) {
         console.error(`[boost-order/sell] Cancel failed ${cancelRes.status}:`, JSON.stringify(errBody));
         return NextResponse.json({ error: `Kalshi cancel failed: ${msg}` }, { status: 502 });
       }
-      console.log(`[boost-order/sell] Cancelled sell order ${orderId}`);
+      try {
+        const cancelJson = await cancelRes.json();
+        const cancelled  = (cancelJson.order ?? cancelJson) as Record<string, unknown>;
+        // remaining_count_fp = contracts not yet sold in this sell order → use as new order size
+        const remaining = parseFloat(String(cancelled.remaining_count_fp ?? cancelled.remaining_count ?? 0));
+        if (!isNaN(remaining) && remaining > 0) {
+          contractsToSell = Math.round(remaining);
+        }
+        const alreadySold = parseFloat(String(cancelled.fill_count_fp ?? cancelled.filled_count ?? 0));
+        console.log(`[boost-order/sell] Cancelled sell order ${orderId} — already_sold=${alreadySold} remaining=${contractsToSell}`);
+      } catch {
+        console.log(`[boost-order/sell] Cancelled sell order ${orderId} (could not read cancel body — using full count)`);
+      }
     } catch (err) {
       return NextResponse.json({ error: `Cancel network error: ${String(err)}` }, { status: 502 });
     }
 
-    // 2. Place new limit SELL order at lower price
+    if (contractsToSell < 1) {
+      // All contracts were already sold from the old order — nothing left to lower.
+      return NextResponse.json({ error: "All contracts already sold — no remaining position to re-offer" }, { status: 422 });
+    }
+
+    // 2. Place new limit SELL order at lower price for the remaining contracts only
     const sellOrderBody: Record<string, unknown> = {
       ticker,
       action: "sell",
       side,
       type:   "limit",
-      count:  filledCount,
+      count:  contractsToSell,
       ...(side === "yes"
         ? { yes_price: new_price_cents }
         : { no_price:  new_price_cents }),
@@ -157,7 +177,7 @@ export async function POST(req: NextRequest) {
       const entryCostPerContract = side === "yes" ? entryYes : 1 - entryYes;
       const sellYesPrice         = side === "yes" ? new_price_cents / 100 : 1 - new_price_cents / 100;
       const proceedsPerContract  = side === "yes" ? sellYesPrice : 1 - sellYesPrice;
-      const pnl = parseFloat(((proceedsPerContract - entryCostPerContract) * filledCount).toFixed(2));
+      const pnl = parseFloat(((proceedsPerContract - entryCostPerContract) * contractsToSell).toFixed(2));
 
       await supabase.from("trades").update({
         outcome:         "sold",
@@ -174,7 +194,7 @@ export async function POST(req: NextRequest) {
         filled:         true,
         trade_id,
         new_order_id:   newSellOrderId,
-        contracts_sold: filledCount,
+        contracts_sold: contractsToSell,
         pnl,
       });
     }
@@ -194,7 +214,7 @@ export async function POST(req: NextRequest) {
       filled:       false,
       trade_id,
       new_order_id: newSellOrderId,
-      count:        filledCount,
+      count:        contractsToSell,
       new_price_cents,
     });
   }
