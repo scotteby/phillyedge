@@ -192,9 +192,11 @@ function isActiveOrder(trade: Trade): boolean {
   // Pending trades: require a kalshi_order_id and an active order status
   if (!trade.kalshi_order_id) return false;
   const s = trade.order_status;
-  // Also re-poll filled orders whose contract count was never stored (filled_count = 0 / null)
-  // so that P&L reflects the actual fill rather than an estimate.
-  if (s === "filled" && (trade.filled_count ?? 0) === 0) return true;
+  // Re-poll all filled pending trades every cycle — not just when filled_count=0.
+  // A filled trade may still be waiting for market resolution (e.g. the market
+  // hadn't finalized yet at fill time, or the user sold positions manually on
+  // Kalshi outside our app and we stored the sell order's fill price).
+  if (s === "filled") return true;
   return s === "resting" || s === "partially_filled" || s === null;
 }
 

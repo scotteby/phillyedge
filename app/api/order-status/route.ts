@@ -66,8 +66,13 @@ async function checkMarketResolutionOnly(
     const mkt     = (mktJson.market ?? mktJson) as Record<string, unknown>;
     const mktStatus = String(mkt.status ?? "").toLowerCase();
     const result    = String(mkt.result  ?? "").toLowerCase();
+    console.log(`[order-status] Market ${trade.market_id} status=${mktStatus} result=${result} (checkMarketResolutionOnly)`);
 
-    if (mktStatus === "finalized" && (result === "yes" || result === "no")) {
+    // Accept "finalized", "resolved", "settled", or "closed" — Kalshi may use
+    // different status strings at different points in the settlement lifecycle.
+    const isTerminalStatus = ["finalized", "resolved", "settled", "closed"].includes(mktStatus);
+
+    if (isTerminalStatus && (result === "yes" || result === "no")) {
       const won = result === tradeSide;
       const entryYes: number =
         (trade.entry_yes_price as number | null) ??
@@ -83,7 +88,7 @@ async function checkMarketResolutionOnly(
         .update({ outcome: newOutcome, pnl })
         .eq("id", trade.id);
 
-      console.log(`[order-status] Market ${trade.market_id} finalized (no order_id) → ${newOutcome}, pnl=${pnl}`);
+      console.log(`[order-status] Market ${trade.market_id} ${mktStatus} (no order_id) → ${newOutcome}, pnl=${pnl}`);
 
       return NextResponse.json({
         trade_id:    trade.id,
@@ -207,6 +212,20 @@ export async function GET(req: NextRequest) {
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       console.error(`[order-status] Kalshi ${res.status}:`, JSON.stringify(body));
+
+      // If the order is no longer accessible on Kalshi (404/410 — e.g. an old sell
+      // order that was cleaned up) but we already stored a filled_count, don't
+      // silently exit — fall back to a market-resolution-only check so the trade
+      // can still be settled once the market finalizes.
+      const storedFilled = (trade.filled_count as number | null) ?? 0;
+      if ((res.status === 404 || res.status === 410) && storedFilled > 0) {
+        console.log(
+          `[order-status] Order ${orderId} gone from Kalshi (${res.status}) — ` +
+          `falling back to market resolution with stored filled_count=${storedFilled}`
+        );
+        return await checkMarketResolutionOnly(trade as DbTrade, storedFilled, supabase, KALSHI_BASE);
+      }
+
       return NextResponse.json(
         { error: `Kalshi error ${res.status}: ${JSON.stringify(body)}` },
         { status: 502 }
@@ -246,27 +265,34 @@ export async function GET(req: NextRequest) {
   // by contract count to derive a price.
   const side = String(trade.side ?? "").toLowerCase();
 
-  // Detect a resting sell early so we can protect its DB sentinel values.
-  // (The full sell-detection block below only fires when status === "filled".)
-  const kalshiActionEarly = String(kalshiOrder.action ?? "").toLowerCase();
-  const isRestingSell = kalshiActionEarly === "sell" && orderStatus !== "filled";
+  // Detect whether this Kalshi order is a sell (exit) order.
+  // Sell orders need special handling in two ways:
+  //   1. Don't overwrite filled_count — it stores the buy contract count, not sell fills.
+  //   2. Don't overwrite entry_yes_price — a sell's avg price is the exit price, not entry cost.
+  //      Writing a sell price here corrupts all subsequent P&L calculations.
+  // For resting (not yet filled) sells, also keep remaining_count = -1 (our sentinel).
+  const kalshiAction = String(kalshiOrder.action ?? "").toLowerCase();
+  const isSellOrder  = kalshiAction === "sell";
+  const isRestingSell = isSellOrder && orderStatus !== "filled";
 
-  // Build the update — only overwrite entry_yes_price when we have real fill data.
-  // For resting sell orders:
-  //   - Do NOT overwrite filled_count (it stores the buy contract count, not sell fills)
-  //   - Keep remaining_count = -1 (the sentinel that marks this as a sell order for the UI)
+  // Build the update.
   const dbUpdate: Record<string, unknown> = {
     order_status:    orderStatus,
     last_checked_at: now,
   };
   if (!isRestingSell) {
-    dbUpdate.filled_count    = Math.round(effectiveFilled);
-    dbUpdate.remaining_count = Math.round(remainingCount);
+    if (!isSellOrder) {
+      // Buy orders: update contract counts from Kalshi
+      dbUpdate.filled_count    = Math.round(effectiveFilled);
+      dbUpdate.remaining_count = Math.round(remainingCount);
+    }
+    // Sell orders that have filled: don't touch filled_count or remaining_count —
+    // those are still the buy-side numbers we want to preserve for market resolution.
   } else {
     dbUpdate.remaining_count = -1; // preserve sell-order sentinel
   }
 
-  if (effectiveFilled > 0) {
+  if (effectiveFilled > 0 && !isSellOrder) {
     // Try the native avg-fill-price fields first (most accurate)
     const rawAvg =
       kalshiOrder.avg_yes_price  ??
@@ -304,9 +330,7 @@ export async function GET(req: NextRequest) {
   // ── Detect a completed sell order ────────────────────────────────────────
   // When the user placed a limit sell that was resting, kalshi_order_id was
   // swapped to the sell order.  Detect this by checking action === "sell" on
-  // the polled Kalshi order.
-  const kalshiAction = String(kalshiOrder.action ?? "").toLowerCase();
-  const isSellOrder  = kalshiAction === "sell";
+  // the polled Kalshi order.  (kalshiAction / isSellOrder already declared above.)
 
   if (isSellOrder && orderStatus === "filled" && outcome === "pending") {
     const tradeSide = String(trade.side ?? "").toLowerCase();
@@ -362,8 +386,13 @@ export async function GET(req: NextRequest) {
         const mkt      = (mktJson.market ?? mktJson) as Record<string, unknown>;
         const mktStatus = String(mkt.status ?? "").toLowerCase();
         const result    = String(mkt.result  ?? "").toLowerCase(); // "yes" | "no" | ""
+        console.log(`[order-status] Market ${trade.market_id} status=${mktStatus} result=${result}`);
 
-        if (mktStatus === "finalized" && (result === "yes" || result === "no")) {
+        // Accept broader set of terminal statuses — Kalshi may use "finalized",
+        // "resolved", "settled", or "closed" depending on the settlement stage.
+        const isTerminalStatus = ["finalized", "resolved", "settled", "closed"].includes(mktStatus);
+
+        if (isTerminalStatus && (result === "yes" || result === "no")) {
           const tradeSide = String(trade.side ?? "").toLowerCase(); // "yes" | "no"
           const won       = result === tradeSide;
 
@@ -378,9 +407,16 @@ export async function GET(req: NextRequest) {
           // Net P&L:
           //   Win:  filled_count × (1 − side_entry_price)  — profit per contract
           //   Loss: −(filled_count × side_entry_price)     — capital lost
+          //
+          // When the active order is a sell order, effectiveFilled is the sell
+          // fill count — NOT the buy count we care about.  Prefer the DB-stored
+          // filled_count (original buy contracts) for the resolution P&L.
+          const resolutionCount = isSellOrder
+            ? ((trade.filled_count as number | null) ?? effectiveFilled)
+            : effectiveFilled;
           pnl     = won
-            ? parseFloat((effectiveFilled * (1 - sidePrice)).toFixed(2))
-            : parseFloat((-(effectiveFilled * sidePrice)).toFixed(2));
+            ? parseFloat((resolutionCount * (1 - sidePrice)).toFixed(2))
+            : parseFloat((-(resolutionCount * sidePrice)).toFixed(2));
           outcome = won ? "win" : "loss";
           resolved = true;
 
