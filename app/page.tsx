@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
+// Redirect is static — no dynamic directive needed.
 export default function RootPage() {
   redirect("/forecast");
 }

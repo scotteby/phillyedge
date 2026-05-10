@@ -9,7 +9,11 @@ import type { Forecast, MarketCache } from "@/lib/types";
 import MarketsClient from "./MarketsClient";
 import Link from "next/link";
 
-export const dynamic = "force-dynamic";
+// ISR: re-render at most once per minute. Kalshi prices are already cached in
+// Supabase (5-min TTL) and NWS data changes slowly, so 60s staleness is fine.
+// This also re-enables `next: { revalidate }` inside lib/nws fetch calls, which
+// force-dynamic was suppressing and causing a cold NWS API hit every request.
+export const revalidate = 60;
 
 export default async function MarketsPage() {
   const supabase = createServiceClient();
