@@ -7,6 +7,20 @@ const KALSHI_BASE = DEMO_MODE
   : "https://api.elections.kalshi.com/trade-api/v2";
 const CACHE_TTL_MINUTES = 5;
 
+/**
+ * Returns the current hour and minute in Eastern time.
+ * Used to detect the daily market-opening window (10:00–10:15 ET).
+ */
+function easternHourMinute(): { hour: number; minute: number } {
+  const fmt   = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/New_York",
+  });
+  const parts = fmt.formatToParts(new Date());
+  const hour   = parseInt(parts.find((p) => p.type === "hour")!.value,   10);
+  const minute = parseInt(parts.find((p) => p.type === "minute")!.value, 10);
+  return { hour, minute };
+}
+
 // Philadelphia weather series tickers (confirmed from kalshi.com URLs)
 const PHILLY_SERIES = ["KXHIGHPHIL", "KXLOWTPHIL", "KXPRECIPPHIL"];
 
@@ -114,6 +128,13 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
   const today    = easternToday(); // calendar date in Eastern time
 
   // ── Cache freshness check ──────────────────────────────────────────────────
+  // During the daily market-opening window (10:00–10:15 ET) Kalshi publishes
+  // the next day's contracts.  Skip the 5-minute TTL entirely so every ISR
+  // page re-render (once per minute) does a fresh Kalshi pull and picks up
+  // newly-published markets as quickly as possible.
+  const { hour: etHour, minute: etMin } = easternHourMinute();
+  const isOpeningWindow = etHour === 10 && etMin < 15;
+
   const { data: cached } = await supabase
     .from("market_cache")
     .select("fetched_at")
@@ -122,7 +143,7 @@ export async function fetchAndCacheMarkets(): Promise<FetchMarketsResult> {
     .order("fetched_at", { ascending: false })
     .limit(1);
 
-  if (cached && cached.length > 0) {
+  if (!isOpeningWindow && cached && cached.length > 0) {
     const age = Date.now() - new Date(cached[0].fetched_at).getTime();
     if (age < CACHE_TTL_MINUTES * 60 * 1000) {
       const { data } = await supabase
