@@ -497,29 +497,29 @@ export async function fetchNWSForecasts(): Promise<NWSForecastMap> {
       p.temperatureUnit === "F" ? p.temperature : Math.round(p.temperature * 9 / 5 + 32);
 
     // Build date → {high, low} by scanning all periods.
-    // Daytime period  → high for that date.
-    // Nighttime period → low for the NEXT calendar day (it's the overnight going
-    //                    into that morning, e.g. "Tonight" before "Monday").
+    // Each period is stored into its own start-date bucket:
+    //   Daytime  (e.g. "Monday")       → high for 2026-05-12
+    //   Nighttime (e.g. "Monday Night") → low  for 2026-05-12
+    //
+    // This correctly handles today's low market: "Tonight" starts on today's
+    // date (e.g. 2026-05-11T18:00) so it becomes the low for May 11 — which is
+    // exactly what the KXLOWTPHIL May 11 market needs.  Future night periods
+    // (e.g. "Monday Night" starting 2026-05-12T18:00) become the low for May 12.
     const map: NWSForecastMap = new Map();
 
-    for (let i = 0; i < periods.length; i++) {
-      const p    = periods[i];
-      const date = p.startTime.slice(0, 10); // YYYY-MM-DD from the ISO timestamp
+    for (const p of periods) {
+      const date  = p.startTime.slice(0, 10); // YYYY-MM-DD from the ISO timestamp
+      const entry = map.get(date) ?? { high: null, low: null };
 
       if (p.isDaytime) {
-        // High for this date
-        const entry = map.get(date) ?? { high: null, low: null };
-        entry.high  = toF(p);
-        map.set(date, entry);
-
-        // The period immediately before a daytime period is the overnight going
-        // into that morning → that's the low for `date`.
-        const prev = i > 0 ? periods[i - 1] : null;
-        if (prev && !prev.isDaytime) {
-          entry.low = toF(prev);
-          map.set(date, entry);
-        }
+        entry.high = toF(p);
+      } else {
+        // Use the first nighttime period we encounter for each date
+        // (NWS sometimes has two overnight segments for the same date).
+        if (entry.low === null) entry.low = toF(p);
       }
+
+      map.set(date, entry);
     }
 
     forecastMapCache = { data: map, cachedAt: Date.now() };
