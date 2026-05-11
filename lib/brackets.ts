@@ -1,4 +1,5 @@
 import type { Forecast, ForecastConfidence, MarketCache, Signal } from "./types";
+import type { NWSForecastMap } from "./nws";
 import { easternToday, easternTomorrow } from "./dates";
 import { selectSecondaryBracket } from "./strategy";
 
@@ -290,10 +291,10 @@ export function forecastPctForMarket(
 // ── Main grouping function ────────────────────────────────────────────────────
 
 export function groupBracketMarkets(
-  markets:     MarketCache[],
-  forecasts:   Forecast[],
-  observed?:   { low: number | null; high: number | null },
-  nwsForecast?: { high: number | null; low: number | null; target_date?: string },
+  markets:      MarketCache[],
+  forecasts:    Forecast[],
+  observed?:    { low: number | null; high: number | null },
+  nwsForecasts?: NWSForecastMap,   // date-keyed map covering today + upcoming days
 ): { groups: BracketGroup[]; singles: MarketCache[] } {
   const bracketMarkets = markets.filter((m) => isBracketSeries(m.market_id));
   const singles        = markets.filter((m) => !isBracketSeries(m.market_id));
@@ -324,15 +325,16 @@ export function groupBracketMarkets(
       : undefined;
 
     // Observed NWS temp — only applies to today's markets
-    const isToday    = obsDate === easternToday();
-    const isTomorrow = obsDate === easternTomorrow();
-    const seriesObs  = isToday
+    const isToday   = obsDate === easternToday();
+    const seriesObs = isToday
       ? (series === "KXHIGHPHIL" ? (observed?.high ?? null) : (observed?.low ?? null))
       : null;
 
-    // NWS tomorrow forecast — used as the primary (NWS) bracket for tomorrow's markets
-    const nwsVal: number | null = isTomorrow
-      ? (series === "KXHIGHPHIL" ? (nwsForecast?.high ?? null) : (nwsForecast?.low ?? null))
+    // NWS official forecast — look up this market's target date directly in the
+    // 7-day forecast map, so both today's AND future markets get an NWS bracket.
+    const nwsDay = nwsForecasts?.get(obsDate) ?? null;
+    const nwsVal: number | null = nwsDay != null
+      ? (series === "KXHIGHPHIL" ? (nwsDay.high ?? null) : (nwsDay.low ?? null))
       : null;
 
     console.log(
@@ -340,7 +342,7 @@ export function groupBracketMarkets(
       `end_date=${endDate}  obs_date=${obsDate}`,
       forecast ? `${cfg?.forecastKey}=${fVal}` : "no forecast",
       seriesObs != null ? `observed=${seriesObs}°F` : "",
-      nwsVal    != null ? `nws=${nwsVal}°F` : "",
+      nwsVal != null ? `nws=${nwsVal}°F` : "(no NWS for date)",
     );
 
     const std = CONFIDENCE_STD[forecast?.forecast_confidence ?? "confident"] ?? 1.5;

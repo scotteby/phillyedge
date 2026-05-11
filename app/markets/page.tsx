@@ -3,7 +3,7 @@ import { fetchAndCacheMarkets } from "@/lib/kalshi";
 import { calculateEdge, deduplicateByEvent } from "@/lib/edge";
 import { groupBracketMarkets } from "@/lib/brackets";
 import { logActionableSignals } from "@/lib/rec-log";
-import { fetchNWSObservation, fetchCurrentObservation, fetchNWSTomorrowForecast, observationTimeGates, todayMarketTimeGates, getDailyHighStatus } from "@/lib/nws";
+import { fetchNWSObservation, fetchCurrentObservation, fetchNWSForecasts, observationTimeGates, todayMarketTimeGates, getDailyHighStatus } from "@/lib/nws";
 import type { MarketTimeGates, CurrentObservation, DailyHighStatus } from "@/lib/nws";
 import type { Forecast, MarketCache } from "@/lib/types";
 import MarketsClient from "./MarketsClient";
@@ -61,11 +61,11 @@ export default async function MarketsPage() {
   // the observed value as *confirmed* (setting group.observed_value).
   const gates     = observationTimeGates();
   const timeGates = todayMarketTimeGates();
-  const [{ data: marketsData, lastUpdated, rawCount }, nwsObs, currentObs, nwsTomorrow] = await Promise.all([
+  const [{ data: marketsData, lastUpdated, rawCount }, nwsObs, currentObs, nwsForecasts] = await Promise.all([
     fetchAndCacheMarkets(),
     fetchNWSObservation(),
     fetchCurrentObservation(),
-    fetchNWSTomorrowForecast(),
+    fetchNWSForecasts(),
   ]);
   const allMarkets = (marketsData as MarketCache[] | null) ?? [];
 
@@ -75,7 +75,7 @@ export default async function MarketsPage() {
   };
 
   // Split bracket groups from single binary markets
-  const { groups, singles } = groupBracketMarkets(allMarkets, deduped, observed, nwsTomorrow);
+  const { groups, singles } = groupBracketMarkets(allMarkets, deduped, observed, nwsForecasts);
 
   // Phase 2.5: fire-and-forget signal logging for selection-bias tracking.
   // MUST NOT block render or affect trading flow — failures are swallowed.

@@ -27,7 +27,7 @@ import { easternTomorrow }       from "@/lib/dates";
 import { groupBracketMarkets }   from "@/lib/brackets";
 import { calcHedgeSize, DEFAULT_HEDGE_COVERAGE } from "@/lib/strategy";
 import { buildKalshiAuthHeaders } from "@/lib/kalshi-sign";
-import { fetchNWSTomorrowForecast } from "@/lib/nws";
+import { fetchNWSForecasts } from "@/lib/nws";
 import type { Forecast, MarketCache } from "@/lib/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -364,8 +364,8 @@ export async function runDemoTrading(opts?: { force?: boolean; coverageRatio?: n
 
   const allMarkets = (mRows ?? []) as MarketCache[];
 
-  // ── 3. Fetch NWS tomorrow forecast (for primary bracket selection) ─────────
-  const nwsTomorrow = await fetchNWSTomorrowForecast().catch(() => null);
+  // ── 3. Fetch NWS forecast map (covers today + 7 days ahead) ─────────────────
+  const nwsForecasts = await fetchNWSForecasts().catch(() => new Map());
 
   // ── 4. Run recommendation logic ────────────────────────────────────────────
   // groupBracketMarkets assigns bracketRole: "primary" (NWS bracket) / "hedge"
@@ -374,7 +374,7 @@ export async function runDemoTrading(opts?: { force?: boolean; coverageRatio?: n
     allMarkets,
     [forecast],
     undefined,
-    nwsTomorrow ?? undefined,
+    nwsForecasts,
   );
 
   // ── 4. Filter to tomorrow's high + low markets ────────────────────────────

@@ -434,46 +434,40 @@ export async function fetchCurrentObservation(): Promise<CurrentObservation> {
   }
 }
 
-// ── NWS tomorrow forecast ─────────────────────────────────────────────────────
+// ── NWS multi-day forecast ────────────────────────────────────────────────────
 
-export interface NWSTomorrowForecast {
+/** High/low forecast for one calendar day (ET). */
+export interface NWSDayForecast {
   high: number | null;
   low:  number | null;
-  target_date: string;  // "YYYY-MM-DD" ET
 }
 
+/** Map from YYYY-MM-DD (ET) → NWSDayForecast for every day in the 7-day forecast. */
+export type NWSForecastMap = Map<string, NWSDayForecast>;
+
+// Keep legacy type alias so existing imports don't break during the transition.
+export type NWSTomorrowForecast = NWSDayForecast & { target_date: string };
+
 const FORECAST_CACHE_TTL_MS = 60 * 60 * 1000;  // 1 hour — NWS updates every few hours
-let forecastCache: CacheEntry<NWSTomorrowForecast> | null = null;
+let forecastMapCache: CacheEntry<NWSForecastMap> | null = null;
 
 /**
- * Fetch tomorrow's NWS official high and low temperature forecast for PHL.
+ * Fetch the NWS 7-day high/low forecast for PHL as a date-keyed map.
  *
- * Uses the NWS gridpoint forecast API (PHI office, grid 48,75 — Philadelphia
- * International Airport area).  No auth required; returns imperial °F directly.
+ * Uses the NWS gridpoint forecast API (PHI office, grid 48,75).
+ * No auth required; returns imperial °F directly.
  *
- * High = first daytime period whose startTime date equals tomorrow ET.
- * Low  = the overnight period immediately preceding that daytime period
- *        (the "tonight" going into tomorrow morning).
+ * For each calendar date, high = the daytime period's temperature and
+ * low = the preceding overnight period's temperature.
  *
  * Cached for 1 hour — NWS gridpoint forecasts update every few hours.
  */
-export async function fetchNWSTomorrowForecast(): Promise<NWSTomorrowForecast> {
-  const tomorrowDate = new Date(
-    new Date().toLocaleString("en-US", { timeZone: "America/New_York" })
-  );
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const target_date = tomorrowDate.toISOString().slice(0, 10);
-
-  const empty: NWSTomorrowForecast = { high: null, low: null, target_date };
-
-  // Return cached result if still fresh and for the same date
-  if (
-    forecastCache &&
-    forecastCache.data.target_date === target_date &&
-    Date.now() - forecastCache.cachedAt < FORECAST_CACHE_TTL_MS
-  ) {
-    return forecastCache.data;
+export async function fetchNWSForecasts(): Promise<NWSForecastMap> {
+  if (forecastMapCache && Date.now() - forecastMapCache.cachedAt < FORECAST_CACHE_TTL_MS) {
+    return forecastMapCache.data;
   }
+
+  const empty: NWSForecastMap = new Map();
 
   try {
     const res = await fetch(
@@ -487,44 +481,68 @@ export async function fetchNWSTomorrowForecast(): Promise<NWSTomorrowForecast> {
       }
     );
     if (!res.ok) {
-      console.warn("[nws] Tomorrow forecast fetch failed:", res.status);
+      console.warn("[nws] Forecast fetch failed:", res.status);
       return empty;
     }
 
-    const json    = await res.json();
-    const periods: Array<{ isDaytime: boolean; temperature: number; temperatureUnit: string; startTime: string }> =
-      json.properties?.periods ?? [];
+    const json = await res.json();
+    const periods: Array<{
+      isDaytime: boolean;
+      temperature: number;
+      temperatureUnit: string;
+      startTime: string;
+    }> = json.properties?.periods ?? [];
 
-    // Find the first daytime period that is for tomorrow's date
-    const tomorrowHighIdx = periods.findIndex(
-      (p) => p.isDaytime && p.startTime.startsWith(target_date)
-    );
-    if (tomorrowHighIdx < 0) {
-      console.warn(`[nws] No tomorrow daytime period found for ${target_date}`);
-      return empty;
+    const toF = (p: { temperature: number; temperatureUnit: string }) =>
+      p.temperatureUnit === "F" ? p.temperature : Math.round(p.temperature * 9 / 5 + 32);
+
+    // Build date → {high, low} by scanning all periods.
+    // Daytime period  → high for that date.
+    // Nighttime period → low for the NEXT calendar day (it's the overnight going
+    //                    into that morning, e.g. "Tonight" before "Monday").
+    const map: NWSForecastMap = new Map();
+
+    for (let i = 0; i < periods.length; i++) {
+      const p    = periods[i];
+      const date = p.startTime.slice(0, 10); // YYYY-MM-DD from the ISO timestamp
+
+      if (p.isDaytime) {
+        // High for this date
+        const entry = map.get(date) ?? { high: null, low: null };
+        entry.high  = toF(p);
+        map.set(date, entry);
+
+        // The period immediately before a daytime period is the overnight going
+        // into that morning → that's the low for `date`.
+        const prev = i > 0 ? periods[i - 1] : null;
+        if (prev && !prev.isDaytime) {
+          entry.low = toF(prev);
+          map.set(date, entry);
+        }
+      }
     }
 
-    const highPeriod = periods[tomorrowHighIdx];
-    const high = highPeriod.temperatureUnit === "F"
-      ? highPeriod.temperature
-      : Math.round(highPeriod.temperature * 9 / 5 + 32);
-
-    // The overnight LOW for tomorrow is the period immediately before tomorrow's
-    // daytime period — that's "tonight" going into tomorrow morning.
-    const lowPeriod = tomorrowHighIdx > 0 ? periods[tomorrowHighIdx - 1] : null;
-    let low: number | null = null;
-    if (lowPeriod && !lowPeriod.isDaytime) {
-      low = lowPeriod.temperatureUnit === "F"
-        ? lowPeriod.temperature
-        : Math.round(lowPeriod.temperature * 9 / 5 + 32);
-    }
-
-    const result: NWSTomorrowForecast = { high, low, target_date };
-    forecastCache = { data: result, cachedAt: Date.now() };
-    console.log(`[nws] Tomorrow forecast: high=${high}°F low=${low}°F (${target_date})`);
-    return result;
+    forecastMapCache = { data: map, cachedAt: Date.now() };
+    const summary = Array.from(map.entries())
+      .map(([d, f]) => `${d}: high=${f.high}° low=${f.low}°`)
+      .join(", ");
+    console.log(`[nws] Forecast map cached: ${summary}`);
+    return map;
   } catch (err) {
-    console.error("[nws] Tomorrow forecast error:", err);
+    console.error("[nws] Forecast map error:", err);
     return empty;
   }
+}
+
+/**
+ * Convenience wrapper — returns the single-day forecast for tomorrow.
+ * @deprecated Use fetchNWSForecasts() and look up by date instead.
+ */
+export async function fetchNWSTomorrowForecast(): Promise<NWSTomorrowForecast> {
+  const map = await fetchNWSForecasts();
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  now.setDate(now.getDate() + 1);
+  const target_date = now.toISOString().slice(0, 10);
+  const f = map.get(target_date) ?? { high: null, low: null };
+  return { ...f, target_date };
 }
