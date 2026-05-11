@@ -41,6 +41,7 @@ function makeBracket(
     trade_side: overrides.trade_side ?? "YES",
     bracketRole:    overrides.bracketRole    ?? null,
     isKateForecast: overrides.isKateForecast ?? false,
+    isNWSForecast:  overrides.isNWSForecast  ?? false,
     ...overrides,
   };
 }

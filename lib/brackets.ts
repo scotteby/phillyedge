@@ -90,8 +90,9 @@ export interface BracketMarket {
   edge:        number;            // confidence − yes_pct (positive = YES edge, negative = NO edge)
   signal:      Signal;
   trade_side:    "YES" | null;     // always "YES" for primary/hedge, null otherwise
-  bracketRole:   BracketRole;      // "primary" | "hedge" | null
+  bracketRole:    BracketRole;      // "primary" | "hedge" | null
   isKateForecast: boolean;         // true only when this bracket IS Kate's model forecast
+  isNWSForecast:  boolean;         // true only when this bracket IS the NWS official forecast
 }
 
 export interface BracketGroup {
@@ -407,6 +408,7 @@ export function groupBracketMarkets(
         trade_side:     null,   // filled in below
         bracketRole:    null,   // filled in below
         isKateForecast: false,  // filled in below
+        isNWSForecast:  false,  // filled in below
       };
     });
 
@@ -467,6 +469,10 @@ export function groupBracketMarkets(
         bracketRole:    role,
         trade_side:     role !== null ? "YES" : null,
         isKateForecast: b.market_id === ourBkt?.market_id,
+        // Only true when an actual NWS value exists AND this bracket contains it.
+        // nwsBkt is null for today's markets (isTomorrow=false) — so the NWS badge
+        // never shows for same-day markets even if Kate's bracket becomes "primary".
+        isNWSForecast:  nwsBkt != null && b.market_id === nwsBkt.market_id,
       };
     }
 

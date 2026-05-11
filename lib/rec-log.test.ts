@@ -32,6 +32,7 @@ function bracketFixture(overrides: Partial<BracketMarket> = {}): BracketMarket {
     trade_side:  "YES",
     bracketRole:    null,
     isKateForecast: false,
+    isNWSForecast:  false,
     ...overrides,
   };
 }

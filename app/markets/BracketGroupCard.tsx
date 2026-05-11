@@ -464,9 +464,11 @@ function BestTradeBanner({
         </p>
       )}
 
-      {/* NWS row */}
+      {/* Primary row — label depends on whether there's real NWS data */}
       <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 shrink-0">NWS</span>
+        {primary.isNWSForecast
+          ? <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-400 shrink-0">NWS</span>
+          : <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400 shrink-0">KATE</span>}
         <span className={`${textMd} text-white font-semibold`}>
           {primary.range.label} YES @ {primary.yes_pct}%
         </span>
@@ -490,7 +492,10 @@ function BestTradeBanner({
       {secondary && hedgeCalc && hedgeCalc.secondaryContracts > 0 && (
         <>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400 shrink-0">Kate</span>
+            {/* "Kate" when the secondary is our model's forecast bracket; "Hedge" when it's just an adjacent bracket */}
+            {secondary.isKateForecast
+              ? <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400 shrink-0">Kate</span>
+              : <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 shrink-0">Hedge</span>}
             <span className={`${textMd} text-white font-semibold`}>
               {secondary.range.label} YES @ {secondary.yes_pct}%
             </span>
@@ -519,13 +524,18 @@ function BestTradeBanner({
 
 // ── Role badge ────────────────────────────────────────────────────────────────
 
-function RoleBadge({ role, isKateForecast = false, compact = false }: {
+function RoleBadge({ role, isKateForecast = false, isNWSForecast = false, compact = false }: {
   role:            "primary" | "hedge" | null;
   isKateForecast?: boolean;
+  isNWSForecast?:  boolean;
   compact?:        boolean;
 }) {
   const px   = compact ? "text-[10px] px-1" : "text-xs px-1.5";
-  const showNws  = role === "primary";
+  // Show NWS badge only when there is actual NWS data for this bracket.
+  // For today's markets the page server has no tomorrow-NWS forecast, so
+  // isNWSForecast is false and no NWS badge appears — even if this bracket
+  // ended up as "primary" via the Kate-only fallback path.
+  const showNws  = isNWSForecast;
   const showKate = isKateForecast;
   if (!showNws && !showKate) return null;
   return (
@@ -665,7 +675,7 @@ function BracketRow({
           {isLocked && !isLikelyWinner
             ? <span className="text-slate-600 text-xs">—</span>
             : role !== null
-            ? <RoleBadge role={role} isKateForecast={bracket.isKateForecast} />
+            ? <RoleBadge role={role} isKateForecast={bracket.isKateForecast} isNWSForecast={bracket.isNWSForecast} />
             : <span className="text-slate-600 text-xs">—</span>}
         </div>
 
@@ -696,7 +706,7 @@ function BracketRow({
             </span>
           )}
           <div className="shrink-0">
-            {!isLocked && role !== null && <RoleBadge role={role} isKateForecast={bracket.isKateForecast} compact />}
+            {!isLocked && role !== null && <RoleBadge role={role} isKateForecast={bracket.isKateForecast} isNWSForecast={bracket.isNWSForecast} compact />}
           </div>
           <TradeBtn mobile={true} />
         </div>
