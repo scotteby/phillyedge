@@ -496,31 +496,46 @@ export async function fetchNWSForecasts(): Promise<NWSForecastMap> {
     const toF = (p: { temperature: number; temperatureUnit: string }) =>
       p.temperatureUnit === "F" ? p.temperature : Math.round(p.temperature * 9 / 5 + 32);
 
-    // Build date → {high, low} by scanning all periods.
-    // Each period is stored under its own start-date:
-    //   isDaytime  → high for that date
-    //   !isDaytime → low  for that date
+    // Build date → {high, low} by pairing each daytime period with the
+    // overnight period that immediately PRECEDES it.
     //
-    // "Tonight" (startTime 2026-05-11T18:00) → low for May 11.
-    // Even though the absolute overnight minimum often hits 4–6 AM the next
-    // morning, the temperature can still drop to a new low by 11 PM or midnight,
-    // which IS within the Kalshi May 11 low-market window (closes midnight ET).
-    // So "Tonight"'s NWS forecast is a meaningful reference for today's market.
+    //   "Tonight"       (May 11 18:00, isDaytime=false, ~47°F)
+    //   "Tuesday"       (May 12 06:00, isDaytime=true,  ~70°F)
+    //   "Tuesday Night" (May 12 18:00, isDaytime=false, ~51°F)
+    //   "Wednesday"     (May 13 06:00, isDaytime=true,  ~75°F)
+    //
+    // Result:
+    //   May 12 → high=70, low=47   (from "Tonight" + "Tuesday")
+    //   May 13 → high=75, low=51   (from "Tuesday Night" + "Wednesday")
+    //
+    // Kalshi's KXLOWTPHIL market for May 12 resolves on the minimum temperature
+    // recorded in Philadelphia on May 12, which typically hits 4–6 AM — the
+    // tail of the "Tonight" overnight period.  Storing "Tonight"'s NWS low (47°F)
+    // under May 12 therefore matches exactly what the market resolves on.
+    //
+    // Today's date gets no entry (the preceding overnight has already happened
+    // and is captured by the NWS observation API, not the forecast API).
     const map: NWSForecastMap = new Map();
 
-    for (const p of periods) {
-      const date  = p.startTime.slice(0, 10); // YYYY-MM-DD from the ISO timestamp
-      const entry = map.get(date) ?? { high: null, low: null };
+    for (let i = 0; i < periods.length; i++) {
+      const p    = periods[i];
+      const date = p.startTime.slice(0, 10); // YYYY-MM-DD from the ISO timestamp
 
       if (p.isDaytime) {
-        entry.high = toF(p);
-      } else {
-        // Keep the first nighttime period for each date (NWS occasionally
-        // publishes two overnight segments per date; the first is more accurate).
-        if (entry.low === null) entry.low = toF(p);
-      }
+        const entry = map.get(date) ?? { high: null, low: null };
+        entry.high  = toF(p);
 
-      map.set(date, entry);
+        // The overnight period immediately before this daytime period is the
+        // low for this same calendar date.
+        const prev = i > 0 ? periods[i - 1] : null;
+        if (prev && !prev.isDaytime && entry.low === null) {
+          entry.low = toF(prev);
+        }
+
+        map.set(date, entry);
+      }
+      // Nighttime periods are processed only when the NEXT daytime period is
+      // encountered, so we intentionally skip them in this branch.
     }
 
     forecastMapCache = { data: map, cachedAt: Date.now() };
