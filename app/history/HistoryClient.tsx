@@ -444,8 +444,6 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const [sellModalTrades, setSellModalTrades] = useState<Trade[] | null>(null);
   const [boostModalTrade, setBoostModalTrade] = useState<Trade | null>(null);
   const [boosting, setBoosting]   = useState<string | null>(null);
-  const [simFilling, setSimFilling] = useState<string | null>(null);
-  const [resetting, setResetting]   = useState(false);
   const [buyModalPosition, setBuyModalPosition] = useState<Position | null>(null);
   const [syncing, setSyncing]           = useState(false);
   const [reconciling, setReconciling]   = useState(false);
@@ -453,7 +451,6 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const [viewMode, setViewMode]   = useState<"active" | "history">("active");
   const [historyDays, setHistoryDays] = useState<7 | 30 | 90 | null>(30);
   const [showCancelled, setShowCancelled] = useState(false);
-  const [demoMode, setDemoMode]   = useState<boolean>(false);
   const [balance, setBalance]     = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const { toasts, addToast, dismiss } = useToasts();
@@ -494,14 +491,13 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     setPricesFetching(true);
     try {
       const results = await Promise.allSettled(
-        candidates.map((t) => {
-          const demoSuffix = (t.demo === true) ? "&demo=true" : "";
-          return fetch(`/api/live-price?ticker=${encodeURIComponent(t.market_id)}${demoSuffix}`)
+        candidates.map((t) =>
+          fetch(`/api/live-price?ticker=${encodeURIComponent(t.market_id)}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((j: { ticker: string; yes_price: number } | null) =>
               j?.yes_price != null ? { ticker: t.market_id, yes_price: j.yes_price } : null
-            );
-        })
+            )
+        )
       );
 
       setLivePrices((prev) => {
@@ -536,8 +532,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
   const fetchBalance = useCallback(async () => {
     setBalanceLoading(true);
     try {
-      const url  = demoMode ? "/api/balance?demo=true" : "/api/balance";
-      const res  = await fetch(url);
+      const res  = await fetch("/api/balance");
       const json = await res.json();
       if (res.ok && json.balance_dollars != null) {
         setBalance(json.balance_dollars);
@@ -545,8 +540,7 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     } catch { /* ignore */ } finally {
       setBalanceLoading(false);
     }
-  // demoMode in deps: switching mode creates a new fn → useEffect re-fetches
-  }, [demoMode]);
+  }, []);
 
   useEffect(() => {
     fetchBalance();
@@ -770,7 +764,6 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                 entry_yes_price: json.side === "YES"
                   ? json.new_price_cents / 100
                   : 1 - json.new_price_cents / 100,
-                demo:            json.demo === true ? true : undefined,
               });
             }
             return updated;
@@ -784,73 +777,6 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
       addToast(`Boost error: ${String(err)}`, "error");
     } finally {
       setBoosting(null);
-    }
-  }
-
-  // ── Simulate fill (demo only) ────────────────────────────────────────────
-
-  async function simulateFill(tradeId: string) {
-    setSimFilling(tradeId);
-    try {
-      const res  = await fetch("/api/simulate-fill", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ trade_id: tradeId }),
-      });
-      const json = await res.json();
-      if (res.ok) {
-        setTrades((prev) =>
-          prev.map((t) =>
-            t.id === tradeId
-              ? { ...t, order_status: "filled" as Trade["order_status"], filled_count: json.filled_count ?? t.filled_count }
-              : t
-          )
-        );
-        addToast(`⚡ Demo fill simulated — ${json.filled_count} contracts`, "fill");
-      } else {
-        addToast(`Simulate fill failed: ${json.error ?? "unknown error"}`, "error");
-      }
-    } catch (err) {
-      addToast(`Simulate fill error: ${String(err)}`, "error");
-    } finally {
-      setSimFilling(null);
-    }
-  }
-
-  // ── Reset demo (delete all + re-run) ─────────────────────────────────────
-
-  async function resetDemo() {
-    if (!confirm("Delete ALL demo trades and place fresh ones? This cannot be undone.")) return;
-    setResetting(true);
-    try {
-      // Read coverage ratio from localStorage so the server uses the user's setting
-      let coverageRatio: number | undefined;
-      try {
-        const v = parseFloat(localStorage.getItem("hedge_coverage_ratio") ?? "");
-        if (!isNaN(v) && v > 0 && v <= 1) coverageRatio = v;
-      } catch { /* ignore */ }
-
-      const res  = await fetch("/api/reset-demo", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ coverage_ratio: coverageRatio }),
-      });
-      const json = await res.json();
-      if (res.ok) {
-        const placed = (json.orders as unknown[])?.length ?? 0;
-        addToast(
-          `♻️ Reset complete — deleted ${json.deleted} trades, placed ${placed} fresh orders`,
-          "fill",
-        );
-        // Reload to show the new trades
-        window.location.reload();
-      } else {
-        addToast(`Reset failed: ${json.error ?? "unknown error"}`, "error");
-      }
-    } catch (err) {
-      addToast(`Reset error: ${String(err)}`, "error");
-    } finally {
-      setResetting(false);
     }
   }
 
@@ -977,13 +903,9 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
 
-  // ── Demo / real split ─────────────────────────────────────────────────────
-  // Applied before all other filters so summary cards and visible trade lists
-  // are scoped to the correct population.  Trades without a demo flag (pre-
-  // migration rows) are treated as real trades (demo !== true).
-  const modeFilteredTrades = trades.filter((t) =>
-    demoMode ? t.demo === true : t.demo !== true
-  );
+  // Always show only real trades (demo !== true).
+  // Trades without a demo flag (pre-migration rows) are treated as real.
+  const modeFilteredTrades = trades.filter((t) => t.demo !== true);
 
   // Void-cancelled = boosted predecessors or cancelled orders with 0 fills.
   // Hidden by default in both views (no capital deployed, no real position).
@@ -1109,33 +1031,9 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
 
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-2xl font-bold text-white">Trades</h1>
-          {demoMode && (
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full border
-              bg-violet-500/15 text-violet-300 border-violet-500/30">
-              Demo
-            </span>
-          )}
-        </div>
+        <h1 className="text-2xl font-bold text-white">Trades</h1>
 
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Demo / real toggle */}
-          <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs">
-            <button
-              onClick={() => { setDemoMode(false); setBalance(null); }}
-              className={`px-3 py-1.5 transition-colors ${!demoMode ? "bg-slate-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
-            >
-              Real
-            </button>
-            <button
-              onClick={() => { setDemoMode(true); setBalance(null); }}
-              className={`px-3 py-1.5 transition-colors border-l border-slate-700 ${demoMode ? "bg-violet-700 text-white font-medium" : "text-slate-400 hover:text-slate-200"}`}
-            >
-              Demo
-            </button>
-          </div>
-
           {/* View toggle */}
           <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs">
             <button
@@ -1151,18 +1049,6 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
               History
             </button>
           </div>
-
-          {/* Reset demo trades (demo mode only) */}
-          {demoMode && (
-            <button
-              onClick={resetDemo}
-              disabled={resetting}
-              title="Delete all demo trades and place fresh ones"
-              className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-800 border border-violet-700/50 hover:border-violet-500/60 hover:text-violet-300 text-violet-400 disabled:opacity-40 transition-colors"
-            >
-              {resetting ? "Resetting…" : "♻ Reset Demo"}
-            </button>
-          )}
 
           {/* Sync missing orders from Kalshi */}
           <button
@@ -1217,15 +1103,9 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
               onClick={fetchBalance}
               disabled={balanceLoading}
               title="Refresh balance"
-              className={`bg-slate-800 border rounded-xl p-4 text-left transition-colors disabled:opacity-50 ${
-                demoMode
-                  ? "border-violet-700/50 hover:border-violet-500/60"
-                  : "border-slate-700 hover:border-slate-500"
-              }`}
+              className="bg-slate-800 border border-slate-700 hover:border-slate-500 rounded-xl p-4 text-left transition-colors disabled:opacity-50"
             >
-              <p className="text-xs text-slate-500 uppercase tracking-wider">
-                {demoMode ? "Demo Balance" : "Balance"}
-              </p>
+              <p className="text-xs text-slate-500 uppercase tracking-wider">Balance</p>
               {balanceLoading ? (
                 <p className="text-2xl font-bold text-white mt-1 animate-pulse">…</p>
               ) : (
@@ -1235,14 +1115,12 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                       {balance != null ? `$${balance.toFixed(2)}` : "—"}
                     </p>
                   </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {demoMode ? "cash available" : "available"}
-                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">available</p>
                   {inPositions > 0 && (
                     <>
                       <div className="border-t border-slate-700 my-2" />
                       <div className="flex justify-between text-xs text-slate-400">
-                        <span>{demoMode ? "portfolio" : "in open positions"}</span>
+                        <span>in open positions</span>
                         <span className="font-medium">${inPositions.toFixed(2)}</span>
                       </div>
                       {balance != null && (
@@ -1337,18 +1215,14 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
           <p className="text-4xl mb-3">📊</p>
           <p className="text-lg font-medium">
             {modeFilteredTrades.length === 0
-              ? demoMode
-                ? "No demo trades yet"
-                : "No trades logged yet"
+              ? "No trades logged yet"
               : viewMode === "history"
               ? "No trades in this date range"
               : "No active or settled trades"}
           </p>
           <p className="text-sm mt-1">
             {modeFilteredTrades.length === 0
-              ? demoMode
-                ? "The 10 AM cron will place demo trades once tomorrow's markets are listed."
-                : "Head to Markets to find edges and log your first trade."
+              ? "Head to Markets to find edges and log your first trade."
               : viewMode === "active"
               ? <button onClick={() => setViewMode("history")} className="text-sky-400 hover:text-sky-300 underline">View history</button>
               : null}
@@ -1467,10 +1341,8 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                                   trade={item.trade}
                                   canceling={canceling === item.trade.id}
                                   boosting={boosting === item.trade.id}
-                                  simFilling={simFilling === item.trade.id}
                                   onCancel={() => cancelOrder(item.trade.id)}
                                   onBoost={() => setBoostModalTrade(item.trade)}
-                                  onSimFill={item.trade.demo === true ? () => simulateFill(item.trade.id) : undefined}
                                 />
                               )
                             )}
@@ -1555,10 +1427,8 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
                                       trade={item.trade}
                                       canceling={canceling === item.trade.id}
                                       boosting={boosting === item.trade.id}
-                                      simFilling={simFilling === item.trade.id}
                                       onCancel={() => cancelOrder(item.trade.id)}
                                       onBoost={() => setBoostModalTrade(item.trade)}
-                                      onSimFill={item.trade.demo === true ? () => simulateFill(item.trade.id) : undefined}
                                     />
                                   )
                                 )}
@@ -1591,7 +1461,6 @@ export default function HistoryClient({ initialTrades, forecastPcts = {} }: Prop
         <BoostModal
           trade={boostModalTrade}
           boosting={boosting === boostModalTrade.id}
-          demoMode={demoMode}
           onConfirm={(cents) => boostOrder(boostModalTrade.id, cents)}
           onClose={() => setBoostModalTrade(null)}
         />
@@ -1933,11 +1802,10 @@ function MarkSoldModal({
 // ── Boost modal ───────────────────────────────────────────────────────────────
 
 function BoostModal({
-  trade, boosting, demoMode, onConfirm, onClose,
+  trade, boosting, onConfirm, onClose,
 }: {
   trade: Trade;
   boosting: boolean;
-  demoMode?: boolean;
   onConfirm: (newPriceCents: number) => void;
   onClose: () => void;
 }) {
@@ -1965,11 +1833,10 @@ function BoostModal({
     ? trade.my_pct - Math.round(entryPrice * 100)
     : (100 - trade.my_pct) - Math.round(entryPrice * 100);
 
-  // Fetch orderbook (bid/ask) on mount — use demo exchange when trade is a demo trade
+  // Fetch orderbook (bid/ask) on mount
   useEffect(() => {
     setObLoading(true);
-    const demoSuffix = (demoMode || trade.demo) ? "&demo=true" : "";
-    fetch(`/api/orderbook?ticker=${encodeURIComponent(trade.market_id)}${demoSuffix}`)
+    fetch(`/api/orderbook?ticker=${encodeURIComponent(trade.market_id)}`)
       .then((r) => r.ok ? r.json() : null)
       .then((j) => {
         if (j) {
@@ -1981,13 +1848,12 @@ function BoostModal({
       })
       .catch(() => {})
       .finally(() => setObLoading(false));
-  }, [trade.market_id, trade.side, demoMode, trade.demo]);
+  }, [trade.market_id, trade.side]);
 
   // For sell orders: fetch the current Kalshi sell order limit price
   useEffect(() => {
     if (!isSellOrder || !trade.kalshi_order_id) return;
-    const demoSuffix = (demoMode || trade.demo) ? "&demo=true" : "";
-    fetch(`/api/kalshi-order?order_id=${encodeURIComponent(trade.kalshi_order_id)}${demoSuffix}`)
+    fetch(`/api/kalshi-order?order_id=${encodeURIComponent(trade.kalshi_order_id)}`)
       .then((r) => r.ok ? r.json() : null)
       .then((j) => {
         if (!j) return;
@@ -1995,7 +1861,7 @@ function BoostModal({
         if (price > 0) setSellLimitCents(price);
       })
       .catch(() => {});
-  }, [isSellOrder, trade.kalshi_order_id, trade.side, demoMode, trade.demo]);
+  }, [isSellOrder, trade.kalshi_order_id, trade.side]);
 
   // Derive the chosen price in cents
   const chosenCents: number | null = (() => {
@@ -3354,20 +3220,17 @@ interface PendingOrderRowProps {
   trade:        Trade;
   canceling:    boolean;
   boosting:     boolean;
-  simFilling?:  boolean;
   onCancel:     () => void;
   onBoost:      () => void;
-  onSimFill?:   () => void;
 }
 
-function PendingOrderRow({ trade, canceling, boosting, simFilling, onCancel, onBoost, onSimFill }: PendingOrderRowProps) {
+function PendingOrderRow({ trade, canceling, boosting, onCancel, onBoost }: PendingOrderRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const bracket    = modelGetBracketLabel(trade.market_question);
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null;
-  const showSimFill = trade.demo === true && isBoostable(trade) && onSimFill != null;
   const filledCount    = trade.filled_count ?? 0;
   const remainingCount = trade.remaining_count ?? 0;
   const totalCount     = filledCount + remainingCount;
@@ -3418,10 +3281,6 @@ function PendingOrderRow({ trade, canceling, boosting, simFilling, onCancel, onB
       {/* Actions */}
       <td className="py-2 pr-4 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
         <div className="flex gap-1 flex-wrap justify-end">
-          {showSimFill && (
-            <ActionButton variant="simulate" onClick={(e) => { e.stopPropagation(); onSimFill!(); }}
-              loading={simFilling ?? false} label="Fill ⚡" loadingLabel="Filling…" />
-          )}
           {showBoost && (
             <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
               loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />
@@ -3580,14 +3439,13 @@ function FillSubCard({ trade, onSell: _onSell, onBoost: _onBoost, onCancel: _onC
 
 // ── Mobile pending order card ────────────────────────────────────────────────
 
-function PendingOrderCard({ trade, canceling, boosting, simFilling, onCancel, onBoost, onSimFill }: PendingOrderRowProps) {
+function PendingOrderCard({ trade, canceling, boosting, onCancel, onBoost }: PendingOrderRowProps) {
   const entryYes   = modelGetEntryYesPrice(trade);
   const entryPrice = trade.side === "YES" ? entryYes : 1 - entryYes;
   const contracts  = getContractsForFill(trade);
   const bracket    = modelGetBracketLabel(trade.market_question);
   const showBoost  = isBoostable(trade);
   const showCancel = trade.kalshi_order_id != null;
-  const showSimFill = trade.demo === true && isBoostable(trade) && onSimFill != null;
   const filledCount    = trade.filled_count ?? 0;
   const remainingCount = trade.remaining_count ?? 0;
   const totalCount     = filledCount + remainingCount;
@@ -3621,12 +3479,8 @@ function PendingOrderCard({ trade, canceling, boosting, simFilling, onCancel, on
           <>{contracts} contracts @ {(entryPrice * 100).toFixed(1)}¢ limit</>
         )}
       </div>
-      {(showSimFill || showBoost || showCancel) && (
+      {(showBoost || showCancel) && (
         <div className="flex gap-1 flex-wrap">
-          {showSimFill && (
-            <ActionButton variant="simulate" onClick={(e) => { e.stopPropagation(); onSimFill!(); }}
-              loading={simFilling ?? false} label="Fill ⚡" loadingLabel="Filling…" />
-          )}
           {showBoost && (
             <ActionButton variant="boost" onClick={(e) => { e.stopPropagation(); onBoost(); }}
               loading={boosting} label="Boost ↑" loadingLabel="Boosting…" />

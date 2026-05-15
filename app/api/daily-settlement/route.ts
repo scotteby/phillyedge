@@ -9,7 +9,6 @@ import {
   type RecommendationResultRow,
   type SettlementSummary,
 } from "@/lib/settlement";
-import { runDemoTrading, type DemoTradingResult } from "@/lib/demo-trading";
 import type { Forecast, Trade } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -106,45 +105,20 @@ async function settle(date: string): Promise<SettlementSummary> {
   };
 }
 
-async function run(date: string, forceDemo = false, coverageRatio?: number) {
-  // ── 1. Settle yesterday's markets ─────────────────────────────────────────
+async function run(date: string) {
   const summary = await settle(date);
-
-  // ── 2. Place demo trades for tomorrow ─────────────────────────────────────
-  // Fire after settlement so the two tasks don't compete for the cron timeout.
-  // Failures are caught and surfaced in the response but never abort settlement.
-  let demo: DemoTradingResult | null = null;
-  try {
-    demo = await runDemoTrading({ force: forceDemo, coverageRatio });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[daily-settlement] runDemoTrading threw:", msg);
-    demo = {
-      target_date: "",
-      orders:      [],
-      skipped:     [],
-      errors:      [`runDemoTrading threw: ${msg}`],
-    };
-  }
-
-  const hasErrors = summary.errors.length > 0 || (demo?.errors.length ?? 0) > 0;
-  return NextResponse.json({ ...summary, demo }, { status: hasErrors ? 207 : 200 });
+  const hasErrors = summary.errors.length > 0;
+  return NextResponse.json(summary, { status: hasErrors ? 207 : 200 });
 }
 
 // Vercel cron uses GET; manual triggers can use POST with a JSON body.
-// ?force_demo=true bypasses the idempotency guard and re-places demo trades
-// even if records for tomorrow already exist (e.g. after canceling on Kalshi).
 export async function GET(req: NextRequest) {
-  const dateParam     = req.nextUrl.searchParams.get("date");
-  const forceDemo     = req.nextUrl.searchParams.get("force_demo") === "true";
-  const coverageParam = parseFloat(req.nextUrl.searchParams.get("coverage_ratio") ?? "");
-  const coverageRatio = isNaN(coverageParam) ? undefined : coverageParam;
-  return run(dateParam ?? yesterdayET(), forceDemo, coverageRatio);
+  const dateParam = req.nextUrl.searchParams.get("date");
+  return run(dateParam ?? yesterdayET());
 }
 
 export async function POST(req: NextRequest) {
-  let body: { date?: string; force_demo?: boolean; coverage_ratio?: number } = {};
+  let body: { date?: string } = {};
   try { body = await req.json(); } catch { /* empty body OK */ }
-  const coverageRatio = body.coverage_ratio != null ? Number(body.coverage_ratio) : undefined;
-  return run(body.date ?? yesterdayET(), body.force_demo === true, coverageRatio);
+  return run(body.date ?? yesterdayET());
 }
