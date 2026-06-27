@@ -1,8 +1,3 @@
 {
-  "crons": [
-    {
-      "path": "/api/daily-settlement",
-      "schedule": "0 14 * * *"
-    }
-  ]
+  "crons": []
 }
